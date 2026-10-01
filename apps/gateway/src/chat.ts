@@ -395,6 +395,140 @@ export async function handleChatRequest(
   }
 
   try {
+    if (request.method === "GET" && url.pathname === "/v1/chat/events") {
+      const organizationId = cleanText(url.searchParams.get("organizationId"), 128);
+      const membership = membershipForOrganization(authorization, organizationId);
+      if (!membership) {
+        throw Object.assign(new Error("organization_access_denied"), { status: 403 });
+      }
+      requireWorkspacePermission(membership.membership.role, "chat.read");
+      const lastEventHeader = request.headers["last-event-id"];
+      const lastEventId = Array.isArray(lastEventHeader)
+        ? lastEventHeader[0]
+        : lastEventHeader;
+      const afterId =
+        cleanText(url.searchParams.get("after"), 32) ||
+        cleanText(lastEventId, 32) ||
+        "0";
+      startEventStream(request, response, {
+        organizationId,
+        userId: authorization.user.id,
+        afterId,
+        origin,
+        allowedOrigins
+      });
+      return true;
+    }
+
+    if (request.method === "GET" && url.pathname === "/v1/chat/notifications") {
+      const organizationId = cleanText(url.searchParams.get("organizationId"), 128);
+      const membership = membershipForOrganization(authorization, organizationId);
+      if (!membership) {
+        throw Object.assign(new Error("organization_access_denied"), { status: 403 });
+      }
+      requireWorkspacePermission(membership.membership.role, "chat.read");
+      const notifications = await store.listNotifications(
+        organizationId,
+        authorization.user.id,
+        75
+      );
+      sendJson(response, 200, { notifications }, origin, allowedOrigins);
+      return true;
+    }
+
+    if (
+      request.method === "POST" &&
+      url.pathname === "/v1/chat/notifications/read-all"
+    ) {
+      const body = await readJson(request);
+      const organizationId = cleanText(body.organizationId, 128);
+      const membership = membershipForOrganization(authorization, organizationId);
+      if (!membership) {
+        throw Object.assign(new Error("organization_access_denied"), { status: 403 });
+      }
+      const updated = await store.markAllNotificationsRead(
+        organizationId,
+        authorization.user.id
+      );
+      sendJson(response, 200, { updated }, origin, allowedOrigins);
+      return true;
+    }
+
+    const notificationReadMatch = url.pathname.match(
+      /^\/v1\/chat\/notifications\/([^/]+)\/read$/
+    );
+    if (notificationReadMatch && request.method === "POST") {
+      const notificationId = decodeSegment(notificationReadMatch[1]);
+      const updated = await store.markNotificationRead(
+        notificationId,
+        authorization.user.id
+      );
+      sendJson(response, updated ? 200 : 404, { updated }, origin, allowedOrigins);
+      return true;
+    }
+
+    if (request.method === "POST" && url.pathname === "/v1/chat/presence") {
+      const body = await readJson(request);
+      const organizationId = cleanText(body.organizationId, 128);
+      const membership = membershipForOrganization(authorization, organizationId);
+      if (!membership) {
+        throw Object.assign(new Error("organization_access_denied"), { status: 403 });
+      }
+      requireWorkspacePermission(membership.membership.role, "chat.read");
+      const presence = await store.heartbeatPresence(
+        organizationId,
+        authorization.user.id,
+        authorization.user.displayName
+      );
+      await emitChatEvent({
+        organizationId,
+        actorId: authorization.user.id,
+        type: "presence.changed",
+        payload: { userId: authorization.user.id }
+      });
+      sendJson(response, 200, { presence }, origin, allowedOrigins);
+      return true;
+    }
+
+    if (request.method === "GET" && url.pathname === "/v1/chat/presence") {
+      const organizationId = cleanText(url.searchParams.get("organizationId"), 128);
+      const membership = membershipForOrganization(authorization, organizationId);
+      if (!membership) {
+        throw Object.assign(new Error("organization_access_denied"), { status: 403 });
+      }
+      requireWorkspacePermission(membership.membership.role, "chat.read");
+      const presence = await store.listPresence(organizationId);
+      sendJson(response, 200, { presence }, origin, allowedOrigins);
+      return true;
+    }
+
+    const fileDownloadMatch = url.pathname.match(/^\/v1\/chat\/files\/([^/]+)$/);
+    if (fileDownloadMatch && request.method === "GET") {
+      const fileId = decodeSegment(fileDownloadMatch[1]);
+      const file = await store.getFileForUser(fileId, authorization.user.id);
+      if (!file) throw Object.assign(new Error("file_not_found"), { status: 404 });
+
+      const contentType = /^[a-z0-9!#  try {
+    if (request.method === "GET" && url.pathname === "/v1/chat/conversations") {^_.+-]+\/[a-z0-9!#  try {
+    if (request.method === "GET" && url.pathname === "/v1/chat/conversations") {^_.+-]+$/i.test(
+        file.mimeType
+      )
+        ? file.mimeType
+        : "application/octet-stream";
+      response.statusCode = 200;
+      response.setHeader("content-type", contentType);
+      response.setHeader("content-length", String(file.bytes.byteLength));
+      response.setHeader(
+        "content-disposition",
+        'attachment; filename="' + safeDownloadName(file.name) + '"'
+      );
+      response.setHeader("cache-control", "private, max-age=300");
+      response.setHeader("x-content-type-options", "nosniff");
+      applyCors(response, origin, allowedOrigins);
+      response.end(file.bytes);
+      return true;
+    }
+
     if (request.method === "GET" && url.pathname === "/v1/chat/conversations") {
       const organizationId = cleanText(url.searchParams.get("organizationId"), 128);
       const membership = membershipForOrganization(authorization, organizationId);
