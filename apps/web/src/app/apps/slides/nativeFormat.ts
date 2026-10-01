@@ -1,5 +1,5 @@
 export const TMSL_EXTENSION = ".tmsl";
-export const TMSL_MIME = "application/vnd.tamishra.slides";
+export const TMSL_MIME = "application/x-tamishra-slides";
 export const TMSL_FORMAT = "tamishra.slides";
 export const TMSL_CONTAINER_VERSION = 1;
 
