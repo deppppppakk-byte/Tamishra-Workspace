@@ -583,6 +583,30 @@ export default function DocsEditor() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke<string | null>("startup_tmdoc"))
+      .then((raw) => {
+        if (cancelled || !raw) return;
+        importNativePackage(new TextEncoder().encode(raw), ".tmdoc opened from desktop");
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error("Could not open startup .tmdoc", error);
+        setSavedState("Startup .tmdoc could not be opened");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
 
     void pullDocsCloudWorkspace()
@@ -963,6 +987,46 @@ export default function DocsEditor() {
     );
   };
 
+  const importNativePackage = (
+    input: ArrayBuffer | Uint8Array,
+    successStatus = ".tmdoc opened"
+  ) => {
+    const packageData = parseTamishraDocument(input);
+    const record = {
+      ...packageData.record,
+      lastOpenedAt: new Date().toISOString(),
+      trashedAt: null
+    };
+
+    const current = workspaceRef.current;
+    const next: DocsWorkspaceSnapshot = {
+      ...current,
+      records: [
+        record,
+        ...current.records.filter((item) => item.id !== record.id)
+      ],
+      comments: [
+        ...packageData.comments,
+        ...current.comments.filter((item) => item.documentId !== record.id)
+      ],
+      suggestions: [
+        ...packageData.suggestions,
+        ...current.suggestions.filter((item) => item.documentId !== record.id)
+      ],
+      versions: [
+        ...packageData.versions,
+        ...current.versions.filter((item) => item.documentId !== record.id)
+      ].slice(0, 100),
+      grants: [
+        ...packageData.grants,
+        ...current.grants.filter((item) => item.documentId !== record.id)
+      ]
+    };
+
+    commitWorkspace(next);
+    applyDraftToEditor(record.draft, record.id, successStatus);
+  };
+
   const handleNativeInput = async (
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
@@ -972,40 +1036,7 @@ export default function DocsEditor() {
 
     try {
       setSavedState("Opening .tmdoc…");
-      const packageData = parseTamishraDocument(await file.arrayBuffer());
-      const record = {
-        ...packageData.record,
-        lastOpenedAt: new Date().toISOString(),
-        trashedAt: null
-      };
-
-      const current = workspaceRef.current;
-      const next: DocsWorkspaceSnapshot = {
-        ...current,
-        records: [
-          record,
-          ...current.records.filter((item) => item.id !== record.id)
-        ],
-        comments: [
-          ...packageData.comments,
-          ...current.comments.filter((item) => item.documentId !== record.id)
-        ],
-        suggestions: [
-          ...packageData.suggestions,
-          ...current.suggestions.filter((item) => item.documentId !== record.id)
-        ],
-        versions: [
-          ...packageData.versions,
-          ...current.versions.filter((item) => item.documentId !== record.id)
-        ].slice(0, 100),
-        grants: [
-          ...packageData.grants,
-          ...current.grants.filter((item) => item.documentId !== record.id)
-        ]
-      };
-
-      commitWorkspace(next);
-      applyDraftToEditor(record.draft, record.id, ".tmdoc opened");
+      importNativePackage(await file.arrayBuffer());
     } catch (error) {
       setSavedState("Could not open .tmdoc");
       window.alert(
