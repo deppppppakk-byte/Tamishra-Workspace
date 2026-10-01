@@ -20,16 +20,59 @@ export type DocumentBlockBase = {
   id: string;
 };
 
+export type TextMarks = {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  superscript?: boolean;
+  subscript?: boolean;
+  color?: string;
+  highlight?: string;
+  fontFamily?: string;
+  fontSizePt?: number;
+};
+
+export type TextRun = {
+  id: string;
+  type: "text";
+  text: string;
+  marks?: TextMarks;
+};
+
+export type LinkInline = {
+  id: string;
+  type: "link";
+  href: string;
+  children: TextRun[];
+};
+
+export type BookmarkInline = {
+  id: string;
+  type: "bookmark";
+  name: string;
+};
+
+export type CommentAnchorInline = {
+  id: string;
+  type: "comment-anchor";
+  commentId: string;
+  edge: "start" | "end";
+};
+
+export type InlineNode = TextRun | LinkInline | BookmarkInline | CommentAnchorInline;
+
 export type ParagraphBlock = DocumentBlockBase & {
   type: "paragraph";
-  text: string;
+  children: InlineNode[];
   style?: string;
+  alignment?: "left" | "center" | "right" | "justify";
 };
 
 export type HeadingBlock = DocumentBlockBase & {
   type: "heading";
   level: 1 | 2 | 3 | 4;
-  text: string;
+  children: InlineNode[];
 };
 
 export type DividerBlock = DocumentBlockBase & {
@@ -38,6 +81,47 @@ export type DividerBlock = DocumentBlockBase & {
 
 export type PageBreakBlock = DocumentBlockBase & {
   type: "page-break";
+};
+
+export type ListItem = {
+  id: string;
+  blocks: DocumentBlock[];
+};
+
+export type ListBlock = DocumentBlockBase & {
+  type: "list";
+  ordered: boolean;
+  start?: number;
+  level: number;
+  items: ListItem[];
+};
+
+export type TableCell = {
+  id: string;
+  colSpan?: number;
+  rowSpan?: number;
+  blocks: DocumentBlock[];
+};
+
+export type TableRow = {
+  id: string;
+  cells: TableCell[];
+};
+
+export type TableBlock = DocumentBlockBase & {
+  type: "table";
+  rows: TableRow[];
+};
+
+export type ImageBlock = DocumentBlockBase & {
+  type: "image";
+  src: string;
+  alt: string;
+  caption?: string;
+  widthPx?: number;
+  heightPx?: number;
+  rotationDeg?: number;
+  layout?: "inline" | "block" | "wrap-left" | "wrap-right" | "center";
 };
 
 export type LegacyRichTextBlock = DocumentBlockBase & {
@@ -51,6 +135,9 @@ export type DocumentBlock =
   | HeadingBlock
   | DividerBlock
   | PageBreakBlock
+  | ListBlock
+  | TableBlock
+  | ImageBlock
   | LegacyRichTextBlock;
 
 export type DocumentSection = {
