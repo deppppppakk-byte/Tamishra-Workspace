@@ -1,9 +1,10 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   AccessToken,
   EgressClient,
   EncodedFileOutput,
+  LiveKitAPI,
   RoomServiceClient,
   S3Upload,
   TrackSource
@@ -19,12 +20,20 @@ import {
   type RecordingStatus,
   type StoredMeetingRecording
 } from "./meeting-recording-store.js";
+import { createMeetingBreakoutStore } from "./meeting-breakout-store.js";
+import {
+  createMeetingIntelligenceStore,
+  type TranscriptSegment
+} from "./meeting-intelligence-store.js";
+import { generateMeetingSummary } from "./meeting-summary.js";
 
 type JsonObject = Record<string, unknown>;
 
 const store = createMeetingStore();
 const collaboration = createMeetingCollaborationStore();
 const recordings = createMeetingRecordingStore();
+const breakouts = createMeetingBreakoutStore();
+const intelligence = createMeetingIntelligenceStore();
 const MAX_BODY_BYTES = 32_768;
 const MAX_PARTICIPANTS = 100;
 const joinAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -319,6 +328,168 @@ function durationMs(start: string, end: string) {
   );
 }
 
+function captionConfig() {
+  const agentName =
+    process.env.WORKSPACE_MEET_TRANSCRIBER_AGENT?.trim() || "";
+  const workerSecret =
+    process.env.WORKSPACE_MEET_TRANSCRIBER_SECRET?.trim() || "";
+  const model =
+    process.env.WORKSPACE_MEET_TRANSCRIBER_MODEL?.trim() ||
+    "tamishra-default";
+  const language =
+    process.env.WORKSPACE_MEET_TRANSCRIBER_LANGUAGE?.trim() ||
+    "multi";
+
+  return {
+    agentName,
+    workerSecret,
+    model,
+    language,
+    configured: Boolean(
+      liveKitConfig() &&
+        agentName &&
+        workerSecret
+    )
+  };
+}
+
+function liveKitApi() {
+  const livekit = liveKitConfig();
+  if (!livekit) return null;
+  return new LiveKitAPI({
+    host: livekit.apiUrl,
+    apiKey: livekit.apiKey,
+    secret: livekit.apiSecret
+  });
+}
+
+async function startCaptionAgent(
+  roomNameValue: string,
+  model?: string,
+  language?: string
+) {
+  const config = captionConfig();
+  const api = liveKitApi();
+
+  if (!api || !config.configured) {
+    throw Object.assign(
+      new Error("transcription_not_configured"),
+      { status: 503 }
+    );
+  }
+
+  const existing = await api.agentDispatch.listDispatch(roomNameValue);
+  const match = existing.find(
+    (item) => item.agentName === config.agentName
+  );
+  if (match) return match;
+
+  return api.agentDispatch.createDispatch(
+    roomNameValue,
+    config.agentName,
+    {
+      metadata: JSON.stringify({
+        roomName: roomNameValue,
+        model: model || config.model,
+        language: language || config.language,
+        transcriptEndpoint:
+          "/v1/meetings/" +
+          encodeURIComponent(roomNameValue) +
+          "/transcript-worker"
+      })
+    }
+  );
+}
+
+async function stopCaptionAgent(
+  roomNameValue: string,
+  dispatchId?: string | null
+) {
+  const config = captionConfig();
+  const api = liveKitApi();
+  if (!api || !config.agentName) return false;
+
+  if (dispatchId) {
+    await api.agentDispatch.deleteDispatch(dispatchId, roomNameValue);
+    return true;
+  }
+
+  const dispatches = await api.agentDispatch.listDispatch(roomNameValue);
+  const matches = dispatches.filter(
+    (item) => item.agentName === config.agentName
+  );
+
+  await Promise.all(
+    matches.map((item) =>
+      api.agentDispatch.deleteDispatch(item.id, roomNameValue)
+    )
+  );
+  return matches.length > 0;
+}
+
+function workerAuthorized(request: IncomingMessage) {
+  const expected = captionConfig().workerSecret;
+  const actual = String(
+    request.headers["x-tamishra-worker-secret"] ?? ""
+  );
+
+  if (!expected || !actual) return false;
+
+  const expectedBytes = Buffer.from(expected);
+  const actualBytes = Buffer.from(actual);
+
+  return (
+    expectedBytes.length === actualBytes.length &&
+    timingSafeEqual(expectedBytes, actualBytes)
+  );
+}
+
+function breakoutMediaRoomName(
+  parentRoomName: string,
+  groupId: string
+) {
+  const parent = parentRoomName
+    .replace(/[^a-zA-Z0-9_-]/g, "-")
+    .slice(0, 80);
+  const group = groupId
+    .replace(/[^a-zA-Z0-9_-]/g, "-")
+    .slice(0, 40);
+  return parent + "--breakout--" + group;
+}
+
+async function ensureBreakoutMediaRoom(
+  name: string,
+  parentRoomName: string,
+  groupId: string,
+  groupLabel: string
+) {
+  const rooms = roomServiceClient();
+  if (!rooms) {
+    throw Object.assign(
+      new Error("livekit_not_configured"),
+      { status: 503 }
+    );
+  }
+
+  try {
+    await rooms.createRoom({
+      name,
+      emptyTimeout: 600,
+      departureTimeout: 120,
+      metadata: JSON.stringify({
+        parentRoomName,
+        groupId,
+        groupLabel,
+        kind: "tamishra-breakout"
+      })
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : String(error);
+    if (!/already exists|exists/i.test(message)) throw error;
+  }
+}
+
 function roomServiceClient() {
   const livekit = liveKitConfig();
   if (!livekit) return null;
@@ -485,6 +656,8 @@ export async function handleMeetingRequest(
     await store.ready();
     await collaboration.ready();
     await recordings.ready();
+    await breakouts.ready();
+    await intelligence.ready();
   } catch (error) {
     console.error("Workspace meeting store initialization failed", error);
     sendJson(
@@ -508,6 +681,7 @@ export async function handleMeetingRequest(
         mediaProvider: "livekit",
         mediaConfigured: Boolean(liveKitConfig()),
         recordingConfigured: recordingConfigured(),
+        transcriptionConfigured: captionConfig().configured,
         capabilities: {
           privateCodes: true,
           waitingRoom: true,
@@ -531,7 +705,12 @@ export async function handleMeetingRequest(
           recording: true,
           recordingConsent: true,
           meetingHistory: true,
-          attendanceReports: true
+          attendanceReports: true,
+          breakoutRooms: true,
+          liveCaptions: true,
+          transcript: true,
+          sharedNotes: true,
+          meetingSummary: true
         }
       },
       origin,
