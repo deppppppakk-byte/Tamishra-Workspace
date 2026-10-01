@@ -1370,6 +1370,15 @@ export async function handleMeetingRequest(
         return true;
       }
 
+      const previousRole = target.role;
+      if (target.role === "cohost" && host.role === "host") {
+        await store.updateParticipantRole(
+          meeting.roomName,
+          target.id,
+          "participant"
+        );
+      }
+
       await store.updateAdmission(
         meeting.roomName,
         target.id,
@@ -1400,7 +1409,7 @@ export async function handleMeetingRequest(
         actorDisplayName: host.displayName,
         eventType: "participant_removed",
         targetParticipantId: target.id,
-        metadata: { disconnected }
+        metadata: { disconnected, previousRole }
       });
 
       sendJson(
@@ -1646,9 +1655,33 @@ export async function handleMeetingRequest(
         return true;
       }
 
+      const targetId = String(body.participantId ?? "");
+      const participants = await store.listParticipants(meeting.roomName);
+      const existingTarget = participants.find(
+        (participant) => participant.id === targetId
+      );
+
+      if (
+        !existingTarget ||
+        existingTarget.role === "host" ||
+        (
+          host.role === "cohost" &&
+          existingTarget.role === "cohost"
+        )
+      ) {
+        sendJson(
+          response,
+          403,
+          { error: "participant_admission_not_allowed" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
       const target = await store.updateAdmission(
         meeting.roomName,
-        String(body.participantId ?? ""),
+        targetId,
         status
       );
 
