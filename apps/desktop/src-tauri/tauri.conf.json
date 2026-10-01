@@ -108,6 +108,22 @@
             "public.data"
           ]
         }
+      },
+      {
+        "ext": [
+          "tmfm"
+        ],
+        "name": "Tamishra Form",
+        "description": "Tamishra Forms native form",
+        "mimeType": "application/vnd.tamishra.form",
+        "role": "Editor",
+        "rank": "Owner",
+        "exportedType": {
+          "identifier": "in.tamishra.forms.tmfm",
+          "conformsTo": [
+            "public.data"
+          ]
+        }
       }
     ]
   }
