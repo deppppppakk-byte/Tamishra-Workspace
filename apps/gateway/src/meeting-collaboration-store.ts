@@ -227,9 +227,18 @@ class MemoryMeetingCollaborationStore
 
   async listSignals(roomName: string) {
     const prefix = roomName + ":";
+    const reactionCutoff = Date.now() - 8_000;
     return Array.from(this.signals.entries())
       .filter(([key]) => key.startsWith(prefix))
-      .map(([, signal]) => signal)
+      .map(([, signal]) => ({
+        ...signal,
+        reaction:
+          signal.reaction &&
+          new Date(signal.updatedAt).getTime() >= reactionCutoff
+            ? signal.reaction
+            : null
+      }))
+      .filter((signal) => signal.handRaised || signal.reaction)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
@@ -453,7 +462,13 @@ class PostgresMeetingCollaborationStore
       select participant_id, display_name, hand_raised, reaction, updated_at
       from workspace_meeting_signals
       where room_name=${roomName}
-        and (hand_raised=true or reaction is not null)
+        and (
+          hand_raised=true
+          or (
+            reaction is not null
+            and updated_at >= now() - interval '8 seconds'
+          )
+        )
       order by updated_at desc
     `;
     return rows.map((row) => toSignal(row as Record<string, unknown>));
