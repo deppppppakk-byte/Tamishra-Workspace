@@ -1,0 +1,270 @@
+.page {
+  min-height: 100vh;
+  color: #172033;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(49, 92, 244, 0.16), transparent 32rem),
+    radial-gradient(circle at 90% 100%, rgba(65, 188, 160, 0.12), transparent 28rem),
+    #f3f6fb;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(420px, 0.95fr);
+}
+
+.brandPanel {
+  min-height: 100vh;
+  padding: clamp(34px, 6vw, 82px);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 42px;
+}
+
+.mark {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  color: white;
+  background: linear-gradient(145deg, #2448ca, #557aff);
+  box-shadow: 0 14px 32px rgba(49, 92, 244, 0.24);
+  display: grid;
+  place-items: center;
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.eyebrow {
+  margin: 0 0 13px;
+  color: #315cf4;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.14em;
+}
+
+.brandPanel h1 {
+  max-width: 720px;
+  margin: 0;
+  font-size: clamp(42px, 6.4vw, 86px);
+  line-height: 0.98;
+  letter-spacing: -0.055em;
+}
+
+.intro {
+  max-width: 650px;
+  margin: 24px 0 0;
+  color: #68758a;
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.securityNote {
+  max-width: 440px;
+  padding: 15px 17px;
+  border: 1px solid rgba(23, 32, 51, 0.07);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(14px);
+}
+
+.securityNote strong,
+.securityNote span {
+  display: block;
+}
+
+.securityNote strong {
+  font-size: 11px;
+}
+
+.securityNote span {
+  margin-top: 5px;
+  color: #7a8699;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.formPanel {
+  min-height: 100vh;
+  padding: 26px;
+  display: grid;
+  place-items: center;
+}
+
+.formCard {
+  width: min(470px, 100%);
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  border-radius: 28px;
+  padding: 28px;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(24px);
+  box-shadow: 0 28px 80px rgba(34, 48, 76, 0.13);
+}
+
+.tabs {
+  padding: 4px;
+  border-radius: 13px;
+  background: #f0f3f8;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.tabs button {
+  height: 38px;
+  border: 0;
+  border-radius: 10px;
+  color: #728096;
+  background: transparent;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.tabs .tabActive {
+  color: #1f2c41;
+  background: white;
+  box-shadow: 0 5px 15px rgba(38, 51, 78, 0.07);
+}
+
+.heading {
+  padding: 27px 2px 20px;
+}
+
+.heading > span {
+  color: #315cf4;
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+}
+
+.heading h2 {
+  margin: 7px 0 0;
+  font-size: 25px;
+  letter-spacing: -0.035em;
+}
+
+.heading p {
+  margin: 8px 0 0;
+  color: #7c8798;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.form {
+  display: grid;
+  gap: 13px;
+}
+
+.form > label:not(.remember) {
+  display: grid;
+  gap: 6px;
+}
+
+.form > label > span {
+  color: #5d697d;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.form input:not([type="checkbox"]) {
+  width: 100%;
+  height: 44px;
+  border: 1px solid rgba(23, 32, 51, 0.11);
+  border-radius: 12px;
+  padding: 0 12px;
+  outline: none;
+  color: #26344a;
+  background: rgba(249, 251, 254, 0.85);
+  font-size: 11px;
+}
+
+.form input:not([type="checkbox"]):focus {
+  border-color: rgba(49, 92, 244, 0.45);
+  box-shadow: 0 0 0 4px rgba(49, 92, 244, 0.07);
+  background: white;
+}
+
+.remember {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #657187;
+  font-size: 9px;
+}
+
+.remember input {
+  accent-color: #315cf4;
+}
+
+.error {
+  border: 1px solid rgba(180, 35, 24, 0.12);
+  border-radius: 10px;
+  padding: 9px 10px;
+  color: #b42318;
+  background: rgba(180, 35, 24, 0.05);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.submit {
+  height: 44px;
+  margin-top: 3px;
+  border: 0;
+  border-radius: 12px;
+  color: white;
+  background: #172033;
+  box-shadow: 0 10px 24px rgba(23, 32, 51, 0.16);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.submit:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.footerText {
+  margin: 18px 0 0;
+  color: #98a2b3;
+  text-align: center;
+  font-size: 8px;
+}
+
+@media (max-width: 900px) {
+  .page {
+    grid-template-columns: 1fr;
+  }
+
+  .brandPanel {
+    min-height: auto;
+    padding: 30px 24px 18px;
+    gap: 26px;
+  }
+
+  .brandPanel h1 {
+    max-width: 620px;
+    font-size: clamp(38px, 10vw, 66px);
+  }
+
+  .securityNote {
+    display: none;
+  }
+
+  .formPanel {
+    min-height: auto;
+    padding: 18px 18px 42px;
+  }
+}
+
+@media (max-width: 520px) {
+  .brandPanel h1 {
+    font-size: 42px;
+  }
+
+  .intro {
+    font-size: 13px;
+  }
+
+  .formCard {
+    padding: 18px;
+    border-radius: 20px;
+  }
+}
