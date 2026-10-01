@@ -1300,6 +1300,335 @@ class PostgresChatStore implements ChatStore {
     return rows.length > 0;
   }
 
+  async updateMemberSettings(
+    conversationId: string,
+    userId: string,
+    settings: { muted?: boolean; pinned?: boolean }
+  ) {
+    await this.ready();
+    const rows = await this.sql`
+      UPDATE workspace_chat_members
+      SET
+        muted = COALESCE(${typeof settings.muted === "boolean" ? settings.muted : null}, muted),
+        pinned = COALESCE(${typeof settings.pinned === "boolean" ? settings.pinned : null}, pinned)
+      WHERE conversation_id = ${conversationId}
+        AND user_id = ${userId}
+      RETURNING conversation_id, user_id, role, joined_at, muted, pinned,
+                last_read_message_id, last_read_at
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    return row ? toMember(row) : null;
+  }
+
+  async createFile(input: {
+    organizationId: string;
+    conversationId: string;
+    uploaderId: string;
+    name: string;
+    mimeType: string;
+    bytes: Buffer;
+  }) {
+    await this.ready();
+    const id = randomUUID();
+    const base64 = input.bytes.toString("base64");
+    const rows = await this.sql`
+      INSERT INTO workspace_chat_files (
+        id, organization_id, conversation_id, uploader_id, name, mime_type, size, bytes
+      )
+      SELECT
+        ${id},
+        ${input.organizationId},
+        ${input.conversationId},
+        ${input.uploaderId},
+        ${input.name},
+        ${input.mimeType},
+        ${input.bytes.byteLength},
+        decode(${base64}, 'base64')
+      WHERE EXISTS (
+        SELECT 1
+        FROM workspace_chat_members cm
+        JOIN workspace_chat_conversations c ON c.id = cm.conversation_id
+        WHERE cm.conversation_id = ${input.conversationId}
+          AND cm.user_id = ${input.uploaderId}
+          AND c.organization_id = ${input.organizationId}
+      )
+      RETURNING id, name, mime_type, size
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) {
+      throw Object.assign(new Error("conversation_not_found"), { status: 404 });
+    }
+    return {
+      id: String(row.id),
+      fileId: String(row.id),
+      name: String(row.name),
+      mimeType: String(row.mime_type),
+      size: Number(row.size)
+    } satisfies ChatAttachment;
+  }
+
+  async validateFiles(conversationId: string, fileIds: string[]) {
+    await this.ready();
+    for (const fileId of fileIds) {
+      const rows = await this.sql`
+        SELECT id
+        FROM workspace_chat_files
+        WHERE id = ${fileId}
+          AND conversation_id = ${conversationId}
+        LIMIT 1
+      `;
+      if (!rows.length) return false;
+    }
+    return true;
+  }
+
+  async getFileForUser(fileId: string, userId: string) {
+    await this.ready();
+    const rows = await this.sql`
+      SELECT
+        f.id,
+        f.organization_id,
+        f.conversation_id,
+        f.uploader_id,
+        f.name,
+        f.mime_type,
+        f.size,
+        f.created_at,
+        encode(f.bytes, 'base64') AS bytes_base64
+      FROM workspace_chat_files f
+      JOIN workspace_chat_members cm
+        ON cm.conversation_id = f.conversation_id
+       AND cm.user_id = ${userId}
+      WHERE f.id = ${fileId}
+      LIMIT 1
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      conversationId: String(row.conversation_id),
+      uploaderId: String(row.uploader_id),
+      name: String(row.name),
+      mimeType: String(row.mime_type),
+      size: Number(row.size),
+      bytes: Buffer.from(String(row.bytes_base64 ?? ""), "base64"),
+      createdAt: iso(row.created_at) ?? nowIso()
+    } satisfies StoredChatFile;
+  }
+
+  async appendEvent(input: AppendEventInput) {
+    await this.ready();
+    const rows = await this.sql`
+      INSERT INTO workspace_chat_events (
+        organization_id, conversation_id, actor_id, target_user_id, type, payload
+      )
+      VALUES (
+        ${input.organizationId},
+        ${input.conversationId ?? null},
+        ${input.actorId ?? null},
+        ${input.targetUserId ?? null},
+        ${input.type},
+        ${JSON.stringify(input.payload ?? {})}::jsonb
+      )
+      RETURNING id, organization_id, conversation_id, actor_id, target_user_id,
+                type, payload, created_at
+    `;
+    return toEvent(rows[0] as Record<string, unknown>);
+  }
+
+  async listEvents(
+    organizationId: string,
+    userId: string,
+    afterId: string,
+    limit = 100
+  ) {
+    await this.ready();
+    const cursor = /^\d+$/.test(afterId) ? afterId : "0";
+    const safeLimit = Math.max(1, Math.min(250, limit));
+    const rows = await this.sql`
+      SELECT
+        e.id,
+        e.organization_id,
+        e.conversation_id,
+        e.actor_id,
+        e.target_user_id,
+        e.type,
+        e.payload,
+        e.created_at
+      FROM workspace_chat_events e
+      WHERE e.organization_id = ${organizationId}
+        AND e.id > ${cursor}::bigint
+        AND (e.target_user_id IS NULL OR e.target_user_id = ${userId})
+        AND (
+          e.conversation_id IS NULL OR EXISTS (
+            SELECT 1
+            FROM workspace_chat_members cm
+            WHERE cm.conversation_id = e.conversation_id
+              AND cm.user_id = ${userId}
+          )
+        )
+      ORDER BY e.id ASC
+      LIMIT ${safeLimit}
+    `;
+    return rows.map((row) => toEvent(row as Record<string, unknown>));
+  }
+
+  async createNotification(input: CreateNotificationInput) {
+    await this.ready();
+    const id = randomUUID();
+    const rows = await this.sql`
+      INSERT INTO workspace_chat_notifications (
+        id, organization_id, user_id, conversation_id, message_id,
+        kind, title, body_preview
+      )
+      VALUES (
+        ${id},
+        ${input.organizationId},
+        ${input.userId},
+        ${input.conversationId},
+        ${input.messageId},
+        ${input.kind},
+        ${input.title},
+        ${input.bodyPreview}
+      )
+      RETURNING id, organization_id, user_id, conversation_id, message_id,
+                kind, title, body_preview, created_at, read_at
+    `;
+    return toNotification(rows[0] as Record<string, unknown>);
+  }
+
+  async listNotifications(organizationId: string, userId: string, limit = 50) {
+    await this.ready();
+    const safeLimit = Math.max(1, Math.min(100, limit));
+    const rows = await this.sql`
+      SELECT id, organization_id, user_id, conversation_id, message_id,
+             kind, title, body_preview, created_at, read_at
+      FROM workspace_chat_notifications
+      WHERE organization_id = ${organizationId}
+        AND user_id = ${userId}
+      ORDER BY (read_at IS NULL) DESC, created_at DESC
+      LIMIT ${safeLimit}
+    `;
+    return rows.map((row) => toNotification(row as Record<string, unknown>));
+  }
+
+  async markNotificationRead(notificationId: string, userId: string) {
+    await this.ready();
+    const rows = await this.sql`
+      UPDATE workspace_chat_notifications
+      SET read_at = COALESCE(read_at, NOW())
+      WHERE id = ${notificationId}
+        AND user_id = ${userId}
+      RETURNING id
+    `;
+    return rows.length > 0;
+  }
+
+  async markAllNotificationsRead(organizationId: string, userId: string) {
+    await this.ready();
+    const rows = await this.sql`
+      UPDATE workspace_chat_notifications
+      SET read_at = NOW()
+      WHERE organization_id = ${organizationId}
+        AND user_id = ${userId}
+        AND read_at IS NULL
+      RETURNING id
+    `;
+    return rows.length;
+  }
+
+  async heartbeatPresence(
+    organizationId: string,
+    userId: string,
+    displayName: string
+  ) {
+    await this.ready();
+    const rows = await this.sql`
+      INSERT INTO workspace_chat_presence (
+        organization_id, user_id, display_name, last_seen_at
+      )
+      VALUES (${organizationId}, ${userId}, ${displayName}, NOW())
+      ON CONFLICT (organization_id, user_id)
+      DO UPDATE SET
+        display_name = EXCLUDED.display_name,
+        last_seen_at = NOW()
+      RETURNING organization_id, user_id, display_name, last_seen_at
+    `;
+    return toPresence(rows[0] as Record<string, unknown>);
+  }
+
+  async listPresence(organizationId: string) {
+    await this.ready();
+    const rows = await this.sql`
+      SELECT organization_id, user_id, display_name, last_seen_at
+      FROM workspace_chat_presence
+      WHERE organization_id = ${organizationId}
+      ORDER BY last_seen_at DESC
+      LIMIT 500
+    `;
+    return rows.map((row) => toPresence(row as Record<string, unknown>));
+  }
+
+  async setTyping(
+    conversationId: string,
+    userId: string,
+    displayName: string,
+    active: boolean
+  ) {
+    await this.ready();
+    if (!active) {
+      await this.sql`
+        DELETE FROM workspace_chat_typing
+        WHERE conversation_id = ${conversationId}
+          AND user_id = ${userId}
+      `;
+      return null;
+    }
+    const rows = await this.sql`
+      INSERT INTO workspace_chat_typing (
+        conversation_id, user_id, display_name, expires_at, updated_at
+      )
+      SELECT
+        ${conversationId},
+        ${userId},
+        ${displayName},
+        NOW() + INTERVAL '6 seconds',
+        NOW()
+      WHERE EXISTS (
+        SELECT 1
+        FROM workspace_chat_members
+        WHERE conversation_id = ${conversationId}
+          AND user_id = ${userId}
+      )
+      ON CONFLICT (conversation_id, user_id)
+      DO UPDATE SET
+        display_name = EXCLUDED.display_name,
+        expires_at = EXCLUDED.expires_at,
+        updated_at = NOW()
+      RETURNING conversation_id, user_id, display_name, expires_at
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    return row ? toTyping(row) : null;
+  }
+
+  async listTyping(conversationId: string) {
+    await this.ready();
+    await this.sql`
+      DELETE FROM workspace_chat_typing
+      WHERE conversation_id = ${conversationId}
+        AND expires_at <= NOW()
+    `;
+    const rows = await this.sql`
+      SELECT conversation_id, user_id, display_name, expires_at
+      FROM workspace_chat_typing
+      WHERE conversation_id = ${conversationId}
+        AND expires_at > NOW()
+      ORDER BY updated_at DESC
+    `;
+    return rows.map((row) => toTyping(row as Record<string, unknown>));
+  }
+
   async searchMessages(organizationId: string, userId: string, query: string) {
     await this.ready();
     const pattern = "%" + query + "%";
