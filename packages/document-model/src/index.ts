@@ -83,6 +83,17 @@ export type PageBreakBlock = DocumentBlockBase & {
   type: "page-break";
 };
 
+export type SectionBreakBlock = DocumentBlockBase & {
+  type: "section-break";
+  kind: "next-page" | "continuous";
+};
+
+export type ColumnsBlock = DocumentBlockBase & {
+  type: "columns";
+  count: 1 | 2 | 3;
+  blocks: DocumentBlock[];
+};
+
 export type ListItem = {
   id: string;
   blocks: DocumentBlock[];
@@ -135,6 +146,8 @@ export type DocumentBlock =
   | HeadingBlock
   | DividerBlock
   | PageBreakBlock
+  | SectionBreakBlock
+  | ColumnsBlock
   | ListBlock
   | TableBlock
   | ImageBlock
