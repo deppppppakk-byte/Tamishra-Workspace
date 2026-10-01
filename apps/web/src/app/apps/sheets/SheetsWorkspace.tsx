@@ -141,6 +141,33 @@ export default function SheetsWorkspace() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke<string | null>("startup_tmsh"))
+      .then((raw) => {
+        if (cancelled || !raw) return;
+        const parsed = parseTamishraSheet(new TextEncoder().encode(raw));
+        setWorkbook(parsed.workbook);
+        setSelection({ anchor: "A1", focus: "A1" });
+        setSaveState(".tmsh opened from desktop");
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error("Could not open startup .tmsh", error);
+        setSaveState("Startup .tmsh could not be opened");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!loaded) return;
     setSaveState("Saving…");
     const timer = window.setTimeout(() => {
