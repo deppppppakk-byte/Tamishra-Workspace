@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "in.tamishra.workspace",
   "build": {
-    "beforeDevCommand": "npm --prefix ../../.. run dev:web",
-    "beforeBuildCommand": "npm --prefix ../../.. run build:web",
+    "beforeDevCommand": "npm --prefix ../.. run dev:web",
+    "beforeBuildCommand": "npm --prefix ../.. run build:web",
     "devUrl": "http://localhost:3000",
     "frontendDist": "../../web/out"
   },
