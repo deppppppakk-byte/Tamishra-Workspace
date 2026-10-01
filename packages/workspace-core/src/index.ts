@@ -21,7 +21,8 @@ export const workspaceApps: WorkspaceApp[] = [
   { id: "notes", name: "Tamishra Notes", shortName: "N", description: "Capture ideas, checklists, notebooks, tags and knowledge.", status: "functional", href: "/apps/notes", nativeExtension: ".tmnt" },
   { id: "forms", name: "Tamishra Forms", shortName: "F", description: "Build forms, surveys and structured response flows.", status: "functional", href: "/apps/forms", nativeExtension: ".tmfm" },
   { id: "files", name: "Tamishra Files", shortName: "FL", description: "Organize, search, open, favorite and recover workspace files.", status: "functional", href: "/apps/files" },
-  { id: "blocks", name: "Tamishra Blocks", shortName: "B", description: "Publish and reuse structured workspace objects across Tamishra apps.", status: "foundation", href: "/apps/blocks", nativeExtension: ".tmblk" }
+  { id: "blocks", name: "Tamishra Blocks", shortName: "B", description: "Publish and reuse structured workspace objects across Tamishra apps.", status: "foundation", href: "/apps/blocks", nativeExtension: ".tmblk" },
+  { id: "links", name: "Tamishra Links", shortName: "L", description: "Inspect and manage live dependencies between Workspace apps.", status: "foundation", href: "/apps/links" }
 ];
 
 export function workspaceAppById(id: string) {
