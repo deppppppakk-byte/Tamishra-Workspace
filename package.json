@@ -37,7 +37,8 @@
     "start:gateway": "npm run start --workspace @tamishra/gateway",
     "check:sheets": "npm run check --workspace @tamishra/sheets-engine",
     "test:sheets": "npm run test --workspace @tamishra/sheets-engine",
-    "check:chat-core": "npm run check --workspace @tamishra/chat-core"
+    "check:chat-core": "npm run check --workspace @tamishra/chat-core",
+    "test:patra-smoke": "npm run build:gateway && node scripts/patra-smoke.mjs"
   },
   "engines": {
     "node": ">=22"
