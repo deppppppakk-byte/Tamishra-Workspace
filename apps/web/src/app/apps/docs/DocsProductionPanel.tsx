@@ -46,6 +46,8 @@ type Props = {
   onTrash: (id: string) => void;
   onRestore: (id: string) => void;
   onDeleteForever: (id: string) => void;
+  onCreateFolder: (name: string) => void;
+  onMoveCurrentToFolder: (folderId: string | null) => void;
   onImportDocx: () => void;
   onExportDocx: () => void;
   onGoToOutline: (entry: DocsOutlineEntry) => void;
@@ -149,6 +151,51 @@ export default function DocsProductionPanel(props: Props) {
               <button onClick={props.onImportDocx}>Open DOCX</button>
               <button onClick={props.onExportDocx}>Export DOCX</button>
             </div>
+
+            <div className="docsFolderTools">
+              <button
+                onClick={() => {
+                  const name = window.prompt("Folder name");
+                  if (name?.trim()) props.onCreateFolder(name.trim());
+                }}
+              >
+                + Folder
+              </button>
+              <select
+                value={
+                  workspace.records.find((item) => item.id === currentDocumentId)?.folderId ?? ""
+                }
+                onChange={(event) =>
+                  props.onMoveCurrentToFolder(event.target.value || null)
+                }
+                disabled={!currentDocumentId}
+                aria-label="Move current document to folder"
+              >
+                <option value="">No folder</option>
+                {workspace.folders
+                  .filter((folder) => !folder.trashedAt)
+                  .map((folder) => (
+                    <option key={folder.id} value={folder.id}>{folder.name}</option>
+                  ))}
+              </select>
+            </div>
+
+            {workspace.folders.filter((folder) => !folder.trashedAt).length > 0 && (
+              <div className="docsFolderList">
+                {workspace.folders
+                  .filter((folder) => !folder.trashedAt)
+                  .map((folder) => (
+                    <div key={folder.id}>
+                      <strong>{folder.name}</strong>
+                      <span>
+                        {workspace.records.filter(
+                          (record) => record.folderId === folder.id && !record.trashedAt
+                        ).length} files
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            )}
 
             <h4>Recent documents</h4>
             {currentRecords.length === 0 ? (
