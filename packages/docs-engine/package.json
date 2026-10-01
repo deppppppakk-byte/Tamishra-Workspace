@@ -1,0 +1,12 @@
+{
+  "name": "@tamishra/docs-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@tamishra/document-model": "0.1.0"
+  }
+}
