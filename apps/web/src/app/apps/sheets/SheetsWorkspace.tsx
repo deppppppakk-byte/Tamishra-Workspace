@@ -7,6 +7,7 @@ import {
   cellAddress,
   cloneWorkbook,
   columnLabel,
+  createTamishraSheetPackage,
   createWorkbook,
   csvToCells,
   evaluateCell,
@@ -15,13 +16,17 @@ import {
   normalizeWorkbook,
   parseAddress,
   parseClipboardMatrix,
+  parseTamishraSheet,
   parseWorkbookJson,
   rangeAddresses,
   rangeDimensions,
   rangeLabel,
   rangeToTsv,
+  serializeTamishraSheet,
   serializeWorkbook,
   sortRangeRows,
+  tamishraSheetFilename,
+  TMSHEET_MIME_TYPE,
   worksheetToCsv,
   type CellRange,
   type CellStyle,
@@ -419,6 +424,21 @@ export default function SheetsWorkspace() {
     );
   }
 
+  function exportNative() {
+    const packageData = createTamishraSheetPackage(workbook);
+    const bytes = serializeTamishraSheet(packageData);
+    const buffer = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(buffer).set(bytes);
+    const blob = new Blob([buffer], { type: TMSHEET_MIME_TYPE });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = tamishraSheetFilename(workbook.title);
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setSaveState(".tmsh exported");
+  }
+
   function exportBackup() {
     downloadText(
       safeFileName(workbook.title) + ".tamishra-sheet.json",
@@ -427,30 +447,42 @@ export default function SheetsWorkspace() {
     );
   }
 
-  function importFile(file: File) {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = typeof reader.result === "string" ? reader.result : "";
-      if (/\.json$/i.test(file.name)) {
-        const parsed = parseWorkbookJson(text);
-        if (!parsed) {
-          window.alert("This workbook backup is invalid or unsupported.");
-          return;
-        }
+  async function importFile(file: File) {
+    if (/\.tmsh$/i.test(file.name)) {
+      try {
+        const parsed = parseTamishraSheet(await file.arrayBuffer());
         commitMutation((next) => {
-          Object.assign(next, parsed);
+          Object.assign(next, parsed.workbook);
         });
         setSelection({ anchor: "A1", focus: "A1" });
+        setSaveState(".tmsh opened");
+      } catch (error) {
+        window.alert(
+          error instanceof Error ? error.message : "This .tmsh file is invalid."
+        );
+      }
+      return;
+    }
+
+    const text = await file.text();
+    if (/\.json$/i.test(file.name)) {
+      const parsed = parseWorkbookJson(text);
+      if (!parsed) {
+        window.alert("This workbook backup is invalid or unsupported.");
         return;
       }
-
       commitMutation((next) => {
-        const sheet = activeSheetIn(next);
-        sheet.cells = csvToCells(text);
+        Object.assign(next, parsed);
       });
       setSelection({ anchor: "A1", focus: "A1" });
-    };
-    reader.readAsText(file);
+      return;
+    }
+
+    commitMutation((next) => {
+      const sheet = activeSheetIn(next);
+      sheet.cells = csvToCells(text);
+    });
+    setSelection({ anchor: "A1", focus: "A1" });
   }
 
   async function copySelection() {
@@ -625,6 +657,7 @@ export default function SheetsWorkspace() {
           </div>
           <div className={styles.menuRow}>
             <button onClick={() => fileInputRef.current?.click()}>Import</button>
+            <button onClick={exportNative}>Save .tmsh</button>
             <button onClick={exportBackup}>Backup</button>
             <button onClick={restoreBackup} disabled={!recoveryAvailable}>
               Recover
@@ -640,8 +673,8 @@ export default function SheetsWorkspace() {
         <div className={styles.topActions}>
           <button
             className={styles.iconButton}
-            title="Export workbook backup"
-            onClick={exportBackup}
+            title="Export native .tmsh workbook"
+            onClick={exportNative}
           >
             ↓
           </button>
@@ -762,6 +795,9 @@ export default function SheetsWorkspace() {
         >
           Import
         </button>
+        <button className={styles.actionButton} onClick={exportNative}>
+          Export .tmsh
+        </button>
         <button className={styles.actionButton} onClick={exportCsv}>
           Export CSV
         </button>
@@ -784,10 +820,10 @@ export default function SheetsWorkspace() {
           ref={fileInputRef}
           className={styles.hiddenInput}
           type="file"
-          accept=".csv,text/csv,.json,application/json"
+          accept=".tmsh,application/vnd.tamishra.spreadsheet,.csv,text/csv,.json,application/json"
           onChange={(event) => {
             const file = event.target.files?.[0];
-            if (file) importFile(file);
+            if (file) void importFile(file);
             event.target.value = "";
           }}
         />
