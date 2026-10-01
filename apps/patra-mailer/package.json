@@ -1,0 +1,19 @@
+{
+  "name": "@tamishra/patra-mailer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.mjs",
+    "dev": "node --watch src/index.mjs"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "0.10.4",
+    "nodemailer": "^10.0.13",
+    "postal-mime": "^4.0.0",
+    "smtp-server": "^3.19.16"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
