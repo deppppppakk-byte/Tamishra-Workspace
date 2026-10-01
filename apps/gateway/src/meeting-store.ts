@@ -206,7 +206,7 @@ class MemoryMeetingStore implements MeetingStore {
 
 class PostgresMeetingStore implements MeetingStore {
   readonly kind = "postgres" as const;
-  private readonly sql;
+  private readonly sql: ReturnType<typeof neon>;
   private readyPromise: Promise<void> | null = null;
 
   constructor(databaseUrl: string) {
