@@ -284,14 +284,15 @@ export function createTemplateForm(
     fields[1].options = ["Option A", "Option B", "Option C", "Option D"];
   }
 
-  return {
+  return normalizeForm({
     ...form,
     fields,
+    pages: [createFormPage("Page 1", fields.map((field) => field.id))],
     description:
       template === "site-inspection"
         ? "Capture field observations with a structured Tamishra form."
         : ""
-  };
+  });
 }
 
 export function getFieldsForPage(form: TamishraForm, pageId: string) {
