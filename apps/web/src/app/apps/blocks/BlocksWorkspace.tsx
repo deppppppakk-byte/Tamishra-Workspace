@@ -31,12 +31,15 @@ const kindLabels: Record<TamishraBlockKind, string> = {
   custom: "Custom"
 };
 
-const targetApps = [
-  { id: "docs", label: "Docs" },
-  { id: "slides", label: "Slides" },
-  { id: "notes", label: "Notes" },
-  { id: "forms", label: "Forms" }
-];
+const targetApps = {
+  "rich-text": [{ id: "notes", label: "Notes" }],
+  visual: [{ id: "slides", label: "Slides" }],
+  table: [{ id: "slides", label: "Slides" }],
+  chart: [] as Array<{ id: string; label: string }>,
+  form: [] as Array<{ id: string; label: string }>,
+  reference: [] as Array<{ id: string; label: string }>,
+  custom: [] as Array<{ id: string; label: string }>
+} satisfies Record<TamishraBlockKind, Array<{ id: string; label: string }>>;
 
 function downloadBlock(block: TamishraBlock) {
   const bytes = serializeTamishraBlock(block);
@@ -161,19 +164,36 @@ export default function BlocksWorkspace() {
           <article className={styles.card} key={block.id}>
             <div className={styles.cardTop}>
               <span className={styles.kind}>{kindLabels[block.kind]}</span>
-              <span>{block.sourceApp}</span>
+              <span>
+                {block.binding?.mode === "live" ? "LIVE · " : ""}
+                {block.sourceApp}
+              </span>
             </div>
             <h2>{block.title}</h2>
             <p className={styles.meta}>
-              Updated {new Date(block.updatedAt).toLocaleString()}
+              Updated {new Date(block.updatedAt).toLocaleString()} · Block v{block.version}
             </p>
+            {block.binding?.mode === "live" && (
+              <div className={styles.liveSource}>
+                <strong>Linked source</strong>
+                <span>
+                  {block.binding.source.app}
+                  {block.binding.source.locator
+                    ? " · " + block.binding.source.locator
+                    : ""}
+                  {block.binding.source.revision !== undefined
+                    ? " · rev " + block.binding.source.revision
+                    : ""}
+                </span>
+              </div>
+            )}
             {block.tags.length > 0 && (
               <div className={styles.tags}>
                 {block.tags.map((tag) => <span key={tag}>{tag}</span>)}
               </div>
             )}
             <div className={styles.sendRow}>
-              {targetApps.map((app) => (
+              {targetApps[block.kind].map((app) => (
                 <button
                   key={app.id}
                   onClick={() => sendTo(block, app.id)}
@@ -182,6 +202,9 @@ export default function BlocksWorkspace() {
                 </button>
               ))}
             </div>
+            {!targetApps[block.kind].length && (
+              <p className={styles.meta}>No compatible app consumer is enabled yet.</p>
+            )}
             <div className={styles.cardActions}>
               <button onClick={() => downloadBlock(block)}>Export</button>
               <button className={styles.danger} onClick={() => remove(block.id)}>
