@@ -1,6 +1,6 @@
 import type { MailProvider, MailProviderCapabilities } from "./index";
 
-export type MailConnectionMethod = "oauth" | "password" | "app-password" | "native";
+export type MailConnectionMethod = "native" | "server";
 
 export type MailProviderDescriptor = {
   key: string;
@@ -20,10 +20,10 @@ export type MailProviderDescriptor = {
 
 export const builtInMailProviders: MailProviderDescriptor[] = [
   {
-    key: "google",
-    name: "Google Mail",
-    description: "Connect a Google account through OAuth. Tokens must be stored outside the browser.",
-    connectionMethod: "oauth",
+    key: "tamishra",
+    name: "Tamishra Mail",
+    description: "First-party Tamishra mailbox service owned and operated by Tamishra Workspace.",
+    connectionMethod: "native",
     recommended: true,
     capabilities: {
       folders: true,
@@ -35,24 +35,10 @@ export const builtInMailProviders: MailProviderDescriptor[] = [
     }
   },
   {
-    key: "microsoft",
-    name: "Microsoft Mail",
-    description: "Connect Microsoft 365 or Outlook mail through OAuth.",
-    connectionMethod: "oauth",
-    capabilities: {
-      folders: true,
-      labels: false,
-      threads: true,
-      drafts: true,
-      search: true,
-      pushSync: true
-    }
-  },
-  {
     key: "imap-smtp",
-    name: "IMAP + SMTP",
-    description: "Connect standards-based mail servers without coupling the app to one vendor.",
-    connectionMethod: "password",
+    name: "Custom Mail Server",
+    description: "Optional standards-based IMAP and SMTP connection for independent mail servers.",
+    connectionMethod: "server",
     capabilities: {
       folders: true,
       labels: false,
@@ -62,28 +48,14 @@ export const builtInMailProviders: MailProviderDescriptor[] = [
       pushSync: false
     },
     fields: [
-      { key: "email", label: "Email address", type: "email", placeholder: "you@example.com" },
-      { key: "imapHost", label: "IMAP host", type: "text", placeholder: "imap.example.com" },
+      { key: "email", label: "Email address", type: "email", placeholder: "you@yourdomain.com" },
+      { key: "imapHost", label: "IMAP host", type: "text", placeholder: "imap.yourdomain.com" },
       { key: "imapPort", label: "IMAP port", type: "number", placeholder: "993" },
-      { key: "smtpHost", label: "SMTP host", type: "text", placeholder: "smtp.example.com" },
+      { key: "smtpHost", label: "SMTP host", type: "text", placeholder: "smtp.yourdomain.com" },
       { key: "smtpPort", label: "SMTP port", type: "number", placeholder: "465 or 587" },
       { key: "username", label: "Username", type: "text" },
-      { key: "password", label: "Password / app password", type: "password", secret: true }
+      { key: "password", label: "Mail password", type: "password", secret: true }
     ]
-  },
-  {
-    key: "tamishra",
-    name: "Tamishra Mail",
-    description: "Future first-party mailbox service using the same provider contract.",
-    connectionMethod: "native",
-    capabilities: {
-      folders: true,
-      labels: true,
-      threads: true,
-      drafts: true,
-      search: true,
-      pushSync: true
-    }
   }
 ];
 
