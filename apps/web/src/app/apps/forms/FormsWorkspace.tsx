@@ -562,6 +562,106 @@ export default function FormsWorkspace() {
     return () => window.clearTimeout(timer);
   }, [snapshot, loaded, selectedId]);
 
+  const saveFormToCloud = async (form: TamishraForm) => {
+    const result = await workspaceApi<{
+      persistence: "postgres" | "ephemeral-memory";
+      revision: number;
+      updatedAt: string;
+      form: TamishraForm;
+    }>("/v1/forms/" + encodeURIComponent(form.id), {
+      method: "PUT",
+      body: JSON.stringify({ form })
+    });
+    setStatus(
+      result.persistence === "postgres"
+        ? "Published to Workspace cloud"
+        : "Published to development memory"
+    );
+    return result;
+  };
+
+  const changePublishedState = async (target: "published" | "closed") => {
+    if (!selectedForm) return;
+    const next = setFormStatus(selectedForm, target);
+    setStatus(target === "published" ? "Publishing…" : "Updating public form…");
+    try {
+      await saveFormToCloud(next);
+      updateForm(selectedForm.id, next);
+    } catch (error) {
+      setStatus(
+        error instanceof Error && (error as Error & { status?: number }).status === 401
+          ? "Sign in to publish this form"
+          : "Could not update the public form"
+      );
+    }
+  };
+
+  const loadCloudResponses = async () => {
+    if (!selectedForm || selectedForm.status === "draft") return;
+    try {
+      const result = await workspaceApi<{
+        persistence: "postgres" | "ephemeral-memory";
+        responses: Array<{
+          id: string;
+          formId: string;
+          submittedAt: string;
+          answers: Record<string, unknown>;
+        }>;
+      }>("/v1/forms/" + encodeURIComponent(selectedForm.id) + "/responses");
+
+      const remote: FormResponse[] = result.responses.map((response) => ({
+        id: response.id,
+        formId: response.formId,
+        submittedAt: response.submittedAt,
+        answers: Object.fromEntries(
+          Object.entries(response.answers).map(([key, value]) => [
+            key,
+            Array.isArray(value) ? value.map(String) : String(value ?? "")
+          ])
+        )
+      }));
+
+      setSnapshot((current) => ({
+        ...current,
+        responses: [
+          ...remote,
+          ...current.responses.filter(
+            (response) =>
+              response.formId !== selectedForm.id ||
+              !remote.some((item) => item.id === response.id)
+          )
+        ]
+      }));
+      setStatus("Cloud responses synced");
+    } catch {
+      setStatus("Cloud responses unavailable");
+    }
+  };
+
+  const validatePreviewPage = () => {
+    if (!selectedForm || !previewPage) return false;
+    const pageForm = { ...selectedForm, fields: previewFields };
+    const nextErrors = validateAnswers(pageForm, answers);
+
+    if (
+      selectedForm.settings.collectEmail &&
+      previewPage.id === selectedForm.pages[0]?.id
+    ) {
+      const rawEmail = answers.__respondentEmail;
+      const email = Array.isArray(rawEmail) ? "" : String(rawEmail ?? "");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        nextErrors.__respondentEmail = "Enter a valid respondent email.";
+      }
+    }
+
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) {
+      setStatus("Complete required or invalid fields");
+      return false;
+    }
+    return true;
+  };
+
   const submitPreview = () => {
     if (!selectedForm || selectedForm.status === "closed") return;
     if (
@@ -576,25 +676,33 @@ export default function FormsWorkspace() {
       return;
     }
 
-    const nextErrors = validateAnswers(selectedForm, answers);
-    if (selectedForm.settings.collectEmail) {
-      const rawEmail = answers.__respondentEmail;
-      const email = Array.isArray(rawEmail) ? "" : String(rawEmail ?? "");
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        nextErrors.__respondentEmail = "Enter a valid respondent email.";
-      }
-    }
-    setErrors(nextErrors);
-    if (Object.keys(nextErrors).length) {
-      setStatus("Complete required or invalid fields");
-      return;
-    }
-
     setSnapshot((current) => addResponse(current, selectedForm.id, answers).snapshot);
     setAnswers({});
     setErrors({});
+    setPreviewHistory([]);
+    setPreviewPageId(selectedForm.pages[0]?.id ?? null);
     setStatus(selectedForm.settings.confirmationMessage);
     setMode("responses");
+  };
+
+  const advancePreview = () => {
+    if (!selectedForm || !previewPage || !validatePreviewPage()) return;
+    const nextPageId = getNextPageId(selectedForm, previewPage.id, answers);
+    if (!nextPageId) {
+      submitPreview();
+      return;
+    }
+    setPreviewHistory((current) => [...current, previewPage.id]);
+    setPreviewPageId(nextPageId);
+    setErrors({});
+  };
+
+  const backPreview = () => {
+    const previous = previewHistory[previewHistory.length - 1];
+    if (!previous) return;
+    setPreviewHistory((current) => current.slice(0, -1));
+    setPreviewPageId(previous);
+    setErrors({});
   };
 
   const exportNative = () => {
@@ -664,12 +772,21 @@ export default function FormsWorkspace() {
 
   const copyWorkspaceLink = async () => {
     if (!selectedForm) return;
-    const href = location.origin + "/apps/forms?form=" + encodeURIComponent(selectedForm.id);
+    if (selectedForm.status === "draft") {
+      setStatus("Publish the form before sharing a public link");
+      return;
+    }
+    const basePath = location.pathname.split("/apps/forms")[0];
+    const href =
+      location.origin +
+      basePath +
+      "/forms/respond?form=" +
+      encodeURIComponent(selectedForm.id);
     try {
       await navigator.clipboard.writeText(href);
-      setStatus("Workspace link copied");
+      setStatus("Public response link copied");
     } catch {
-      setStatus("Could not copy link");
+      setStatus("Could not copy public link");
     }
   };
 
