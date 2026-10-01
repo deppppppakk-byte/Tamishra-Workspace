@@ -113,14 +113,17 @@ function normalizeReaction(value: unknown) {
   return allowedReactions.has(reaction) ? reaction : null;
 }
 
-async function readJson(request: IncomingMessage): Promise<JsonObject> {
+async function readJson(
+  request: IncomingMessage,
+  maxBytes = MAX_BODY_BYTES
+): Promise<JsonObject> {
   const chunks: Buffer[] = [];
   let size = 0;
 
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.length;
-    if (size > MAX_BODY_BYTES) {
+    if (size > maxBytes) {
       throw Object.assign(new Error("request_too_large"), { status: 413 });
     }
     chunks.push(buffer);
@@ -1951,7 +1954,7 @@ export async function handleMeetingRequest(
 
   if (request.method === "POST" && parsed.action === "breakouts") {
     try {
-      const body = await readJson(request);
+      const body = await readJson(request, 98_304);
       const moderator = await findAccess(
         meeting.roomName,
         String(body.accessKey ?? "")
@@ -2512,10 +2515,12 @@ export async function handleMeetingRequest(
       return true;
     }
 
-    const limit = Math.max(
-      1,
-      Math.min(Number(url.searchParams.get("limit") ?? 500), 5000)
+    const requestedLimit = Number(
+      url.searchParams.get("limit") ?? 500
     );
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.max(1, Math.min(Math.round(requestedLimit), 5000))
+      : 500;
     const segments = await intelligence.listTranscript(
       meeting.roomName,
       limit
@@ -2547,7 +2552,7 @@ export async function handleMeetingRequest(
         return true;
       }
 
-      const body = await readJson(request);
+      const body = await readJson(request, 1_048_576);
       const rawSegments = Array.isArray(body.segments)
         ? body.segments.slice(0, 100)
         : [];
@@ -2653,7 +2658,7 @@ export async function handleMeetingRequest(
 
   if (request.method === "POST" && parsed.action === "notes") {
     try {
-      const body = await readJson(request);
+      const body = await readJson(request, 65_536);
       const moderator = await findAccess(
         meeting.roomName,
         String(body.accessKey ?? "")
