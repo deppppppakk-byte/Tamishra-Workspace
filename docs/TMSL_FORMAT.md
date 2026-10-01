@@ -9,7 +9,7 @@ It is not a renamed JSON document. A TMSL file is a versioned binary container w
 ## Identity
 
 - Extension: `.tmsl`
-- MIME type: `application/vnd.tamishra.slides`
+- MIME type: `application/x-tamishra-slides`
 - Format id: `tamishra.slides`
 - Container version: `1`
 - Current document schema version: `4`
@@ -32,7 +32,7 @@ The header includes:
 - format id
 - container version
 - document schema version
-- Tamishra Slides MIME type
+- Tamishra Slides custom MIME type
 - compression mode
 - SHA-256 checksum of the uncompressed document payload
 - creation timestamp
