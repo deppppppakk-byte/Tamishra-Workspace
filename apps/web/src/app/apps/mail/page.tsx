@@ -1,4 +1,4 @@
-import { MailWorkspace } from "@/components/mail/mail-workspace";
+import { MailWorkspace } from "../../../components/mail/mail-workspace";
 
 export default function MailPage() {
   return <MailWorkspace />;
