@@ -196,3 +196,5 @@ export interface MailGateway {
 
 export * from "./provider-registry";
 export * from "./local-provider";
+
+export * from "./domain-policy";
