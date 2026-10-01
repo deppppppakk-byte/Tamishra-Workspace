@@ -2,7 +2,7 @@
 
 const DB_NAME = "tamishra-workspace";
 const STORE_NAME = "native-file-handoffs";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const MAX_HANDOFF_BYTES = 64 * 1024 * 1024;
 
 export type NativeFileHandoff = {
@@ -21,6 +21,9 @@ function openDb() {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("binary-assets")) {
+        db.createObjectStore("binary-assets", { keyPath: "id" });
       }
     };
     request.onsuccess = () => resolve(request.result);
