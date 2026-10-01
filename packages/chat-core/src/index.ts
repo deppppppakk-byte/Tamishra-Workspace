@@ -2,6 +2,21 @@ export type ChatConversationKind = "channel" | "group" | "direct";
 
 export type ChatMemberRole = "owner" | "moderator" | "member";
 
+export type ChatNotificationKind = "mention" | "direct" | "thread";
+
+export type ChatEventType =
+  | "conversation.created"
+  | "member.changed"
+  | "message.created"
+  | "message.updated"
+  | "message.deleted"
+  | "reaction.changed"
+  | "read.changed"
+  | "settings.changed"
+  | "typing.changed"
+  | "presence.changed"
+  | "notification.created";
+
 export type ChatAttachment = {
   id: string;
   name: string;
@@ -29,6 +44,7 @@ export type ChatConversation = {
   memberCount: number;
   unreadCount: number;
   muted: boolean;
+  pinned: boolean;
   lastReadAt: string | null;
 };
 
@@ -38,6 +54,7 @@ export type ChatMember = {
   role: ChatMemberRole;
   joinedAt: string;
   muted: boolean;
+  pinned: boolean;
   lastReadMessageId: string | null;
   lastReadAt: string | null;
 };
@@ -55,6 +72,45 @@ export type ChatMessage = {
   createdAt: string;
   editedAt: string | null;
   deletedAt: string | null;
+};
+
+export type ChatEvent = {
+  id: string;
+  organizationId: string;
+  conversationId: string | null;
+  actorId: string | null;
+  targetUserId: string | null;
+  type: ChatEventType;
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type ChatNotification = {
+  id: string;
+  organizationId: string;
+  userId: string;
+  conversationId: string;
+  messageId: string;
+  kind: ChatNotificationKind;
+  title: string;
+  bodyPreview: string;
+  createdAt: string;
+  readAt: string | null;
+};
+
+export type ChatTypingState = {
+  conversationId: string;
+  userId: string;
+  displayName: string;
+  expiresAt: string;
+};
+
+export type ChatPresence = {
+  organizationId: string;
+  userId: string;
+  displayName: string;
+  status: "online" | "away" | "offline";
+  lastSeenAt: string;
 };
 
 export type ChatSearchResult = {
