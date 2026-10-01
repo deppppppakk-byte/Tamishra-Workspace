@@ -69,6 +69,20 @@ function conversationTitle(conversation: ChatConversation) {
   return "Channel";
 }
 
+function findMentionIds(
+  value: string,
+  directory: DirectoryMember[],
+  allowedIds: Set<string>
+) {
+  const lower = value.toLowerCase();
+  return directory
+    .filter((member) => allowedIds.has(member.user.id))
+    .filter((member) =>
+      lower.includes("@" + member.user.displayName.toLowerCase())
+    )
+    .map((member) => member.user.id);
+}
+
 export function ChatWorkspace() {
   const [session, setSession] = useState<WorkspaceSessionResponse | null>(null);
   const [organizationId, setOrganizationId] = useState("");
@@ -136,6 +150,38 @@ export function ChatWorkspace() {
     () => mentionSuggestions(threadComposer),
     [threadComposer, directory, activeMemberIds]
   );
+
+  function mentionSuggestions(value: string) {
+    const match = value.match(/(?:^|\s)@([^\s@]{0,40})$/);
+    if (!match) return [] as DirectoryMember[];
+    const query = match[1].toLowerCase();
+    return directory
+      .filter((member) => activeMemberIds.has(member.user.id))
+      .filter((member) => member.user.id !== currentUser?.id)
+      .filter(
+        (member) =>
+          !query || member.user.displayName.toLowerCase().includes(query)
+      )
+      .slice(0, 6);
+  }
+
+  function insertMention(
+    member: DirectoryMember,
+    target: "main" | "thread"
+  ) {
+    const setter = target === "main" ? setComposer : setThreadComposer;
+    setter((current) =>
+      current.replace(
+        /(?:^|\s)@([^\s@]{0,40})$/,
+        (matched) =>
+          (matched.startsWith(" ") ? " " : "") +
+          "@" +
+          member.user.displayName +
+          " "
+      )
+    );
+  }
+
 
   useEffect(() => {
     void initialize();
@@ -209,7 +255,10 @@ export function ChatWorkspace() {
       if (firstOrganization) {
         await Promise.all([
           loadDirectory(firstOrganization),
-          loadConversations(firstOrganization)
+          loadConversations(firstOrganization),
+          loadNotifications(firstOrganization),
+          loadPresence(firstOrganization),
+          heartbeatPresence(firstOrganization)
         ]);
       }
     } catch (caught) {
@@ -226,6 +275,169 @@ export function ChatWorkspace() {
         "/members"
     );
     setDirectory(response.members);
+  }
+
+  async function loadNotifications(nextOrganizationId: string) {
+    const response = await workspaceApi<{ notifications: ChatNotification[] }>(
+      "/v1/chat/notifications?organizationId=" +
+        encodeURIComponent(nextOrganizationId)
+    );
+    setNotifications(response.notifications);
+  }
+
+  async function loadPresence(nextOrganizationId: string) {
+    const response = await workspaceApi<{ presence: ChatPresence[] }>(
+      "/v1/chat/presence?organizationId=" +
+        encodeURIComponent(nextOrganizationId)
+    );
+    setPresence(response.presence);
+  }
+
+  async function heartbeatPresence(nextOrganizationId: string) {
+    await workspaceApi("/v1/chat/presence", {
+      method: "POST",
+      body: JSON.stringify({ organizationId: nextOrganizationId })
+    }).catch(() => undefined);
+  }
+
+  async function loadConversationMembers(conversationId: string) {
+    const response = await workspaceApi<{ members: ChatMember[] }>(
+      "/v1/chat/conversations/" +
+        encodeURIComponent(conversationId) +
+        "/members"
+    );
+    setConversationMembers(response.members);
+  }
+
+  async function loadTyping(conversationId: string) {
+    const response = await workspaceApi<{ typing: ChatTypingState[] }>(
+      "/v1/chat/conversations/" +
+        encodeURIComponent(conversationId) +
+        "/typing"
+    );
+    setTyping(response.typing);
+  }
+
+  async function handleRealtimeEvent(event: ChatEvent) {
+    if (event.type === "notification.created") {
+      await loadNotifications(organizationId);
+    }
+    if (event.type === "presence.changed") {
+      await loadPresence(organizationId);
+    }
+    if (event.type === "typing.changed" && activeConversationId) {
+      await loadTyping(activeConversationId);
+      return;
+    }
+    await loadConversations(organizationId, activeConversationId, false);
+    if (
+      activeConversationId &&
+      (!event.conversationId || event.conversationId === activeConversationId)
+    ) {
+      await Promise.all([
+        refreshMessages(activeConversationId, false),
+        loadConversationMembers(activeConversationId),
+        loadTyping(activeConversationId)
+      ]);
+    }
+  }
+
+  async function sendTyping(active: boolean) {
+    if (!activeConversationId) return;
+    const now = Date.now();
+    if (active && now - typingLastSentRef.current < 1500) return;
+    if (active) typingLastSentRef.current = now;
+    await workspaceApi(
+      "/v1/chat/conversations/" +
+        encodeURIComponent(activeConversationId) +
+        "/typing",
+      {
+        method: "POST",
+        body: JSON.stringify({ active })
+      }
+    ).catch(() => undefined);
+  }
+
+  function noteTyping(value: string) {
+    void sendTyping(Boolean(value.trim()));
+    if (typingStopTimerRef.current) {
+      window.clearTimeout(typingStopTimerRef.current);
+    }
+    typingStopTimerRef.current = window.setTimeout(() => {
+      void sendTyping(false);
+    }, 3500);
+  }
+
+  async function uploadFiles(files: File[]) {
+    if (!activeConversationId) return [] as ChatAttachment[];
+    const uploaded: ChatAttachment[] = [];
+    for (const file of files.slice(0, MAX_ATTACHMENTS)) {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        throw new Error(file.name + " exceeds the 10 MB Chat limit.");
+      }
+      const response = await fetch(
+        workspaceApiBase +
+          "/v1/chat/conversations/" +
+          encodeURIComponent(activeConversationId) +
+          "/files?name=" +
+          encodeURIComponent(file.name),
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "content-type": file.type || "application/octet-stream"
+          },
+          body: file
+        }
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          typeof body?.error === "string" ? body.error : "file_upload_failed"
+        );
+      }
+      uploaded.push(body.attachment as ChatAttachment);
+    }
+    return uploaded;
+  }
+
+  async function updateConversationSetting(
+    setting: "muted" | "pinned",
+    value: boolean
+  ) {
+    if (!activeConversationId) return;
+    await workspaceApi(
+      "/v1/chat/conversations/" +
+        encodeURIComponent(activeConversationId) +
+        "/settings",
+      {
+        method: "PATCH",
+        body: JSON.stringify({ [setting]: value })
+      }
+    );
+    await loadConversations(organizationId, activeConversationId, false);
+  }
+
+  async function openNotification(notification: ChatNotification) {
+    if (!notification.readAt) {
+      await workspaceApi(
+        "/v1/chat/notifications/" +
+          encodeURIComponent(notification.id) +
+          "/read",
+        { method: "POST", body: "{}" }
+      ).catch(() => undefined);
+    }
+    setNotificationsOpen(false);
+    await openConversation(notification.conversationId);
+    await loadNotifications(organizationId);
+  }
+
+  async function markAllNotificationsRead() {
+    await workspaceApi("/v1/chat/notifications/read-all", {
+      method: "POST",
+      body: JSON.stringify({ organizationId })
+    });
+    await loadNotifications(organizationId);
   }
 
   async function loadConversations(
@@ -292,7 +504,10 @@ export function ChatWorkspace() {
     try {
       await Promise.all([
         loadDirectory(nextOrganizationId),
-        loadConversations(nextOrganizationId)
+        loadConversations(nextOrganizationId),
+        loadNotifications(nextOrganizationId),
+        loadPresence(nextOrganizationId),
+        heartbeatPresence(nextOrganizationId)
       ]);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to change workspace.");
@@ -305,7 +520,11 @@ export function ChatWorkspace() {
     setSearchResults(null);
     setError("");
     try {
-      await refreshMessages(conversationId);
+      await Promise.all([
+        refreshMessages(conversationId),
+        loadConversationMembers(conversationId),
+        loadTyping(conversationId)
+      ]);
       await loadConversations(organizationId, conversationId, false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to load conversation.");
@@ -319,22 +538,40 @@ export function ChatWorkspace() {
     event.preventDefault();
     if (!activeConversationId || sending) return;
     const body = (parentMessageId ? threadComposer : composer).trim();
-    if (!body) return;
+    const files = parentMessageId ? threadFiles : pendingFiles;
+    if (!body && !files.length) return;
 
     setSending(true);
     setError("");
     try {
+      const attachments = await uploadFiles(files);
+      const mentions = findMentionIds(
+        body,
+        directory,
+        activeMemberIds
+      );
       await workspaceApi(
         "/v1/chat/conversations/" +
           encodeURIComponent(activeConversationId) +
           "/messages",
         {
           method: "POST",
-          body: JSON.stringify({ body, parentMessageId })
+          body: JSON.stringify({
+            body,
+            parentMessageId,
+            mentions,
+            attachments
+          })
         }
       );
-      if (parentMessageId) setThreadComposer("");
-      else setComposer("");
+      void sendTyping(false);
+      if (parentMessageId) {
+        setThreadComposer("");
+        setThreadFiles([]);
+      } else {
+        setComposer("");
+        setPendingFiles([]);
+      }
       await refreshMessages(activeConversationId);
       await loadConversations(organizationId, activeConversationId, false);
     } catch (caught) {
