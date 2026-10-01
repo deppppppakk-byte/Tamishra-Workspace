@@ -88,29 +88,29 @@ Workspace APIs are served under the Tamishra domain through the Workspace-owned 
 Tamishra Patra has its own public product domain:
 
 ```text
-https://patra.in
+https://patra.tamishra.in
 ```
 
 Primary Patra mailbox addresses use:
 
 ```text
-name@patra.in
+name@patra.tamishra.in
 ```
 
 Patra is available in two product surfaces:
 
 ```text
 https://tamishra.in/workspace/apps/mail   -> Workspace-integrated Patra
-https://patra.in                          -> public standalone Patra
+https://patra.tamishra.in                          -> public standalone Patra
 ```
 
 The public Patra domain should expose its own first-party API path, recommended as:
 
 ```text
-https://patra.in/api/*
+https://api.patra.tamishra.in/*
 ```
 
-That API may reverse-proxy to the same Tamishra-owned gateway/service internally, but browser cookies and security headers should remain first-party to `patra.in`.
+That API may reverse-proxy to the same Tamishra-owned gateway/service internally, but browser cookies and security headers should remain first-party to `patra.tamishra.in`.
 
 The internal code may retain `mail` and `mail-core` naming for protocol/domain stability. User-facing branding is **Tamishra Patra** or simply **Patra**.
 
@@ -124,7 +124,7 @@ Patra has two native mailbox namespaces.
 Public registration creates addresses under:
 
 ```text
-username@patra.in
+username@patra.tamishra.in
 ```
 
 This namespace is intended for normal public self-service signup.
