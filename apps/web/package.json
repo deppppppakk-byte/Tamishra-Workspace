@@ -15,7 +15,7 @@
     "@tamishra/history": "0.1.0",
     "@tamishra/mail-core": "0.1.0",
     "@tamishra/meet-core": "0.2.0",
-    "@tamishra/sheets-engine": "0.1.0",
+    "@tamishra/sheets-engine": "0.2.0",
     "@tamishra/workspace-core": "0.1.0",
     "livekit-client": "2.22.3",
     "next": "^16.3.8",
