@@ -1,7 +1,9 @@
 import {
   createDocument,
   createId,
+  defaultHeaderFooterSettings,
   type DocumentBlock,
+  type HeaderFooterSettings,
   type InlineNode,
   type PageConfig,
   type TamishraDocument,
@@ -228,13 +230,20 @@ export type PersistedDocsDraft = {
   version: 2;
   document: TamishraDocument;
   editorHtml: string;
+  headerHtml?: string;
+  footerHtml?: string;
   updatedAt: string;
 };
 
 export function createDraftFromHtml(
   title: string,
   html: string,
-  page?: PageConfig
+  page?: PageConfig,
+  chrome?: {
+    headerHtml?: string;
+    footerHtml?: string;
+    headerFooter?: HeaderFooterSettings;
+  }
 ): PersistedDocsDraft {
   const document = createDocument(title);
   const section = document.sections[0];
@@ -247,6 +256,12 @@ export function createDraftFromHtml(
   }
 
   section.blocks = htmlToBlocks(html);
+  section.header = chrome?.headerHtml ? htmlToBlocks(chrome.headerHtml) : [];
+  section.footer = chrome?.footerHtml ? htmlToBlocks(chrome.footerHtml) : [];
+  section.headerFooter = {
+    ...defaultHeaderFooterSettings,
+    ...(chrome?.headerFooter ?? {})
+  };
 
   document.updatedAt = new Date().toISOString();
 
@@ -254,6 +269,8 @@ export function createDraftFromHtml(
     version: 2,
     document,
     editorHtml: html,
+    headerHtml: chrome?.headerHtml ?? "",
+    footerHtml: chrome?.footerHtml ?? "",
     updatedAt: document.updatedAt
   };
 }
@@ -264,10 +281,15 @@ export function updateDraft(
     title?: string;
     editorHtml?: string;
     page?: PageConfig;
+    headerHtml?: string;
+    footerHtml?: string;
+    headerFooter?: HeaderFooterSettings;
   }
 ): PersistedDocsDraft {
   const now = new Date().toISOString();
   const html = changes.editorHtml ?? current.editorHtml;
+  const headerHtml = changes.headerHtml ?? current.headerHtml ?? "";
+  const footerHtml = changes.footerHtml ?? current.footerHtml ?? "";
   const section = current.document.sections[0];
 
   const document: TamishraDocument = {
@@ -281,7 +303,14 @@ export function updateDraft(
         page: changes.page
           ? { ...changes.page, margins: { ...changes.page.margins } }
           : { ...section.page, margins: { ...section.page.margins } },
-        blocks: htmlToBlocks(html)
+        blocks: htmlToBlocks(html),
+        header: htmlToBlocks(headerHtml),
+        footer: htmlToBlocks(footerHtml),
+        headerFooter: {
+          ...defaultHeaderFooterSettings,
+          ...(section.headerFooter ?? {}),
+          ...(changes.headerFooter ?? {})
+        }
       },
       ...current.document.sections.slice(1)
     ]
@@ -291,6 +320,8 @@ export function updateDraft(
     version: 2,
     document,
     editorHtml: html,
+    headerHtml,
+    footerHtml,
     updatedAt: now
   };
 }
