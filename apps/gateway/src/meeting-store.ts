@@ -6,7 +6,7 @@ export type StoredMeetingStatus =
   | "ended"
   | "cancelled";
 
-export type StoredMeetingRole = "host" | "participant";
+export type StoredMeetingRole = "host" | "cohost" | "participant";
 
 export type StoredAdmissionStatus = "waiting" | "admitted" | "denied";
 
@@ -67,6 +67,11 @@ export interface MeetingStore {
     roomName: string,
     participantId: string,
     status: "admitted" | "denied"
+  ): Promise<StoredParticipant | null>;
+  updateParticipantRole(
+    roomName: string,
+    participantId: string,
+    role: "cohost" | "participant"
   ): Promise<StoredParticipant | null>;
   heartbeatAttendance(
     roomName: string,
@@ -184,7 +189,8 @@ class MemoryMeetingStore implements MeetingStore {
     return Array.from(this.participants.values())
       .filter((participant) => participant.roomName === roomName)
       .sort((left, right) => {
-        if (left.role !== right.role) return left.role === "host" ? -1 : 1;
+        const rank = { host: 0, cohost: 1, participant: 2 } as const;
+        if (left.role !== right.role) return rank[left.role] - rank[right.role];
         return left.createdAt.localeCompare(right.createdAt);
       });
   }
@@ -214,6 +220,24 @@ class MemoryMeetingStore implements MeetingStore {
       return null;
     }
     participant.admissionStatus = status;
+    participant.lastSeenAt = new Date().toISOString();
+    return participant;
+  }
+
+  async updateParticipantRole(
+    roomName: string,
+    participantId: string,
+    role: "cohost" | "participant"
+  ) {
+    const participant = this.participants.get(participantId);
+    if (
+      !participant ||
+      participant.roomName !== roomName ||
+      participant.role === "host"
+    ) {
+      return null;
+    }
+    participant.role = role;
     participant.lastSeenAt = new Date().toISOString();
     return participant;
   }
@@ -503,7 +527,11 @@ class PostgresMeetingStore implements MeetingStore {
       from workspace_meeting_participants
       where room_name=${roomName}
       order by
-        case when role='host' then 0 else 1 end,
+        case
+          when role='host' then 0
+          when role='cohost' then 1
+          else 2
+        end,
         created_at asc
     `;
     return rows.map((row) =>
@@ -541,6 +569,33 @@ class PostgresMeetingStore implements MeetingStore {
     const rows = await this.sql`
       update workspace_meeting_participants
       set admission_status=${status}, last_seen_at=now()
+      where room_name=${roomName}
+        and id=${participantId}
+        and role <> 'host'
+      returning
+        id,
+        room_name,
+        display_name,
+        role,
+        access_key_hash,
+        admission_status,
+        created_at,
+        last_seen_at
+    `;
+    return rows[0]
+      ? toParticipant(rows[0] as Record<string, unknown>)
+      : null;
+  }
+
+  async updateParticipantRole(
+    roomName: string,
+    participantId: string,
+    role: "cohost" | "participant"
+  ) {
+    await this.ready();
+    const rows = await this.sql`
+      update workspace_meeting_participants
+      set role=${role}, last_seen_at=now()
       where room_name=${roomName}
         and id=${participantId}
         and role <> 'host'
