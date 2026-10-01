@@ -21,7 +21,11 @@ import {
   type AlignMode,
   type DistributeAxis
 } from "@tamishra/slides-core";
-import { createBlock, upsertBlock } from "@tamishra/blocks-core";
+import {
+  createBlock,
+  upsertBlock,
+  type TamishraBlock
+} from "@tamishra/blocks-core";
 import { upsertWorkspaceFile } from "@tamishra/file-core";
 import { exportDeckToPptx } from "./pptxExport";
 import {
@@ -35,7 +39,9 @@ import { consumeNativeFileHandoff } from "../../../lib/native-file-handoff";
 import { mutateWorkspaceFileIndex } from "../../../lib/workspace-files";
 import {
   consumeBlockHandoff,
-  mutateWorkspaceBlockShelf
+  loadWorkspaceBlockShelf,
+  mutateWorkspaceBlockShelf,
+  subscribeWorkspaceBlocks
 } from "../../../lib/workspace-blocks";
 import styles from "./slides.module.css";
 
@@ -89,6 +95,9 @@ type SlideElement = {
   name?: string;
   locked?: boolean;
   hidden?: boolean;
+  workspaceBlockId?: string;
+  workspaceBlockVersion?: number;
+  workspaceBlockMode?: "live";
 };
 
 type SlideComment = {
@@ -497,9 +506,55 @@ export default function SlidesEditorAdvanced() {
   useEffect(() => {
     const block = consumeBlockHandoff("slides");
     if (!block) return;
-    if (!insertWorkspaceVisualBlock(block as ReturnType<typeof createBlock>)) {
+    if (!insertWorkspaceBlock(block)) {
       setSaveState("This Block type is not supported in Slides yet");
     }
+  }, []);
+
+  useEffect(() => {
+    const refreshLinkedBlocks = () => {
+      const shelf = loadWorkspaceBlockShelf();
+      const byId = new Map(shelf.blocks.map((block) => [block.id, block]));
+
+      setSlides((current) => {
+        let changed = false;
+        const next = current.map((slide) => ({
+          ...slide,
+          elements: slide.elements.map((element) => {
+            if (!element.workspaceBlockId || element.workspaceBlockMode !== "live") {
+              return element;
+            }
+
+            const block = byId.get(element.workspaceBlockId);
+            if (
+              !block ||
+              block.version === element.workspaceBlockVersion ||
+              block.kind !== "table" ||
+              !block.payload ||
+              typeof block.payload !== "object"
+            ) {
+              return element;
+            }
+
+            const payload = block.payload as { tableData?: string[][] };
+            if (!Array.isArray(payload.tableData)) return element;
+
+            changed = true;
+            return {
+              ...element,
+              tableData: payload.tableData.map((row) => [...row]),
+              workspaceBlockVersion: block.version,
+              name: block.title
+            };
+          })
+        }));
+
+        return changed ? next : current;
+      });
+    };
+
+    refreshLinkedBlocks();
+    return subscribeWorkspaceBlocks(refreshLinkedBlocks);
   }, []);
 
   useEffect(() => {
@@ -889,7 +944,55 @@ export default function SlidesEditorAdvanced() {
     setSaveState("Published to Tamishra Blocks");
   };
 
-  const insertWorkspaceVisualBlock = (block: ReturnType<typeof createBlock>) => {
+  const insertWorkspaceBlock = (block: TamishraBlock) => {
+    if (block.kind === "table" && block.payload && typeof block.payload === "object") {
+      const payload = block.payload as {
+        tableData?: string[][];
+        rows?: number;
+        columns?: number;
+      };
+      if (!Array.isArray(payload.tableData) || !payload.tableData.length) return false;
+
+      const rows = Math.max(1, Number(payload.rows) || payload.tableData.length);
+      const columns = Math.max(
+        1,
+        Number(payload.columns) ||
+          Math.max(1, ...payload.tableData.map((row) => row.length))
+      );
+      const w = Math.min(760, Math.max(360, columns * 120));
+      const h = Math.min(360, Math.max(120, rows * 38 + 30));
+      const table: SlideElement = {
+        id: uid(),
+        type: "table",
+        x: (SLIDE_W - w) / 2,
+        y: (SLIDE_H - h) / 2,
+        w,
+        h,
+        fill: "#ffffff",
+        color: "#172033",
+        tableData: payload.tableData.map((row) => [...row]),
+        name: block.title,
+        workspaceBlockId: block.binding?.mode === "live" ? block.id : undefined,
+        workspaceBlockVersion:
+          block.binding?.mode === "live" ? block.version : undefined,
+        workspaceBlockMode:
+          block.binding?.mode === "live" ? "live" : undefined
+      };
+
+      mutateActive((slide) => ({
+        ...slide,
+        elements: [...slide.elements, table]
+      }));
+      setSelectedIds([table.id]);
+      setInspectorMode("element");
+      setSaveState(
+        block.binding?.mode === "live"
+          ? "Live Workspace Block inserted"
+          : "Workspace Block inserted"
+      );
+      return true;
+    }
+
     if (block.kind !== "visual" || !block.payload || typeof block.payload !== "object") {
       return false;
     }
@@ -930,6 +1033,16 @@ export default function SlidesEditorAdvanced() {
     setInspectorMode("element");
     setSaveState("Workspace Block inserted");
     return true;
+  };
+
+  const unlinkSelectedWorkspaceBlock = () => {
+    if (!primaryElement?.workspaceBlockId) return;
+    updateElement(primaryElement.id, {
+      workspaceBlockId: undefined,
+      workspaceBlockVersion: undefined,
+      workspaceBlockMode: undefined
+    });
+    setSaveState("Workspace Block unlinked");
   };
 
   const saveSelectionAsComponent = () => {
@@ -2753,6 +2866,21 @@ export default function SlidesEditorAdvanced() {
                     }
                   />
                 </div>
+                {primaryElement.workspaceBlockId && (
+                  <div className={styles.field}>
+                    <label>Live Block</label>
+                    <div className={styles.selectionSummary}>
+                      <span>Linked</span>
+                      <span>v{primaryElement.workspaceBlockVersion ?? 1}</span>
+                    </div>
+                    <button
+                      className={styles.inspectorBtn}
+                      onClick={unlinkSelectedWorkspaceBlock}
+                    >
+                      Unlink from source
+                    </button>
+                  </div>
+                )}
                 <div className={styles.fieldRow}>
                   <div className={styles.field}>
                     <label>Lock</label>
