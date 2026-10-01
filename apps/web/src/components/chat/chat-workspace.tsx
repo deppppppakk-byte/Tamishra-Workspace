@@ -115,6 +115,7 @@ export function ChatWorkspace() {
   const threadFileInputRef = useRef<HTMLInputElement>(null);
   const typingLastSentRef = useRef(0);
   const typingStopTimerRef = useRef<number | null>(null);
+  const eventCursorRef = useRef("0");
 
   const currentUser = session?.authenticated ? session.user : null;
   const memberships = session?.authenticated ? session.memberships : [];
@@ -194,7 +195,9 @@ export function ChatWorkspace() {
     const source = new EventSource(
       workspaceApiBase +
         "/v1/chat/events?organizationId=" +
-        encodeURIComponent(organizationId),
+        encodeURIComponent(organizationId) +
+        "&after=" +
+        encodeURIComponent(eventCursorRef.current),
       { withCredentials: true }
     );
 
@@ -203,6 +206,7 @@ export function ChatWorkspace() {
     source.addEventListener("chat", (event) => {
       try {
         const chatEvent = JSON.parse((event as MessageEvent).data) as ChatEvent;
+        eventCursorRef.current = chatEvent.id;
         void handleRealtimeEvent(chatEvent);
       } catch {
         // Ignore malformed event frames; EventSource will continue.
@@ -463,7 +467,11 @@ export function ChatWorkspace() {
 
       if (nextActive && nextActive !== activeConversationId) {
         setActiveConversationId(nextActive);
-        await refreshMessages(nextActive);
+        await Promise.all([
+          refreshMessages(nextActive),
+          loadConversationMembers(nextActive),
+          loadTyping(nextActive)
+        ]);
       } else if (!nextActive) {
         setActiveConversationId("");
         setMessages([]);
@@ -495,6 +503,7 @@ export function ChatWorkspace() {
   }
 
   async function changeOrganization(nextOrganizationId: string) {
+    eventCursorRef.current = "0";
     setOrganizationId(nextOrganizationId);
     setActiveConversationId("");
     setMessages([]);
