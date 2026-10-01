@@ -36,7 +36,11 @@ The header includes:
 - compression mode
 - SHA-256 checksum of the uncompressed document payload
 - creation timestamp
+- modified timestamp
 - generator name
+- presentation title
+- slide count
+- lightweight first-slide preview metadata (background, title and subtitle when available)
 
 ## Payload
 
@@ -56,6 +60,8 @@ Before opening a TMSL file, Tamishra Slides:
 6. validates that the decoded document contains a slide array.
 
 A checksum mismatch causes the file to be rejected instead of loading potentially corrupted presentation data.
+
+The preview metadata lives in the uncompressed header, so desktop surfaces such as Recent Files can show presentation identity and a lightweight preview without decompressing the main document payload.
 
 ## Compatibility policy
 
