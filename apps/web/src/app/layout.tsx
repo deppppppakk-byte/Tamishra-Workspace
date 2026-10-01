@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { DesktopNativeOpenBridge } from "../components/desktop-native-open-bridge";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -14,7 +15,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <DesktopNativeOpenBridge />
+        {children}
+      </body>
     </html>
   );
 }
