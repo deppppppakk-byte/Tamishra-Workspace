@@ -90,6 +90,7 @@ export default function DocsEditor() {
   const selectedTableCellRef = useRef<HTMLTableCellElement | null>(null);
   const draftRef = useRef<PersistedDocsDraft | null>(null);
   const workspaceRef = useRef<DocsWorkspaceSnapshot>(loadDocsWorkspace());
+  const currentDocumentIdRef = useRef<string | null>(null);
   const pageHistoryRef = useRef(new TransactionHistory<PageConfig>(100));
   const [title, setTitle] = useState("Untitled document");
   const [page, setPage] = useState<PageConfig>(() => createPageConfig());
@@ -132,6 +133,17 @@ export default function DocsEditor() {
     workspaceRef.current = next;
     setWorkspace(next);
     saveDocsWorkspace(next);
+  };
+
+  const selectDocumentId = (id: string | null) => {
+    currentDocumentIdRef.current = id;
+    setCurrentDocumentId(id);
+
+    if (id) {
+      localStorage.setItem(CURRENT_DOCUMENT_ID_KEY, id);
+    } else {
+      localStorage.removeItem(CURRENT_DOCUMENT_ID_KEY);
+    }
   };
 
   const currentComments = workspace.comments.filter(
@@ -428,7 +440,20 @@ export default function DocsEditor() {
     draftRef.current = nextDraft;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(nextDraft));
     localStorage.removeItem(LEGACY_STORAGE_KEY);
+
+    const result = upsertDocsRecord(workspaceRef.current, {
+      id: currentDocumentIdRef.current ?? undefined,
+      title: safeTitle,
+      draft: nextDraft
+    });
+    commitWorkspace(result.snapshot);
+
+    if (currentDocumentIdRef.current !== result.record.id) {
+      selectDocumentId(result.record.id);
+    }
+
     setSavedState("Saved locally");
+    return nextDraft;
   };
 
   useEffect(() => {
@@ -437,10 +462,24 @@ export default function DocsEditor() {
 
     try {
       let draft: PersistedDocsDraft | null = null;
+      const storedDocumentId = localStorage.getItem(CURRENT_DOCUMENT_ID_KEY);
+      const workspaceSnapshot = loadDocsWorkspace();
+      workspaceRef.current = workspaceSnapshot;
+      setWorkspace(workspaceSnapshot);
 
-      if (raw) {
+      if (storedDocumentId) {
+        const libraryRecord = workspaceSnapshot.records.find(
+          (item) => item.id === storedDocumentId && !item.trashedAt
+        );
+        if (libraryRecord) {
+          draft = libraryRecord.draft;
+          selectDocumentId(libraryRecord.id);
+        }
+      }
+
+      if (!draft && raw) {
         draft = JSON.parse(raw) as PersistedDocsDraft;
-      } else if (legacyRaw) {
+      } else if (!draft && legacyRaw) {
         const legacy = JSON.parse(legacyRaw) as SavedDocument;
         draft = migrateLegacyDraft(legacy);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
