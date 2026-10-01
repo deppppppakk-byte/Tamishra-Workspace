@@ -246,15 +246,18 @@ function recordingStatus(value: number): RecordingStatus {
   }
 }
 
-function recordingPublic(recording: StoredMeetingRecording | null) {
+function recordingPublic(
+  recording: StoredMeetingRecording | null,
+  includeStorage = false
+) {
   if (!recording) return null;
   return {
     id: recording.id,
     roomName: recording.roomName,
     egressId: recording.egressId,
     status: recording.status,
-    filepath: recording.filepath,
-    location: recording.location,
+    filepath: includeStorage ? recording.filepath : "",
+    location: includeStorage ? recording.location : null,
     startedAt: recording.startedAt,
     endedAt: recording.endedAt,
     durationNs: recording.durationNs,
@@ -1764,15 +1767,24 @@ export async function handleMeetingRequest(
           : Promise.resolve([])
       ]);
 
+    const activeForResponse =
+      active &&
+      ["starting", "active", "stopping"].includes(active.status)
+        ? active
+        : null;
+    const moderator = canModerate(participant);
+
     sendJson(
       response,
       200,
       {
         configured: recordingConfigured(),
-        active: recordingPublic(active),
+        active: recordingPublic(activeForResponse, moderator),
         consent,
         consents,
-        recordings: roomRecordings.map(recordingPublic)
+        recordings: roomRecordings.map((item) =>
+          recordingPublic(item, true)
+        )
       },
       origin,
       allowedOrigins
