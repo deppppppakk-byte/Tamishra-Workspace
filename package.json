@@ -25,7 +25,10 @@
     "dev:web:native": "node scripts/run-web.mjs dev native",
     "build:web:native": "node scripts/run-web.mjs build native",
     "build:hosted": "npm run build:web && npm run build:gateway",
-    "check": "npm run check:web && npm run check:gateway"
+    "check": "npm run check:web && npm run check:gateway",
+    "dev:patra-mailer": "npm run dev --workspace @tamishra/patra-mailer",
+    "start:patra-mailer": "npm run start --workspace @tamishra/patra-mailer",
+    "check:patra-mailer": "npm run check --workspace @tamishra/patra-mailer"
   },
   "engines": {
     "node": ">=22"
