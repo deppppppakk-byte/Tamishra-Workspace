@@ -4,6 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createId,
   createPageConfig,
+  defaultHeaderFooterSettings,
+  type HeaderFooterAlignment,
+  type HeaderFooterSettings,
   type PageConfig
 } from "@tamishra/document-model";
 import {
@@ -14,6 +17,7 @@ import {
   type PersistedDocsDraft
 } from "@tamishra/docs-engine";
 import { TransactionHistory } from "@tamishra/history";
+import HeaderFooterSettingsPanel from "./HeaderFooterSettings";
 import PageSettings from "./PageSettings";
 
 const STORAGE_KEY = "tamishra.docs.current.v2";
@@ -27,6 +31,27 @@ type SavedDocument = {
 
 function applyCommand(command: string, value?: string) {
   document.execCommand(command, false, value);
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function chromeTextToHtml(value: string) {
+  const trimmed = value.trim();
+  return trimmed ? `<p>${escapeHtml(trimmed)}</p>` : "";
+}
+
+function chromeHtmlToText(value?: string) {
+  if (!value) return "";
+  const container = document.createElement("div");
+  container.innerHTML = value;
+  return container.innerText.trim();
 }
 
 export default function DocsEditor() {
@@ -57,6 +82,11 @@ export default function DocsEditor() {
   const [matchCase, setMatchCase] = useState(false);
   const [wholeWord, setWholeWord] = useState(false);
   const [findStatus, setFindStatus] = useState("");
+  const [headerText, setHeaderText] = useState("");
+  const [footerText, setFooterText] = useState("");
+  const [headerFooter, setHeaderFooter] = useState<HeaderFooterSettings>(() => ({
+    ...defaultHeaderFooterSettings
+  }));
 
   const getEditors = () =>
     pageEditorsRef.current.filter(
@@ -328,9 +358,16 @@ export default function DocsEditor() {
       ? updateDraft(draftRef.current, {
           title: safeTitle,
           editorHtml: html,
-          page
+          page,
+          headerHtml: chromeTextToHtml(headerText),
+          footerHtml: chromeTextToHtml(footerText),
+          headerFooter
         })
-      : createDraftFromHtml(safeTitle, html, page);
+      : createDraftFromHtml(safeTitle, html, page, {
+          headerHtml: chromeTextToHtml(headerText),
+          footerHtml: chromeTextToHtml(footerText),
+          headerFooter
+        });
 
     draftRef.current = nextDraft;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(nextDraft));
@@ -369,7 +406,14 @@ export default function DocsEditor() {
 
       draftRef.current = draft;
       setTitle(draft.document.title || "Untitled document");
-      setPage(draft.document.sections[0]?.page ?? createPageConfig());
+      const section = draft.document.sections[0];
+      setPage(section?.page ?? createPageConfig());
+      setHeaderText(chromeHtmlToText(draft.headerHtml));
+      setFooterText(chromeHtmlToText(draft.footerHtml));
+      setHeaderFooter({
+        ...defaultHeaderFooterSettings,
+        ...(section?.headerFooter ?? {})
+      });
 
       if (firstEditor && draft.editorHtml) {
         firstEditor.innerHTML = draft.editorHtml;
@@ -391,7 +435,7 @@ export default function DocsEditor() {
     }, 700);
 
     return () => window.clearTimeout(timer);
-  }, [title, wordCount, charCount, page]);
+  }, [title, wordCount, charCount, page, headerText, footerText, headerFooter]);
 
   useEffect(() => {
     updateCounts();
@@ -918,6 +962,57 @@ td,th{border:1px solid #d0d5dd;padding:8px}
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [title, page]);
 
+  const resolveChromeText = (value: string, pageIndex: number) => {
+    const pageNumber = headerFooter.pageNumberStart + pageIndex;
+
+    return value
+      .replaceAll("{title}", title.trim() || "Untitled document")
+      .replaceAll("{page}", String(pageNumber))
+      .replaceAll("{pages}", String(pageCount));
+  };
+
+  const formatPageNumber = (pageIndex: number) => {
+    const number = headerFooter.pageNumberStart + pageIndex;
+
+    if (headerFooter.pageNumberFormat === "page-number") {
+      return `Page ${number}`;
+    }
+
+    if (headerFooter.pageNumberFormat === "page-number-of-total") {
+      return `Page ${number} of ${pageCount}`;
+    }
+
+    return String(number);
+  };
+
+  const getChromeSlot = (
+    region: "header" | "footer",
+    alignment: HeaderFooterAlignment,
+    pageIndex: number
+  ) => {
+    if (headerFooter.hideOnFirstPage && pageIndex === 0) return [];
+
+    const content: string[] = [];
+    const regionEnabled =
+      region === "header" ? headerFooter.headerEnabled : headerFooter.footerEnabled;
+    const regionAlignment =
+      region === "header" ? headerFooter.headerAlignment : headerFooter.footerAlignment;
+    const regionText = region === "header" ? headerText : footerText;
+
+    if (regionEnabled && regionAlignment === alignment && regionText.trim()) {
+      content.push(resolveChromeText(regionText, pageIndex));
+    }
+
+    if (
+      headerFooter.pageNumberEnabled &&
+      headerFooter.pageNumberPosition === `${region}-${alignment}`
+    ) {
+      content.push(formatPageNumber(pageIndex));
+    }
+
+    return content;
+  };
+
   const pageStyle = useMemo(
     () => ({
       width: mmToCssPx(page.widthMm),
@@ -1189,9 +1284,49 @@ td,th{border:1px solid #d0d5dd;padding:8px}
                   spellCheck
                   aria-label={`Document page ${index + 1}`}
                 />
-                <div className="docsPageNumber" contentEditable={false}>
-                  {index + 1}
-                </div>
+                {(headerFooter.headerEnabled ||
+                  (headerFooter.pageNumberEnabled &&
+                    headerFooter.pageNumberPosition.startsWith("header"))) && (
+                  <div
+                    className="docsPageChrome docsPageHeader"
+                    contentEditable={false}
+                    style={{
+                      top: mmToCssPx(headerFooter.headerDistanceMm),
+                      left: mmToCssPx(page.margins.leftMm),
+                      right: mmToCssPx(page.margins.rightMm)
+                    }}
+                  >
+                    {(["left", "center", "right"] as HeaderFooterAlignment[]).map((alignment) => (
+                      <div key={alignment} className={`docsChromeSlot ${alignment}`}>
+                        {getChromeSlot("header", alignment, index).map((value, itemIndex) => (
+                          <span key={itemIndex}>{value}</span>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {(headerFooter.footerEnabled ||
+                  (headerFooter.pageNumberEnabled &&
+                    headerFooter.pageNumberPosition.startsWith("footer"))) && (
+                  <div
+                    className="docsPageChrome docsPageFooter"
+                    contentEditable={false}
+                    style={{
+                      bottom: mmToCssPx(headerFooter.footerDistanceMm),
+                      left: mmToCssPx(page.margins.leftMm),
+                      right: mmToCssPx(page.margins.rightMm)
+                    }}
+                  >
+                    {(["left", "center", "right"] as HeaderFooterAlignment[]).map((alignment) => (
+                      <div key={alignment} className={`docsChromeSlot ${alignment}`}>
+                        {getChromeSlot("footer", alignment, index).map((value, itemIndex) => (
+                          <span key={itemIndex}>{value}</span>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </article>
             ))}
           </div>
@@ -1201,6 +1336,27 @@ td,th{border:1px solid #d0d5dd;padding:8px}
           <div className="docsInfoCard">
             <span className="docsInfoLabel">Page setup</span>
             <PageSettings page={page} onChange={updatePageConfig} />
+          </div>
+
+          <div className="docsInfoCard">
+            <span className="docsInfoLabel">Header & footer</span>
+            <HeaderFooterSettingsPanel
+              settings={headerFooter}
+              headerText={headerText}
+              footerText={footerText}
+              onSettingsChange={(next) => {
+                setHeaderFooter(next);
+                setSavedState("Saving…");
+              }}
+              onHeaderTextChange={(value) => {
+                setHeaderText(value);
+                setSavedState("Saving…");
+              }}
+              onFooterTextChange={(value) => {
+                setFooterText(value);
+                setSavedState("Saving…");
+              }}
+            />
           </div>
 
           {selectedImageId && (
