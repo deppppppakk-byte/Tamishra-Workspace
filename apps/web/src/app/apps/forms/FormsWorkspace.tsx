@@ -45,7 +45,11 @@ function loadSnapshot(): FormsSnapshot {
     return {
       version: 1,
       forms: Array.isArray(parsed.forms) ? parsed.forms : [],
-      responses: Array.isArray(parsed.responses) ? parsed.responses : []
+      responses: Array.isArray(parsed.responses) ? parsed.responses : [],
+      deleted:
+        parsed.deleted && typeof parsed.deleted === "object" && !Array.isArray(parsed.deleted)
+          ? parsed.deleted
+          : {}
     };
   } catch {
     return createFormsSnapshot();
@@ -449,7 +453,11 @@ export default function FormsWorkspace() {
     setSnapshot((current) => ({
       ...current,
       forms: current.forms.filter((form) => form.id !== id),
-      responses: current.responses.filter((response) => response.formId !== id)
+      responses: current.responses.filter((response) => response.formId !== id),
+      deleted: {
+        ...current.deleted,
+        [id]: new Date().toISOString()
+      }
     }));
     mutateWorkspaceFileIndex((index) =>
       permanentlyDeleteWorkspaceFile(index, `forms:${id}`)
