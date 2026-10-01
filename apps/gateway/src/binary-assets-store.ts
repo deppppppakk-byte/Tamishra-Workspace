@@ -176,38 +176,75 @@ class PostgresBinaryAssetStore implements BinaryAssetStore {
   ): Promise<StoredBinaryAsset> {
     await this.ready();
 
-    if (expectedRevision !== undefined && expectedRevision !== null) {
-      const current = await this.get(userId, assetId);
-      if ((current?.revision ?? 0) !== expectedRevision) {
-        throw Object.assign(new Error("revision_conflict"), {
-          status: 409,
-          currentRevision: current?.revision ?? 0
-        });
-      }
+    const metadata = JSON.stringify(input.metadata);
+    let rows;
+
+    if (expectedRevision === 0) {
+      rows = await this.sql`
+        INSERT INTO workspace_binary_assets (
+          user_id, asset_id, revision, name, mime_type, size_bytes,
+          bytes, metadata, created_at, updated_at
+        )
+        VALUES (
+          ${userId}, ${assetId}, 1, ${input.name}, ${input.mimeType},
+          ${input.bytes.length}, ${input.bytes}, ${metadata}::jsonb, NOW(), NOW()
+        )
+        ON CONFLICT (user_id, asset_id) DO NOTHING
+        RETURNING user_id, asset_id, revision, name, mime_type, size_bytes,
+                  bytes, metadata, created_at, updated_at
+      `;
+    } else if (
+      expectedRevision !== undefined &&
+      expectedRevision !== null
+    ) {
+      rows = await this.sql`
+        UPDATE workspace_binary_assets
+        SET
+          revision = revision + 1,
+          name = ${input.name},
+          mime_type = ${input.mimeType},
+          size_bytes = ${input.bytes.length},
+          bytes = ${input.bytes},
+          metadata = ${metadata}::jsonb,
+          updated_at = NOW()
+        WHERE
+          user_id = ${userId}
+          AND asset_id = ${assetId}
+          AND revision = ${expectedRevision}
+        RETURNING user_id, asset_id, revision, name, mime_type, size_bytes,
+                  bytes, metadata, created_at, updated_at
+      `;
+    } else {
+      rows = await this.sql`
+        INSERT INTO workspace_binary_assets (
+          user_id, asset_id, revision, name, mime_type, size_bytes,
+          bytes, metadata, created_at, updated_at
+        )
+        VALUES (
+          ${userId}, ${assetId}, 1, ${input.name}, ${input.mimeType},
+          ${input.bytes.length}, ${input.bytes}, ${metadata}::jsonb, NOW(), NOW()
+        )
+        ON CONFLICT (user_id, asset_id)
+        DO UPDATE SET
+          revision = workspace_binary_assets.revision + 1,
+          name = EXCLUDED.name,
+          mime_type = EXCLUDED.mime_type,
+          size_bytes = EXCLUDED.size_bytes,
+          bytes = EXCLUDED.bytes,
+          metadata = EXCLUDED.metadata,
+          updated_at = NOW()
+        RETURNING user_id, asset_id, revision, name, mime_type, size_bytes,
+                  bytes, metadata, created_at, updated_at
+      `;
     }
 
-    const metadata = JSON.stringify(input.metadata);
-    const rows = await this.sql`
-      INSERT INTO workspace_binary_assets (
-        user_id, asset_id, revision, name, mime_type, size_bytes,
-        bytes, metadata, created_at, updated_at
-      )
-      VALUES (
-        ${userId}, ${assetId}, 1, ${input.name}, ${input.mimeType},
-        ${input.bytes.length}, ${input.bytes}, ${metadata}::jsonb, NOW(), NOW()
-      )
-      ON CONFLICT (user_id, asset_id)
-      DO UPDATE SET
-        revision = workspace_binary_assets.revision + 1,
-        name = EXCLUDED.name,
-        mime_type = EXCLUDED.mime_type,
-        size_bytes = EXCLUDED.size_bytes,
-        bytes = EXCLUDED.bytes,
-        metadata = EXCLUDED.metadata,
-        updated_at = NOW()
-      RETURNING user_id, asset_id, revision, name, mime_type, size_bytes,
-                bytes, metadata, created_at, updated_at
-    `;
+    if (!rows.length) {
+      const current = await this.get(userId, assetId);
+      throw Object.assign(new Error("revision_conflict"), {
+        status: 409,
+        currentRevision: current?.revision ?? 0
+      });
+    }
 
     const row = rows[0] as Record<string, unknown>;
     const bytes =
@@ -230,16 +267,6 @@ class PostgresBinaryAssetStore implements BinaryAssetStore {
       createdAt: new Date(String(row.created_at)).toISOString(),
       updatedAt: new Date(String(row.updated_at)).toISOString()
     };
-  }
-
-  async delete(userId: string, assetId: string) {
-    await this.ready();
-    const rows = await this.sql`
-      DELETE FROM workspace_binary_assets
-      WHERE user_id = ${userId} AND asset_id = ${assetId}
-      RETURNING asset_id
-    `;
-    return rows.length > 0;
   }
 }
 
