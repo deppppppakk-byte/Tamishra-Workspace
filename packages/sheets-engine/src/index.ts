@@ -28,6 +28,17 @@ export type NamedRange = {
   end: string;
 };
 
+export type WorkbookLiveBinding = {
+  id: string;
+  kind: "form-results";
+  sourceApp: "forms";
+  sourceResourceId: string;
+  blockId: string;
+  blockVersion: number;
+  sheetId: string;
+  lastSyncedAt: string;
+};
+
 export type Workbook = {
   formatVersion: number;
   id: string;
@@ -36,6 +47,7 @@ export type Workbook = {
   activeSheetId: string;
   sheets: Worksheet[];
   namedRanges: NamedRange[];
+  liveBindings?: WorkbookLiveBinding[];
   updatedAt: string;
 };
 
@@ -91,6 +103,54 @@ export function cellAddress(row: number, col: number): string {
 
 export function createWorkbook(title = "Untitled spreadsheet"): Workbook {
   const firstSheetId = "sheet-1";
+  const liveBindings: WorkbookLiveBinding[] = Array.isArray(input.liveBindings)
+    ? input.liveBindings
+        .filter(isRecord)
+        .slice(0, 1000)
+        .flatMap((binding) => {
+          const id = typeof binding.id === "string" ? binding.id : "";
+          const sourceResourceId =
+            typeof binding.sourceResourceId === "string"
+              ? binding.sourceResourceId
+              : "";
+          const blockId =
+            typeof binding.blockId === "string" ? binding.blockId : "";
+          const blockVersion =
+            typeof binding.blockVersion === "number" &&
+            Number.isFinite(binding.blockVersion)
+              ? Math.max(1, Math.floor(binding.blockVersion))
+              : 1;
+          const sheetId =
+            typeof binding.sheetId === "string" ? binding.sheetId : "";
+          const lastSyncedAt =
+            typeof binding.lastSyncedAt === "string"
+              ? binding.lastSyncedAt
+              : new Date().toISOString();
+
+          if (
+            !id ||
+            binding.kind !== "form-results" ||
+            binding.sourceApp !== "forms" ||
+            !sourceResourceId ||
+            !blockId ||
+            !sheets.some((sheet) => sheet.id === sheetId)
+          ) {
+            return [];
+          }
+
+          return [{
+            id,
+            kind: "form-results" as const,
+            sourceApp: "forms" as const,
+            sourceResourceId,
+            blockId,
+            blockVersion,
+            sheetId,
+            lastSyncedAt
+          }];
+        })
+    : [];
+
   return {
     formatVersion: WORKBOOK_FORMAT_VERSION,
     id: "workbook-" + Date.now().toString(36),
@@ -98,6 +158,7 @@ export function createWorkbook(title = "Untitled spreadsheet"): Workbook {
     version: 1,
     activeSheetId: firstSheetId,
     namedRanges: [],
+    liveBindings: [],
     updatedAt: new Date().toISOString(),
     sheets: [
       {
@@ -838,6 +899,7 @@ export function normalizeWorkbook(input: unknown): Workbook | null {
     activeSheetId,
     sheets,
     namedRanges,
+    liveBindings,
     updatedAt:
       typeof input.updatedAt === "string"
         ? input.updatedAt
