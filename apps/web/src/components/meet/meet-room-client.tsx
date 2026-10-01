@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   LiveKitRoom,
   PreJoin,
@@ -11,11 +11,16 @@ import {
   loadMeetingAccess,
   type MeetingAttendance,
   type MeetingAuditEvent,
+  type MeetingBreakoutState,
+  type MeetingCaptionStatus,
   type MeetingControls,
   type MeetingMessage,
   type MeetingParticipant,
+  type MeetingNotes,
   type MeetingRecordingState,
   type MeetingSignal,
+  type MeetingSummary,
+  type MeetingTranscriptSegment,
   WorkspaceMeetingGateway
 } from "@tamishra/meet-core/workspace-gateway";
 import styles from "./meet-room.module.css";
@@ -31,7 +36,12 @@ type JoinChoices = {
   videoDeviceId?: string;
 };
 
-type SidebarTab = "chat" | "people" | "activity";
+type SidebarTab =
+  | "chat"
+  | "people"
+  | "breakouts"
+  | "notes"
+  | "activity";
 
 const initialControls: MeetingControls = {
   locked: false,
@@ -65,7 +75,13 @@ function auditLabel(event: MeetingAuditEvent) {
     recording_started: "Recording started",
     recording_stopped: "Recording stopped",
     recording_consent_accepted: "Recording consent accepted",
-    recording_consent_declined: "Recording consent declined"
+    recording_consent_declined: "Recording consent declined",
+    breakouts_published: "Breakout rooms opened",
+    breakouts_returned: "Breakout rooms closed",
+    captions_started: "Live captions started",
+    captions_stopped: "Live captions stopped",
+    meeting_notes_updated: "Meeting notes updated",
+    meeting_summary_generated: "Meeting summary generated"
   };
   return labels[event.eventType] ?? event.eventType.replaceAll("_", " ");
 }
@@ -109,6 +125,40 @@ export function MeetRoomClient() {
       recordings: []
     });
   const [recordingBusy, setRecordingBusy] = useState(false);
+  const [breakoutState, setBreakoutState] = useState<MeetingBreakoutState>({
+    rooms: [],
+    assignments: []
+  });
+  const [breakoutCount, setBreakoutCount] = useState(2);
+  const [breakoutMinutes, setBreakoutMinutes] = useState(10);
+  const [breakoutBusy, setBreakoutBusy] = useState(false);
+  const [activeMediaRoom, setActiveMediaRoom] = useState("");
+  const [activeBreakoutLabel, setActiveBreakoutLabel] = useState("");
+  const [captionStatus, setCaptionStatus] =
+    useState<MeetingCaptionStatus>({
+      configured: false,
+      state: {
+        roomName: "",
+        desiredState: "stopped",
+        agentName: null,
+        dispatchId: null,
+        model: null,
+        language: null,
+        lastHeartbeatAt: null,
+        lastError: null,
+        updatedAt: ""
+      }
+    });
+  const [captionsVisible, setCaptionsVisible] = useState(true);
+  const [captionBusy, setCaptionBusy] = useState(false);
+  const [transcript, setTranscript] =
+    useState<MeetingTranscriptSegment[]>([]);
+  const [notes, setNotes] = useState<MeetingNotes | null>(null);
+  const [notesDraft, setNotesDraft] = useState("");
+  const [notesDirty, setNotesDirty] = useState(false);
+  const [notesBusy, setNotesBusy] = useState(false);
+  const [summary, setSummary] = useState<MeetingSummary | null>(null);
+  const handoffRef = useRef(false);
 
   const isHost = context?.role === "host";
   const isModerator =
@@ -174,6 +224,53 @@ export function MeetRoomClient() {
     [gateway]
   );
 
+  const loadBreakouts = useCallback(
+    async (room: string, key: string) => {
+      const result = await gateway.getBreakouts(room, key);
+      setBreakoutState(result);
+      return result;
+    },
+    [gateway]
+  );
+
+  const loadCaptionStatus = useCallback(
+    async (room: string, key: string) => {
+      const result = await gateway.getCaptionStatus(room, key);
+      setCaptionStatus(result);
+      return result;
+    },
+    [gateway]
+  );
+
+  const loadTranscript = useCallback(
+    async (room: string, key: string) => {
+      const result = await gateway.getTranscript(room, key, 500);
+      setTranscript(result);
+      return result;
+    },
+    [gateway]
+  );
+
+  const loadNotes = useCallback(
+    async (room: string, key: string) => {
+      const result = await gateway.getNotes(room, key);
+      setNotes(result);
+      setNotesDraft(result.body);
+      setNotesDirty(false);
+      return result;
+    },
+    [gateway]
+  );
+
+  const loadSummary = useCallback(
+    async (room: string, key: string) => {
+      const result = await gateway.getSummary(room, key);
+      setSummary(result);
+      return result;
+    },
+    [gateway]
+  );
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const room = params.get("room")?.trim() ?? "";
@@ -199,15 +296,25 @@ export function MeetRoomClient() {
 
     void loadContext(room, access.accessKey)
       .then((result) => {
+        const sharedLoads = [
+          loadRecording(room, access.accessKey).catch(() => undefined),
+          loadBreakouts(room, access.accessKey).catch(() => undefined),
+          loadCaptionStatus(room, access.accessKey).catch(() => undefined),
+          loadTranscript(room, access.accessKey).catch(() => undefined),
+          loadNotes(room, access.accessKey).catch(() => undefined),
+          loadSummary(room, access.accessKey).catch(() => undefined)
+        ];
+
         if (result.role === "host" || result.role === "cohost") {
           setSidebarTab("people");
           return Promise.all([
+            ...sharedLoads,
             loadParticipants(room, access.accessKey).catch(() => undefined),
-            loadAttendance(room, access.accessKey).catch(() => undefined),
-            loadRecording(room, access.accessKey).catch(() => undefined)
+            loadAttendance(room, access.accessKey).catch(() => undefined)
           ]);
         }
-        return undefined;
+
+        return Promise.all(sharedLoads);
       })
       .catch((reason) => {
         setError(
@@ -215,7 +322,17 @@ export function MeetRoomClient() {
         );
       })
       .finally(() => setLoading(false));
-  }, [loadAttendance, loadContext, loadParticipants, loadRecording]);
+  }, [
+    loadAttendance,
+    loadBreakouts,
+    loadCaptionStatus,
+    loadContext,
+    loadNotes,
+    loadParticipants,
+    loadRecording,
+    loadSummary,
+    loadTranscript
+  ]);
 
   useEffect(() => {
     if (!roomName || !accessKey || !context || token) return;
@@ -314,6 +431,118 @@ export function MeetRoomClient() {
     context?.status,
     context?.admissionStatus,
     loadRecording
+  ]);
+
+  useEffect(() => {
+    if (
+      !roomName ||
+      !accessKey ||
+      !context ||
+      context.status !== "live" ||
+      context.admissionStatus !== "admitted"
+    ) {
+      return;
+    }
+
+    const refresh = () => {
+      void loadBreakouts(roomName, accessKey).catch(() => undefined);
+      void loadCaptionStatus(roomName, accessKey)
+        .then((status) => {
+          if (status.state.desiredState === "running") {
+            void loadTranscript(roomName, accessKey).catch(() => undefined);
+          }
+        })
+        .catch(() => undefined);
+    };
+
+    refresh();
+    const timer = window.setInterval(refresh, 2200);
+    return () => window.clearInterval(timer);
+  }, [
+    roomName,
+    accessKey,
+    context,
+    context?.status,
+    context?.admissionStatus,
+    loadBreakouts,
+    loadCaptionStatus,
+    loadTranscript
+  ]);
+
+  useEffect(() => {
+    if (
+      !roomName ||
+      !accessKey ||
+      !context ||
+      context.role !== "participant" ||
+      context.status !== "live" ||
+      context.admissionStatus !== "admitted" ||
+      !choices ||
+      !token
+    ) {
+      return;
+    }
+
+    const assignment = breakoutState.assignments.find(
+      (item) => item.participantId === context.participantId
+    );
+    const targetRoom = assignment?.livekitRoomName ?? roomName;
+
+    if ((activeMediaRoom || roomName) === targetRoom) return;
+
+    let cancelled = false;
+    handoffRef.current = true;
+
+    const handoff = assignment
+      ? gateway.issueBreakoutToken(roomName, accessKey)
+      : gateway.issueToken(roomName, accessKey, displayName);
+
+    void handoff
+      .then((result) => {
+        if (cancelled) return;
+        setServerUrl(result.url);
+        setToken(result.token);
+        setActiveMediaRoom(
+          assignment
+            ? (result as { mediaRoom: string }).mediaRoom
+            : roomName
+        );
+        setActiveBreakoutLabel(
+          assignment
+            ? (result as { groupLabel: string }).groupLabel
+            : ""
+        );
+        setRoomError(
+          assignment
+            ? "Joined " +
+                (result as { groupLabel: string }).groupLabel +
+                "."
+            : "Returned to the main meeting."
+        );
+      })
+      .catch((reason) => {
+        handoffRef.current = false;
+        if (cancelled) return;
+        setRoomError(
+          reason instanceof Error
+            ? reason.message
+            : "Unable to switch meeting room."
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    roomName,
+    accessKey,
+    context,
+    choices,
+    token,
+    activeMediaRoom,
+    breakoutState.assignments,
+    displayName,
+    gateway
   ]);
 
   useEffect(() => {
@@ -627,6 +856,148 @@ export function MeetRoomClient() {
     }
   }
 
+  async function startBreakouts() {
+    if (!roomName || !accessKey || !isModerator || breakoutBusy) return;
+
+    const candidates = participants.filter(
+      (participant) =>
+        participant.role === "participant" &&
+        participant.admissionStatus === "admitted"
+    );
+
+    if (candidates.length === 0) {
+      setRoomError("Admit participants before opening breakout rooms.");
+      return;
+    }
+
+    const roomCount = Math.max(
+      1,
+      Math.min(Math.round(breakoutCount), Math.min(20, candidates.length))
+    );
+
+    const assignments = candidates.map((participant, index) => {
+      const groupNumber = (index % roomCount) + 1;
+      return {
+        participantId: participant.id,
+        groupId: "group-" + groupNumber,
+        groupLabel: "Breakout " + groupNumber
+      };
+    });
+
+    setBreakoutBusy(true);
+    setRoomError("");
+    try {
+      await gateway.publishBreakouts(
+        roomName,
+        accessKey,
+        assignments,
+        breakoutMinutes
+      );
+      await Promise.all([
+        loadBreakouts(roomName, accessKey),
+        loadAudit(roomName, accessKey)
+      ]);
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error
+          ? reason.message
+          : "Unable to open breakout rooms."
+      );
+    } finally {
+      setBreakoutBusy(false);
+    }
+  }
+
+  async function returnAllBreakouts() {
+    if (!roomName || !accessKey || !isModerator || breakoutBusy) return;
+    setBreakoutBusy(true);
+    setRoomError("");
+    try {
+      await gateway.returnAllBreakouts(roomName, accessKey);
+      await Promise.all([
+        loadBreakouts(roomName, accessKey),
+        loadAudit(roomName, accessKey)
+      ]);
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error
+          ? reason.message
+          : "Unable to close breakout rooms."
+      );
+    } finally {
+      setBreakoutBusy(false);
+    }
+  }
+
+  async function controlCaptions(action: "start" | "stop") {
+    if (!roomName || !accessKey || !isModerator || captionBusy) return;
+    setCaptionBusy(true);
+    setRoomError("");
+    try {
+      const status = await gateway.controlCaptions(
+        roomName,
+        accessKey,
+        action
+      );
+      setCaptionStatus(status);
+      if (action === "start") {
+        setCaptionsVisible(true);
+      }
+      await loadAudit(roomName, accessKey);
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error
+          ? reason.message
+          : "Unable to control live captions."
+      );
+    } finally {
+      setCaptionBusy(false);
+    }
+  }
+
+  async function saveSharedNotes() {
+    if (!roomName || !accessKey || !isModerator || notesBusy) return;
+    setNotesBusy(true);
+    setRoomError("");
+    try {
+      const result = await gateway.saveNotes(
+        roomName,
+        accessKey,
+        notesDraft
+      );
+      setNotes(result);
+      setNotesDirty(false);
+      await loadAudit(roomName, accessKey);
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error
+          ? reason.message
+          : "Unable to save meeting notes."
+      );
+    } finally {
+      setNotesBusy(false);
+    }
+  }
+
+  async function generateSummary() {
+    if (!roomName || !accessKey || !isModerator || notesBusy) return;
+    setNotesBusy(true);
+    setRoomError("");
+    try {
+      const result = await gateway.generateSummary(roomName, accessKey);
+      setSummary(result);
+      await loadAudit(roomName, accessKey);
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error
+          ? reason.message
+          : "Unable to generate meeting summary."
+      );
+    } finally {
+      setNotesBusy(false);
+    }
+  }
+
   async function connect(values: JoinChoices) {
     if (!roomName || !accessKey || joining) return;
     setJoining(true);
@@ -659,6 +1030,7 @@ export function MeetRoomClient() {
       });
       setToken(result.token);
       setServerUrl(result.url);
+      setActiveMediaRoom(roomName);
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : "Unable to join meeting."
@@ -927,9 +1299,17 @@ export function MeetRoomClient() {
   const ownSignal = signals.find(
     (signal) => signal.participantId === context.participantId
   );
+  const latestCaption =
+    [...transcript]
+      .reverse()
+      .find((segment) => segment.text.trim()) ?? null;
+  const ownBreakoutAssignment = breakoutState.assignments.find(
+    (assignment) => assignment.participantId === context.participantId
+  );
 
   return (
     <LiveKitRoom
+      key={activeMediaRoom || roomName}
       token={token}
       serverUrl={serverUrl}
       connect
@@ -950,11 +1330,13 @@ export function MeetRoomClient() {
       data-lk-theme="default"
       className={styles.liveRoot}
       onConnected={() => {
+        handoffRef.current = false;
         setConnected(true);
         setRoomError("");
       }}
       onDisconnected={() => {
         setConnected(false);
+        if (handoffRef.current) return;
         void loadContext(roomName, accessKey)
           .then((next) => {
             setRoomError(
@@ -980,10 +1362,19 @@ export function MeetRoomClient() {
           <span className={styles.brandMark}>T</span>
           <div>
             <strong>{context.title}</strong>
-            <small>{roomName}</small>
+            <small>
+              {activeBreakoutLabel
+                ? activeBreakoutLabel + " · " + roomName
+                : roomName}
+            </small>
           </div>
         </div>
         <div className={styles.liveHeaderActions}>
+          {activeBreakoutLabel && (
+            <span className={styles.breakoutBadge}>
+              {activeBreakoutLabel}
+            </span>
+          )}
           {isHost && hostJoinCode && (
             <button className={styles.compactCode} onClick={() => void copyJoinCode()}>
               {copied ? "Copied" : hostJoinCode}
@@ -1086,6 +1477,55 @@ export function MeetRoomClient() {
               </button>
             )}
 
+            <button
+              className={
+                captionsVisible &&
+                captionStatus.state.desiredState === "running"
+                  ? styles.toolbarButtonActive
+                  : styles.toolbarButton
+              }
+              onClick={() => setCaptionsVisible((value) => !value)}
+              title={
+                captionStatus.state.desiredState === "running"
+                  ? "Show or hide live captions"
+                  : "Live captions are not running"
+              }
+            >
+              CC
+              {captionStatus.state.desiredState === "running"
+                ? " · Live"
+                : ""}
+            </button>
+
+            <button
+              className={styles.toolbarButton}
+              onClick={() => {
+                setSidebarTab("notes");
+                setSidebarOpen(true);
+              }}
+            >
+              Notes
+            </button>
+
+            {isModerator && (
+              <button
+                className={
+                  breakoutState.rooms.length > 0
+                    ? styles.toolbarButtonActive
+                    : styles.toolbarButton
+                }
+                onClick={() => {
+                  setSidebarTab("breakouts");
+                  setSidebarOpen(true);
+                }}
+              >
+                Breakouts
+                {breakoutState.rooms.length > 0
+                  ? " · " + breakoutState.rooms.length
+                  : ""}
+              </button>
+            )}
+
             {!isHost && (
               <button
                 className={
@@ -1121,6 +1561,20 @@ export function MeetRoomClient() {
 
           <div className={styles.conferenceStage}>
             <VideoConference />
+            {captionsVisible &&
+              captionStatus.state.desiredState === "running" &&
+              latestCaption && (
+                <div
+                  className={styles.captionOverlay}
+                  aria-live="polite"
+                >
+                  <strong>
+                    {latestCaption.participantName ||
+                      latestCaption.participantIdentity}
+                  </strong>
+                  <span>{latestCaption.text}</span>
+                </div>
+              )}
             {reactionSignals.length > 0 && (
               <div className={styles.reactionOverlay} aria-live="polite">
                 {reactionSignals.slice(0, 5).map((signal) => (
@@ -1154,6 +1608,24 @@ export function MeetRoomClient() {
             >
               {isModerator ? "People" : "Signals"}
             </button>
+            <button
+              className={sidebarTab === "notes" ? styles.sidebarTabActive : ""}
+              onClick={() => setSidebarTab("notes")}
+            >
+              Notes
+            </button>
+            {isModerator && (
+              <button
+                className={
+                  sidebarTab === "breakouts"
+                    ? styles.sidebarTabActive
+                    : ""
+                }
+                onClick={() => setSidebarTab("breakouts")}
+              >
+                Breakouts
+              </button>
+            )}
             {isModerator && (
               <button
                 className={sidebarTab === "activity" ? styles.sidebarTabActive : ""}
@@ -1596,10 +2068,324 @@ export function MeetRoomClient() {
                 </div>
               )}
 
-              {!isModerator && raisedSignals.length === 0 && (
-                <p className={styles.emptyState}>
-                  No active hand raises right now.
-                </p>
+              {!isModerator && ownBreakoutAssignment && (
+                <div className={styles.breakoutParticipantCard}>
+                  <span className={styles.groupLabel}>BREAKOUT</span>
+                  <strong>
+                    {activeBreakoutLabel ||
+                      ownBreakoutAssignment.groupId}
+                  </strong>
+                  <small>
+                    You will return to the main room automatically when
+                    the host closes the breakout session.
+                  </small>
+                </div>
+              )}
+
+              {!isModerator &&
+                !ownBreakoutAssignment &&
+                raisedSignals.length === 0 && (
+                  <p className={styles.emptyState}>
+                    No active hand raises right now.
+                  </p>
+                )}
+            </div>
+          )}
+
+          {sidebarTab === "notes" && (
+            <div className={styles.notesPanel}>
+              <div className={styles.hostPanelHeading}>
+                <span>MEETING INTELLIGENCE</span>
+                <strong>Notes, captions & summary</strong>
+              </div>
+
+              <div className={styles.captionControlCard}>
+                <div>
+                  <span className={styles.groupLabel}>LIVE CAPTIONS</span>
+                  <strong>
+                    {captionStatus.state.desiredState === "running"
+                      ? "Caption agent is running"
+                      : captionStatus.configured
+                        ? "Caption agent is ready"
+                        : "Caption worker not configured"}
+                  </strong>
+                  <small>
+                    {captionStatus.state.lastHeartbeatAt
+                      ? "Last transcript heartbeat " +
+                        new Intl.DateTimeFormat(undefined, {
+                          hour: "numeric",
+                          minute: "2-digit"
+                        }).format(
+                          new Date(
+                            captionStatus.state.lastHeartbeatAt
+                          )
+                        )
+                      : "Transcript segments will appear below when available."}
+                  </small>
+                </div>
+
+                {isModerator && (
+                  <button
+                    disabled={
+                      captionBusy ||
+                      (!captionStatus.configured &&
+                        captionStatus.state.desiredState !== "running")
+                    }
+                    onClick={() =>
+                      void controlCaptions(
+                        captionStatus.state.desiredState === "running"
+                          ? "stop"
+                          : "start"
+                      )
+                    }
+                  >
+                    {captionBusy
+                      ? "Updating…"
+                      : captionStatus.state.desiredState === "running"
+                        ? "Stop captions"
+                        : "Start captions"}
+                  </button>
+                )}
+              </div>
+
+              <div className={styles.notesEditorCard}>
+                <div className={styles.notesCardHeader}>
+                  <div>
+                    <span className={styles.groupLabel}>SHARED NOTES</span>
+                    <strong>
+                      {isModerator
+                        ? "Host & co-host notes"
+                        : "Meeting notes"}
+                    </strong>
+                  </div>
+                  {notes?.updatedByDisplayName && (
+                    <small>
+                      Updated by {notes.updatedByDisplayName}
+                    </small>
+                  )}
+                </div>
+
+                <textarea
+                  value={notesDraft}
+                  readOnly={!isModerator}
+                  maxLength={50000}
+                  onChange={(event) => {
+                    setNotesDraft(event.target.value);
+                    setNotesDirty(true);
+                  }}
+                  placeholder={
+                    isModerator
+                      ? "Capture decisions, context and follow-up notes…"
+                      : "No shared notes yet."
+                  }
+                />
+
+                {isModerator && (
+                  <button
+                    disabled={!notesDirty || notesBusy}
+                    onClick={() => void saveSharedNotes()}
+                  >
+                    {notesBusy ? "Saving…" : "Save notes"}
+                  </button>
+                )}
+              </div>
+
+              <div className={styles.summaryCard}>
+                <div className={styles.notesCardHeader}>
+                  <div>
+                    <span className={styles.groupLabel}>SUMMARY</span>
+                    <strong>
+                      {summary
+                        ? "Latest meeting summary"
+                        : "No summary generated yet"}
+                    </strong>
+                  </div>
+                  {isModerator && (
+                    <button
+                      disabled={notesBusy}
+                      onClick={() => void generateSummary()}
+                    >
+                      {notesBusy
+                        ? "Generating…"
+                        : summary
+                          ? "Regenerate"
+                          : "Generate summary"}
+                    </button>
+                  )}
+                </div>
+
+                {summary ? (
+                  <>
+                    <p>{summary.summary}</p>
+                    {summary.actionItems.length > 0 && (
+                      <div className={styles.actionItems}>
+                        <span className={styles.groupLabel}>
+                          ACTION ITEMS
+                        </span>
+                        {summary.actionItems.map((item, index) => (
+                          <div key={index}>
+                            <span>{index + 1}</span>
+                            <p>{item}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <small>
+                      Generated by {summary.provider}
+                    </small>
+                  </>
+                ) : (
+                  <p className={styles.emptyState}>
+                    Generate a summary from finalized transcript
+                    segments and shared notes.
+                  </p>
+                )}
+              </div>
+
+              <div className={styles.transcriptPanel}>
+                <div className={styles.notesCardHeader}>
+                  <div>
+                    <span className={styles.groupLabel}>TRANSCRIPT</span>
+                    <strong>
+                      {transcript.length} segments
+                    </strong>
+                  </div>
+                  <button
+                    onClick={() =>
+                      void loadTranscript(roomName, accessKey)
+                    }
+                  >
+                    Refresh
+                  </button>
+                </div>
+
+                {transcript.length === 0 ? (
+                  <p className={styles.emptyState}>
+                    No transcript segments have been received yet.
+                  </p>
+                ) : (
+                  <div className={styles.transcriptList}>
+                    {transcript.slice(-80).map((segment) => (
+                      <article key={segment.segmentId}>
+                        <div>
+                          <strong>
+                            {segment.participantName ||
+                              segment.participantIdentity}
+                          </strong>
+                          <span>
+                            {segment.isFinal ? "Final" : "Live"}
+                          </span>
+                        </div>
+                        <p>{segment.text}</p>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {isModerator && sidebarTab === "breakouts" && (
+            <div className={styles.breakoutPanel}>
+              <div className={styles.hostPanelHeading}>
+                <span>BREAKOUT ROOMS</span>
+                <strong>Small-group sessions</strong>
+              </div>
+
+              {breakoutState.rooms.length === 0 ? (
+                <div className={styles.breakoutSetup}>
+                  <label>
+                    Rooms
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={breakoutCount}
+                      onChange={(event) =>
+                        setBreakoutCount(
+                          Math.max(
+                            1,
+                            Math.min(20, Number(event.target.value) || 1)
+                          )
+                        )
+                      }
+                    />
+                  </label>
+                  <label>
+                    Minutes
+                    <input
+                      type="number"
+                      min={1}
+                      max={120}
+                      value={breakoutMinutes}
+                      onChange={(event) =>
+                        setBreakoutMinutes(
+                          Math.max(
+                            1,
+                            Math.min(120, Number(event.target.value) || 1)
+                          )
+                        )
+                      }
+                    />
+                  </label>
+                  <button
+                    disabled={breakoutBusy}
+                    onClick={() => void startBreakouts()}
+                  >
+                    {breakoutBusy
+                      ? "Opening…"
+                      : "Auto-assign & open"}
+                  </button>
+                  <small>
+                    Admitted participants are distributed round-robin.
+                    Hosts and co-hosts remain in the main room.
+                  </small>
+                </div>
+              ) : (
+                <>
+                  <div className={styles.breakoutLiveHeader}>
+                    <div>
+                      <span className={styles.liveDot} />
+                      <strong>
+                        {breakoutState.rooms.length} rooms open
+                      </strong>
+                    </div>
+                    <button
+                      disabled={breakoutBusy}
+                      onClick={() => void returnAllBreakouts()}
+                    >
+                      {breakoutBusy ? "Closing…" : "Return everyone"}
+                    </button>
+                  </div>
+
+                  <div className={styles.breakoutRoomList}>
+                    {breakoutState.rooms.map((room) => {
+                      const assigned =
+                        breakoutState.assignments.filter(
+                          (item) => item.groupId === room.groupId
+                        );
+                      return (
+                        <article key={room.groupId}>
+                          <div>
+                            <strong>{room.groupLabel}</strong>
+                            <small>
+                              {room.durationMinutes
+                                ? room.durationMinutes + " min"
+                                : "No timer"}
+                            </small>
+                          </div>
+                          <div className={styles.breakoutMembers}>
+                            {assigned.map((item) => (
+                              <span key={item.participantId}>
+                                {item.displayName}
+                              </span>
+                            ))}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </div>
           )}
