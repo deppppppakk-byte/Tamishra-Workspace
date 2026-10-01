@@ -185,7 +185,7 @@ export type DocumentSection = {
   blocks: DocumentBlock[];
   header?: DocumentBlock[];
   footer?: DocumentBlock[];
-  headerFooter: HeaderFooterSettings;
+  headerFooter?: HeaderFooterSettings;
 };
 
 export type TamishraDocument = {
