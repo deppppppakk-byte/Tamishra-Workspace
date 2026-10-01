@@ -632,7 +632,7 @@ export function MailWorkspace() {
               </div>
 
               {(() => {
-                const provider = builtInMailProviders.find((item) => item.key === selectedProvider) ?? builtInMailProviders[0];
+                const provider = builtInMailProviders.find((item) => item.key === selectedProvider) ?? builtInMailProviders[0]!;
 
                 return (
                   <div className={styles.providerDetail}>
