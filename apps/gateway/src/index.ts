@@ -1,3 +1,4 @@
+import { nativeAuthCapabilities } from "@tamishra/identity";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { handleMeetingRequest } from "./meetings.js";
 
@@ -84,6 +85,15 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       },
       origin
     );
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/v1/auth/capabilities") {
+    json(response, 200, {
+      product: "Tamishra Workspace Identity",
+      native: true,
+      capabilities: nativeAuthCapabilities
+    }, origin);
     return;
   }
 
