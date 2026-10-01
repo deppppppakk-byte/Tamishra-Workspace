@@ -15,6 +15,7 @@ const nextConfig: NextConfig = {
     "@tamishra/history",
     "@tamishra/mail-core",
     "@tamishra/sheets-engine",
+    "@tamishra/slides-core",
     "@tamishra/meet-core"
   ]
 };
