@@ -359,3 +359,5 @@ export function mmToCssPx(mm: number): number {
 
 export * from "./workspace";
 export * from "./docx";
+
+export * from "./native-format";
