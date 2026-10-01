@@ -17,6 +17,7 @@ import {
   calculateDocsProofingStats,
   createDocsFolder,
   createDraftFromHtml,
+  createTamishraDocumentPackage,
   duplicateDocsRecord,
   exportDocsDocx,
   extractDocsOutline,
@@ -26,11 +27,15 @@ import {
   migrateLegacyDraft,
   mmToCssPx,
   moveDocsRecordToFolder,
+  parseTamishraDocument,
   permanentlyDeleteDocsRecord,
   registerDocsDocxAdapter,
   removeDocsShareGrant,
   restoreDocsRecord,
   saveDocsWorkspace,
+  serializeTamishraDocument,
+  tamishraDocumentFilename,
+  TMDOC_MIME_TYPE,
   trashDocsRecord,
   updateDocsComment,
   updateDocsSuggestion,
@@ -95,6 +100,7 @@ export default function DocsEditor() {
   const activePageRef = useRef(0);
   const reflowFrameRef = useRef<number | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const nativeInputRef = useRef<HTMLInputElement>(null);
   const docxInputRef = useRef<HTMLInputElement>(null);
   const selectedTableCellRef = useRef<HTMLTableCellElement | null>(null);
   const draftRef = useRef<PersistedDocsDraft | null>(null);
@@ -955,6 +961,110 @@ export default function DocsEditor() {
     commitWorkspace(
       moveDocsRecordToFolder(workspaceRef.current, documentId, folderId)
     );
+  };
+
+  const handleNativeInput = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    try {
+      setSavedState("Opening .tmdoc…");
+      const packageData = parseTamishraDocument(await file.arrayBuffer());
+      const record = {
+        ...packageData.record,
+        lastOpenedAt: new Date().toISOString(),
+        trashedAt: null
+      };
+
+      const current = workspaceRef.current;
+      const next: DocsWorkspaceSnapshot = {
+        ...current,
+        records: [
+          record,
+          ...current.records.filter((item) => item.id !== record.id)
+        ],
+        comments: [
+          ...packageData.comments,
+          ...current.comments.filter((item) => item.documentId !== record.id)
+        ],
+        suggestions: [
+          ...packageData.suggestions,
+          ...current.suggestions.filter((item) => item.documentId !== record.id)
+        ],
+        versions: [
+          ...packageData.versions,
+          ...current.versions.filter((item) => item.documentId !== record.id)
+        ].slice(0, 100),
+        grants: [
+          ...packageData.grants,
+          ...current.grants.filter((item) => item.documentId !== record.id)
+        ]
+      };
+
+      commitWorkspace(next);
+      applyDraftToEditor(record.draft, record.id, ".tmdoc opened");
+    } catch (error) {
+      setSavedState("Could not open .tmdoc");
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : "Could not open the Tamishra document."
+      );
+    }
+  };
+
+  const handleExportNative = () => {
+    try {
+      const draft = saveDocument();
+      const documentId = currentDocumentIdRef.current;
+      if (!documentId) return;
+
+      const record =
+        workspaceRef.current.records.find((item) => item.id === documentId) ??
+        upsertDocsRecord(workspaceRef.current, {
+          id: documentId,
+          title: title.trim() || "Untitled document",
+          draft
+        }).record;
+
+      const packageData = createTamishraDocumentPackage({
+        record: { ...record, draft },
+        comments: workspaceRef.current.comments.filter(
+          (item) => item.documentId === documentId
+        ),
+        suggestions: workspaceRef.current.suggestions.filter(
+          (item) => item.documentId === documentId
+        ),
+        versions: workspaceRef.current.versions.filter(
+          (item) => item.documentId === documentId
+        ),
+        grants: workspaceRef.current.grants.filter(
+          (item) => item.documentId === documentId
+        )
+      });
+
+      const bytes = serializeTamishraDocument(packageData);
+      const blob = new Blob([bytes], { type: TMDOC_MIME_TYPE });
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = tamishraDocumentFilename(
+        title.trim() || "Untitled document"
+      );
+      anchor.click();
+      URL.revokeObjectURL(href);
+      setSavedState(".tmdoc exported");
+    } catch (error) {
+      setSavedState(".tmdoc export failed");
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : "Could not export the Tamishra document."
+      );
+    }
   };
 
   const handleDocxInput = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -2255,6 +2365,13 @@ td,th{border:1px solid #d0d5dd;padding:8px}
         onChange={handleImageInput}
       />
       <input
+        ref={nativeInputRef}
+        type="file"
+        accept=".tmdoc,application/vnd.tamishra.document"
+        hidden
+        onChange={handleNativeInput}
+      />
+      <input
         ref={docxInputRef}
         type="file"
         accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -2394,6 +2511,8 @@ td,th{border:1px solid #d0d5dd;padding:8px}
             onDeleteForever={handleDeleteRecordForever}
             onCreateFolder={handleCreateFolder}
             onMoveCurrentToFolder={handleMoveCurrentToFolder}
+            onImportNative={() => nativeInputRef.current?.click()}
+            onExportNative={handleExportNative}
             onImportDocx={() => docxInputRef.current?.click()}
             onExportDocx={handleExportDocx}
             onGoToOutline={handleGoToOutline}
