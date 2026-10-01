@@ -11,6 +11,7 @@ const nextConfig: NextConfig = {
   transpilePackages: [
     "@tamishra/workspace-core",
     "@tamishra/blocks-core",
+    "@tamishra/link-core",
     "@tamishra/chat-core",
     "@tamishra/document-model",
     "@tamishra/docs-engine",
