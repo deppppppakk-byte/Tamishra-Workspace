@@ -1,4 +1,4 @@
-import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
+import postgres from "postgres";
 
 export type StoredMeetingStatus =
   | "scheduled"
@@ -312,11 +312,11 @@ class MemoryMeetingStore implements MeetingStore {
 
 class PostgresMeetingStore implements MeetingStore {
   readonly kind = "postgres" as const;
-  private readonly sql: NeonQueryFunction<false, false>;
+  private readonly sql: ReturnType<typeof postgres>;
   private readyPromise: Promise<void> | null = null;
 
   constructor(databaseUrl: string) {
-    this.sql = neon<false, false>(databaseUrl);
+    this.sql = postgres(databaseUrl, { max: 5, prepare: false });
   }
 
   ready() {
