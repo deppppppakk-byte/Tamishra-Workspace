@@ -50,7 +50,12 @@ import {
   type PersistedDocsDraft
 } from "@tamishra/docs-engine";
 import { TransactionHistory } from "@tamishra/history";
-import { upsertWorkspaceFile } from "@tamishra/file-core";
+import {
+  permanentlyDeleteWorkspaceFile,
+  restoreWorkspaceFile,
+  trashWorkspaceFile,
+  upsertWorkspaceFile
+} from "@tamishra/file-core";
 import HeaderFooterSettingsPanel from "./HeaderFooterSettings";
 import PageSettings from "./PageSettings";
 import DocsProductionPanel, { type DocsPanelTab } from "./DocsProductionPanel";
@@ -891,6 +896,7 @@ export default function DocsEditor() {
   const handleTrashRecord = (id: string) => {
     const next = trashDocsRecord(workspaceRef.current, id);
     commitWorkspace(next);
+    mutateWorkspaceFileIndex((index) => trashWorkspaceFile(index, `docs:${id}`));
 
     if (currentDocumentIdRef.current === id) {
       handleNewDocument();
@@ -899,11 +905,15 @@ export default function DocsEditor() {
 
   const handleRestoreRecord = (id: string) => {
     commitWorkspace(restoreDocsRecord(workspaceRef.current, id));
+    mutateWorkspaceFileIndex((index) => restoreWorkspaceFile(index, `docs:${id}`));
   };
 
   const handleDeleteRecordForever = (id: string) => {
     if (!window.confirm("Permanently delete this document and its versions/comments?")) return;
     commitWorkspace(permanentlyDeleteDocsRecord(workspaceRef.current, id));
+    mutateWorkspaceFileIndex((index) =>
+      permanentlyDeleteWorkspaceFile(index, `docs:${id}`)
+    );
   };
 
   const handleSuggestReplacement = () => {
