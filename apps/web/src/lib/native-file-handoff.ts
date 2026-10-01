@@ -102,5 +102,6 @@ export function targetAppForNativeFile(name: string) {
   if (lower.endsWith(".tmsl")) return "/apps/slides";
   if (lower.endsWith(".pdf")) return "/apps/pdf";
   if (lower.endsWith(".tmnt")) return "/apps/notes";
+  if (lower.endsWith(".tmfm")) return "/apps/forms";
   return null;
 }
