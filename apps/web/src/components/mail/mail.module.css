@@ -940,6 +940,278 @@
   font-size: 9px;
 }
 
+.providerBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  padding: 28px;
+  background: rgba(18, 27, 43, 0.34);
+  backdrop-filter: blur(9px);
+  display: grid;
+  place-items: center;
+}
+
+.providerPanel {
+  width: min(900px, 100%);
+  max-height: min(720px, calc(100dvh - 56px));
+  border: 1px solid rgba(255, 255, 255, 0.76);
+  border-radius: 24px;
+  background: rgba(250, 252, 255, 0.97);
+  box-shadow: 0 30px 90px rgba(18, 27, 43, 0.27);
+  overflow: hidden;
+}
+
+.providerPanel > header {
+  min-height: 82px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--mail-line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.providerPanel > header span {
+  color: var(--mail-brand);
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+}
+
+.providerPanel > header h2 {
+  margin: 5px 0 0;
+  font-size: 22px;
+  letter-spacing: -0.03em;
+}
+
+.providerPanel > header button {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 11px;
+  color: #667085;
+  background: rgba(23, 32, 51, 0.05);
+  cursor: pointer;
+  font-size: 22px;
+}
+
+.providerBody {
+  min-height: 420px;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+}
+
+.providerList {
+  padding: 14px;
+  border-right: 1px solid var(--mail-line);
+  background: rgba(245, 248, 252, 0.8);
+  display: grid;
+  align-content: start;
+  gap: 7px;
+}
+
+.providerList > button {
+  min-height: 70px;
+  border: 1px solid transparent;
+  border-radius: 15px;
+  padding: 10px;
+  color: #536077;
+  background: transparent;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.providerList > button > span {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(145deg, #315cf4, #2348c8);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.providerList > button strong,
+.providerList > button small {
+  display: block;
+}
+
+.providerList > button strong {
+  color: #2b374b;
+  font-size: 11px;
+}
+
+.providerList > button small {
+  margin-top: 3px;
+  color: #8792a3;
+  font-size: 9px;
+}
+
+.providerList > button b {
+  border-radius: 99px;
+  padding: 4px 6px;
+  color: var(--mail-brand);
+  background: var(--mail-brand-soft);
+  font-size: 7px;
+}
+
+.providerActive {
+  border-color: rgba(49, 92, 244, 0.14) !important;
+  background: #fff !important;
+  box-shadow: 0 8px 24px rgba(45, 57, 84, 0.06);
+}
+
+.providerDetail {
+  padding: 28px;
+  overflow-y: auto;
+}
+
+.providerTitle {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.providerTitle > div:first-child {
+  width: 50px;
+  height: 50px;
+  flex: 0 0 auto;
+  border-radius: 16px;
+  color: white;
+  background: #172033;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  font-weight: 850;
+}
+
+.providerTitle h3 {
+  margin: 2px 0 0;
+  font-size: 19px;
+  letter-spacing: -0.025em;
+}
+
+.providerTitle p {
+  max-width: 520px;
+  margin: 6px 0 0;
+  color: #748096;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.capabilityGrid {
+  margin-top: 22px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.capabilityGrid span {
+  border: 1px solid var(--mail-line);
+  border-radius: 99px;
+  padding: 6px 9px;
+  color: #98a2b3;
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 8px;
+  font-weight: 750;
+}
+
+.capabilityGrid .capabilityOn {
+  color: #237252;
+  border-color: rgba(35, 114, 82, 0.12);
+  background: rgba(35, 114, 82, 0.07);
+}
+
+.providerFields,
+.oauthNotice {
+  margin-top: 24px;
+  border: 1px solid var(--mail-line);
+  border-radius: 16px;
+  padding: 15px;
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.providerFields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.providerFields label {
+  min-width: 0;
+}
+
+.providerFields label span {
+  display: block;
+  margin-bottom: 5px;
+  color: #68758a;
+  font-size: 8px;
+  font-weight: 750;
+}
+
+.providerFields input {
+  width: 100%;
+  height: 36px;
+  border: 1px solid var(--mail-line);
+  border-radius: 10px;
+  padding: 0 10px;
+  color: #7c8799;
+  background: #f7f9fc;
+  outline: 0;
+  font-size: 9px;
+}
+
+.providerFields > p {
+  grid-column: 1 / -1;
+  margin: 3px 0 0;
+  color: #8a95a7;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.oauthNotice strong {
+  display: block;
+  color: #344054;
+  font-size: 10px;
+}
+
+.oauthNotice p {
+  margin: 6px 0 0;
+  color: #7b8798;
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.providerActions {
+  margin-top: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.providerActions button {
+  border: 1px solid var(--mail-line);
+  border-radius: 11px;
+  padding: 9px 13px;
+  color: #536077;
+  background: rgba(255, 255, 255, 0.82);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.providerActions .providerPrimary {
+  border-color: transparent;
+  color: white;
+  background: var(--mail-brand);
+  box-shadow: 0 9px 22px rgba(49, 92, 244, 0.2);
+}
+
 .toast {
   position: fixed;
   left: 50%;
@@ -1074,6 +1346,45 @@
     width: auto;
     height: auto;
     border-radius: 18px;
+  }
+
+  .providerBackdrop {
+    padding: 8px;
+    align-items: end;
+  }
+
+  .providerPanel {
+    max-height: calc(100dvh - 66px);
+    border-radius: 20px 20px 0 0;
+  }
+
+  .providerPanel > header {
+    min-height: 70px;
+    padding: 14px 16px;
+  }
+
+  .providerBody {
+    display: block;
+    overflow-y: auto;
+  }
+
+  .providerList {
+    border-right: 0;
+    border-bottom: 1px solid var(--mail-line);
+    display: flex;
+    overflow-x: auto;
+  }
+
+  .providerList > button {
+    min-width: 190px;
+  }
+
+  .providerDetail {
+    padding: 18px;
+  }
+
+  .providerFields {
+    grid-template-columns: 1fr;
   }
 
   .toast {
