@@ -219,6 +219,18 @@ export function MailWorkspace() {
     window.setTimeout(() => setNotice(""), 2200);
   }
 
+  function moveMessage(id: string, destination: Folder) {
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === id ? { ...message, folder: destination } : message
+      )
+    );
+    setChecked((current) => current.filter((messageId) => messageId !== id));
+    setSelectedId("");
+    setNotice(destination === "trash" ? "Moved to Trash" : "Message archived");
+    window.setTimeout(() => setNotice(""), 2200);
+  }
+
   function closeComposer() {
     if (compose.to.trim() || compose.subject.trim() || compose.body.trim()) {
       const draft: MailMessage = {
@@ -438,13 +450,10 @@ export function MailWorkspace() {
             {activeMessage ? (
               <>
                 <div className={styles.readerToolbar}>
-                  <button type="button" onClick={() => moveChecked("archive")} aria-label="Archive selected">□</button>
+                  <button type="button" onClick={() => moveMessage(activeMessage.id, "archive")} aria-label="Archive message">□</button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setChecked([activeMessage.id]);
-                      window.setTimeout(() => moveChecked("trash"), 0);
-                    }}
+                    onClick={() => moveMessage(activeMessage.id, "trash")}
                     aria-label="Delete message"
                   >
                     ⌫
