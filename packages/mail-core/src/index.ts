@@ -166,22 +166,6 @@ export type MailConnectedAccount = {
   errorCode?: string;
 };
 
-export type MailOAuthStartRequest = {
-  providerKey: "google" | "microsoft" | string;
-  returnUrl: string;
-};
-
-export type MailOAuthStartResult = {
-  authorizationUrl: string;
-  state: string;
-};
-
-export type MailOAuthCompleteRequest = {
-  providerKey: string;
-  code: string;
-  state: string;
-};
-
 export type MailServerConnectionRequest = {
   email: string;
   imap: {
@@ -204,8 +188,7 @@ export type MailGatewayAccountResult = {
 
 export interface MailGateway {
   listAccounts(): Promise<MailConnectedAccount[]>;
-  beginOAuth(request: MailOAuthStartRequest): Promise<MailOAuthStartResult>;
-  completeOAuth(request: MailOAuthCompleteRequest): Promise<MailGatewayAccountResult>;
+  getNativeAccount(): Promise<MailGatewayAccountResult>;
   connectServer(request: MailServerConnectionRequest): Promise<MailGatewayAccountResult>;
   disconnect(accountId: string): Promise<void>;
   createProvider(accountId: string): Promise<MailProvider>;
