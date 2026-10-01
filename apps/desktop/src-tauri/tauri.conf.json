@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "in.tamishra.workspace",
   "build": {
-    "beforeDevCommand": "npm --prefix ../.. run dev:web",
-    "beforeBuildCommand": "npm --prefix ../.. run build:web",
+    "beforeDevCommand": "npm --prefix ../.. run dev:web:native",
+    "beforeBuildCommand": "npm --prefix ../.. run build:web:native",
     "devUrl": "http://localhost:3000",
     "frontendDist": "../../web/out"
   },
@@ -30,7 +30,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": [
+      "nsis",
+      "msi"
+    ],
     "category": "Productivity",
     "shortDescription": "Tamishra productivity and collaboration workspace",
     "longDescription": "Tamishra Workspace brings documents, spreadsheets, presentations, PDF, chat, mail, meetings, notes, forms and files into one productivity environment."
