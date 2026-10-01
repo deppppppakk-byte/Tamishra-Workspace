@@ -11,6 +11,7 @@ import {
   normalizeFormsSnapshot,
   parseTamishraForm,
   responsesToCsv,
+  responsesToMatrix,
   serializeTamishraForm,
   tamishraFormFilename,
   TMFORM_MIME_TYPE,
@@ -20,6 +21,13 @@ import {
   type FormsSnapshot,
   type TamishraForm
 } from "@tamishra/forms-core";
+import {
+  createBlock,
+  liveBlocksForSource,
+  refreshLiveBlock,
+  upsertBlock,
+  type TamishraBlock
+} from "@tamishra/blocks-core";
 import {
   permanentlyDeleteWorkspaceFile,
   trashWorkspaceFile,
@@ -31,6 +39,12 @@ import {
   hydrateWorkspaceContent,
   pushWorkspaceContent
 } from "../../../lib/workspace-content-sync";
+import {
+  loadWorkspaceBlockShelf,
+  mutateWorkspaceBlockShelf,
+  queueBlockHandoff,
+  saveWorkspaceBlockShelf
+} from "../../../lib/workspace-blocks";
 import styles from "./forms.module.css";
 
 const STORAGE_KEY = "tamishra.forms.snapshot.v1";
@@ -76,6 +90,37 @@ const fieldLabels: Record<FormFieldType, string> = {
   date: "Date",
   rating: "Rating"
 };
+
+function formResultsRevision(
+  form: TamishraForm,
+  responses: FormsSnapshot["responses"]
+) {
+  const matching = responses.filter((response) => response.formId === form.id);
+  const latest = matching.reduce(
+    (value, response) =>
+      response.submittedAt.localeCompare(value) > 0
+        ? response.submittedAt
+        : value,
+    ""
+  );
+  return `${form.updatedAt}:${matching.length}:${latest}`;
+}
+
+function formResultsPayload(
+  form: TamishraForm,
+  responses: FormsSnapshot["responses"]
+) {
+  const matching = responses.filter((response) => response.formId === form.id);
+  const tableData = responsesToMatrix(form, matching);
+  return {
+    tableData,
+    sourceLabel: form.title + " · Live responses",
+    rows: tableData.length,
+    columns: Math.max(1, ...tableData.map((row) => row.length)),
+    responseCount: matching.length,
+    formId: form.id
+  };
+}
 
 function copyField(field: FormField): FormField {
   const next = createField(field.type, field.label);
@@ -283,6 +328,40 @@ export default function FormsWorkspace() {
 
   useEffect(() => {
     if (!loaded) return;
+
+    const timer = window.setTimeout(() => {
+      const shelf = loadWorkspaceBlockShelf();
+      let next = shelf;
+
+      for (const form of snapshot.forms) {
+        if (form.trashedAt) continue;
+        const liveBlocks = liveBlocksForSource(next, {
+          app: "forms",
+          resourceId: form.id
+        }).filter((block) => block.kind === "table");
+
+        if (!liveBlocks.length) continue;
+        const revision = formResultsRevision(form, snapshot.responses);
+        const payload = formResultsPayload(form, snapshot.responses);
+
+        for (const block of liveBlocks) {
+          next = refreshLiveBlock(
+            next,
+            block.id,
+            payload,
+            revision
+          );
+        }
+      }
+
+      if (next !== shelf) saveWorkspaceBlockShelf(next);
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [snapshot, loaded]);
+
+  useEffect(() => {
+    if (!loaded) return;
     setStatus("Saving…");
     const timer = window.setTimeout(() => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
@@ -391,6 +470,60 @@ export default function FormsWorkspace() {
     setErrors({});
     setStatus("Response recorded locally");
     setMode("responses");
+  };
+
+  const ensureLiveResultsBlock = (): TamishraBlock | null => {
+    if (!selectedForm) return null;
+
+    const shelf = loadWorkspaceBlockShelf();
+    const existing = liveBlocksForSource(shelf, {
+      app: "forms",
+      resourceId: selectedForm.id
+    }).find((block) => block.kind === "table");
+
+    const payload = formResultsPayload(selectedForm, snapshot.responses);
+    const revision = formResultsRevision(selectedForm, snapshot.responses);
+
+    if (existing) {
+      const refreshed = refreshLiveBlock(
+        shelf,
+        existing.id,
+        payload,
+        revision
+      );
+      if (refreshed !== shelf) saveWorkspaceBlockShelf(refreshed);
+      return (
+        refreshed.blocks.find((block) => block.id === existing.id) ??
+        existing
+      );
+    }
+
+    const block = createBlock({
+      title: selectedForm.title + " · Responses",
+      kind: "table",
+      sourceApp: "forms",
+      payload,
+      tags: ["forms", "live-results", selectedForm.title],
+      binding: {
+        mode: "live",
+        source: {
+          app: "forms",
+          resourceId: selectedForm.id,
+          locator: "responses",
+          revision
+        }
+      }
+    });
+
+    mutateWorkspaceBlockShelf((current) => upsertBlock(current, block));
+    return block;
+  };
+
+  const openLiveResultsInSheets = () => {
+    const block = ensureLiveResultsBlock();
+    if (!block) return;
+    queueBlockHandoff(block.id, "sheets");
+    window.location.href = "/apps/sheets";
   };
 
   const exportNative = () => {
@@ -538,6 +671,7 @@ export default function FormsWorkspace() {
               </div>
               <div className={styles.actions}>
                 <button onClick={exportNative}>Export .tmfm</button>
+                <button onClick={openLiveResultsInSheets}>Live results → Sheets</button>
                 {view === "trash" ? (
                   <>
                     <button onClick={restoreSelected}>Restore</button>
@@ -796,7 +930,10 @@ export default function FormsWorkspace() {
                     <strong>{formResponses.length}</strong>
                     <span>responses</span>
                   </div>
-                  <button onClick={exportCsv} disabled={!formResponses.length}>Export CSV</button>
+                  <div className={styles.responseActions}>
+                    <button onClick={openLiveResultsInSheets}>Open live results in Sheets</button>
+                    <button onClick={exportCsv} disabled={!formResponses.length}>Export CSV</button>
+                  </div>
                 </div>
 
                 {formResponses.length ? (
