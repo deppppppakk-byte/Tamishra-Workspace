@@ -1880,6 +1880,949 @@ export async function handleMeetingRequest(
     return true;
   }
 
+  if (request.method === "GET" && parsed.action === "breakouts") {
+    const participant = await findAccess(
+      meeting.roomName,
+      url.searchParams.get("accessKey")
+    );
+
+    if (!participant) {
+      sendJson(
+        response,
+        401,
+        { error: "invalid_meeting_access" },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+
+    let [rooms, assignments] = await Promise.all([
+      breakouts.listRooms(meeting.roomName),
+      breakouts.listAssignments(meeting.roomName)
+    ]);
+
+    const now = Date.now();
+    const expired = rooms.some((room) => {
+      if (!room.durationMinutes) return false;
+      return (
+        new Date(room.openedAt).getTime() +
+          room.durationMinutes * 60_000 <=
+        now
+      );
+    });
+
+    if (expired) {
+      const openRooms = [...rooms];
+      await breakouts.returnAll(meeting.roomName);
+      const roomService = roomServiceClient();
+      if (roomService) {
+        await Promise.all(
+          openRooms.map((room) =>
+            roomService
+              .deleteRoom(room.livekitRoomName)
+              .catch(() => undefined)
+          )
+        );
+      }
+      rooms = [];
+      assignments = [];
+    }
+
+    const moderator = canModerate(participant);
+    const visibleAssignments = moderator
+      ? assignments
+      : assignments.filter(
+          (item) => item.participantId === participant.id
+        );
+
+    sendJson(
+      response,
+      200,
+      {
+        rooms: moderator ? rooms : [],
+        assignments: visibleAssignments
+      },
+      origin,
+      allowedOrigins
+    );
+    return true;
+  }
+
+  if (request.method === "POST" && parsed.action === "breakouts") {
+    try {
+      const body = await readJson(request);
+      const moderator = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
+      if (!canModerate(moderator)) {
+        sendJson(
+          response,
+          403,
+          { error: "moderator_access_required" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      if (meeting.status !== "live") {
+        sendJson(
+          response,
+          409,
+          { error: "meeting_not_live" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const action = String(body.action ?? "");
+
+      if (action === "return-all") {
+        const openRooms = await breakouts.listRooms(meeting.roomName);
+        const returned = await breakouts.returnAll(meeting.roomName);
+        const rooms = roomServiceClient();
+
+        if (rooms) {
+          await Promise.all(
+            openRooms.map((room) =>
+              rooms
+                .deleteRoom(room.livekitRoomName)
+                .catch(() => undefined)
+            )
+          );
+        }
+
+        await collaboration.appendAudit({
+          roomName: meeting.roomName,
+          actorParticipantId: moderator.id,
+          actorDisplayName: moderator.displayName,
+          eventType: "breakouts_returned",
+          targetParticipantId: null,
+          metadata: {
+            returned,
+            roomCount: openRooms.length
+          }
+        });
+
+        sendJson(
+          response,
+          200,
+          { ok: true, returned },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      if (action !== "publish" || !Array.isArray(body.assignments)) {
+        sendJson(
+          response,
+          400,
+          { error: "invalid_breakout_action" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const requested = body.assignments
+        .slice(0, MAX_PARTICIPANTS)
+        .map((item) =>
+          item && typeof item === "object"
+            ? item as Record<string, unknown>
+            : {}
+        );
+
+      const participants = await store.listParticipants(meeting.roomName);
+      const allowed = new Map(
+        participants
+          .filter(
+            (item) =>
+              item.role === "participant" &&
+              item.admissionStatus === "admitted"
+          )
+          .map((item) => [item.id, item])
+      );
+
+      const groupMap = new Map<
+        string,
+        { id: string; label: string; mediaRoom: string }
+      >();
+      const assignments: Array<{
+        parentRoomName: string;
+        participantId: string;
+        displayName: string;
+        groupId: string;
+        livekitRoomName: string;
+        assignedAt: string;
+        returnedAt: null;
+      }> = [];
+
+      const nowIso = new Date().toISOString();
+      for (const item of requested) {
+        const participantIdValue = String(item.participantId ?? "").trim();
+        const participant = allowed.get(participantIdValue);
+        if (!participant) continue;
+
+        const groupId = String(item.groupId ?? "")
+          .replace(/[^a-zA-Z0-9_-]/g, "-")
+          .slice(0, 40);
+        const groupLabel = cleanName(
+          item.groupLabel,
+          groupId || "Breakout"
+        ).slice(0, 80);
+
+        if (!groupId) continue;
+
+        if (!groupMap.has(groupId)) {
+          if (groupMap.size >= 20) break;
+          groupMap.set(groupId, {
+            id: groupId,
+            label: groupLabel,
+            mediaRoom: breakoutMediaRoomName(
+              meeting.roomName,
+              groupId
+            )
+          });
+        }
+
+        const group = groupMap.get(groupId)!;
+        assignments.push({
+          parentRoomName: meeting.roomName,
+          participantId: participant.id,
+          displayName: participant.displayName,
+          groupId: group.id,
+          livekitRoomName: group.mediaRoom,
+          assignedAt: nowIso,
+          returnedAt: null
+        });
+      }
+
+      if (assignments.length === 0 || groupMap.size === 0) {
+        sendJson(
+          response,
+          400,
+          { error: "breakout_assignments_required" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const durationMinutesRaw = Number(body.durationMinutes ?? 10);
+      const durationMinutes = Number.isFinite(durationMinutesRaw)
+        ? Math.max(1, Math.min(Math.round(durationMinutesRaw), 120))
+        : 10;
+
+      const rooms = Array.from(groupMap.values()).map((group) => ({
+        parentRoomName: meeting.roomName,
+        groupId: group.id,
+        groupLabel: group.label,
+        livekitRoomName: group.mediaRoom,
+        status: "open" as const,
+        durationMinutes,
+        openedAt: nowIso,
+        closedAt: null
+      }));
+
+      for (const room of rooms) {
+        await ensureBreakoutMediaRoom(
+          room.livekitRoomName,
+          meeting.roomName,
+          room.groupId,
+          room.groupLabel
+        );
+      }
+
+      await breakouts.publish({
+        rooms,
+        assignments
+      });
+
+      await collaboration.appendAudit({
+        roomName: meeting.roomName,
+        actorParticipantId: moderator.id,
+        actorDisplayName: moderator.displayName,
+        eventType: "breakouts_published",
+        targetParticipantId: null,
+        metadata: {
+          roomCount: rooms.length,
+          assignmentCount: assignments.length,
+          durationMinutes
+        }
+      });
+
+      sendJson(
+        response,
+        201,
+        {
+          ok: true,
+          rooms,
+          assignments,
+          durationMinutes
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "breakout_operation_failed"
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (
+    request.method === "POST" &&
+    parsed.action === "breakout-token"
+  ) {
+    try {
+      const body = await readJson(request);
+      const participant = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
+      if (
+        !participant ||
+        participant.admissionStatus !== "admitted" ||
+        participant.role !== "participant" ||
+        meeting.status !== "live"
+      ) {
+        sendJson(
+          response,
+          403,
+          { error: "breakout_access_unavailable" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const assignment = await breakouts.getAssignment(
+        meeting.roomName,
+        participant.id
+      );
+
+      if (!assignment) {
+        sendJson(
+          response,
+          404,
+          { error: "breakout_assignment_not_found" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const livekit = liveKitConfig();
+      if (!livekit) {
+        sendJson(
+          response,
+          503,
+          { error: "livekit_not_configured" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const controls = await collaboration.getControls(meeting.roomName);
+      const token = new AccessToken(
+        livekit.apiKey,
+        livekit.apiSecret,
+        {
+          identity: participant.id,
+          name: participant.displayName,
+          ttl: "2h"
+        }
+      );
+
+      token.addGrant({
+        roomJoin: true,
+        room: assignment.livekitRoomName,
+        canPublish: true,
+        canPublishSources: participantPublishSources(
+          meeting,
+          controls,
+          participant.role
+        ),
+        canSubscribe: true,
+        canPublishData: true
+      });
+
+      sendJson(
+        response,
+        200,
+        {
+          token: await token.toJwt(),
+          url: livekit.url,
+          mediaRoom: assignment.livekitRoomName,
+          groupId: assignment.groupId,
+          groupLabel:
+            (
+              await breakouts.listRooms(meeting.roomName)
+            ).find((room) => room.groupId === assignment.groupId)
+              ?.groupLabel ?? assignment.groupId
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "breakout_token_failed"
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (request.method === "GET" && parsed.action === "captions") {
+    const participant = await findAccess(
+      meeting.roomName,
+      url.searchParams.get("accessKey")
+    );
+
+    if (!participant) {
+      sendJson(
+        response,
+        401,
+        { error: "invalid_meeting_access" },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+
+    const state = await intelligence.getCaptionState(meeting.roomName);
+
+    sendJson(
+      response,
+      200,
+      {
+        configured: captionConfig().configured,
+        state
+      },
+      origin,
+      allowedOrigins
+    );
+    return true;
+  }
+
+  if (request.method === "POST" && parsed.action === "captions") {
+    try {
+      const body = await readJson(request);
+      const moderator = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
+      if (!canModerate(moderator)) {
+        sendJson(
+          response,
+          403,
+          { error: "moderator_access_required" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const action = String(body.action ?? "");
+      if (action === "start") {
+        if (meeting.status !== "live") {
+          sendJson(
+            response,
+            409,
+            { error: "meeting_not_live" },
+            origin,
+            allowedOrigins
+          );
+          return true;
+        }
+
+        const config = captionConfig();
+        const model =
+          String(body.model ?? config.model).trim().slice(0, 120) ||
+          config.model;
+        const language =
+          String(body.language ?? config.language).trim().slice(0, 40) ||
+          config.language;
+
+        try {
+          const dispatch = await startCaptionAgent(
+            meeting.roomName,
+            model,
+            language
+          );
+
+          const state = await intelligence.saveCaptionState(
+            meeting.roomName,
+            {
+              desiredState: "running",
+              agentName: config.agentName,
+              dispatchId: dispatch.id,
+              model,
+              language,
+              lastHeartbeatAt: null,
+              lastError: null
+            }
+          );
+
+          await collaboration.appendAudit({
+            roomName: meeting.roomName,
+            actorParticipantId: moderator.id,
+            actorDisplayName: moderator.displayName,
+            eventType: "captions_started",
+            targetParticipantId: null,
+            metadata: {
+              agentName: config.agentName,
+              model,
+              language
+            }
+          });
+
+          sendJson(
+            response,
+            200,
+            { configured: true, state },
+            origin,
+            allowedOrigins
+          );
+          return true;
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "caption_agent_start_failed";
+          await intelligence.saveCaptionState(
+            meeting.roomName,
+            {
+              desiredState: "error",
+              lastError: message
+            }
+          );
+          throw error;
+        }
+      }
+
+      if (action === "stop") {
+        const current = await intelligence.getCaptionState(
+          meeting.roomName
+        );
+
+        await stopCaptionAgent(
+          meeting.roomName,
+          current.dispatchId
+        ).catch(() => false);
+
+        const state = await intelligence.saveCaptionState(
+          meeting.roomName,
+          {
+            desiredState: "stopped",
+            dispatchId: null,
+            lastError: null
+          }
+        );
+
+        await collaboration.appendAudit({
+          roomName: meeting.roomName,
+          actorParticipantId: moderator.id,
+          actorDisplayName: moderator.displayName,
+          eventType: "captions_stopped",
+          targetParticipantId: null,
+          metadata: {}
+        });
+
+        sendJson(
+          response,
+          200,
+          {
+            configured: captionConfig().configured,
+            state
+          },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      sendJson(
+        response,
+        400,
+        { error: "invalid_caption_action" },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "caption_control_failed"
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (request.method === "GET" && parsed.action === "transcript") {
+    const participant = await findAccess(
+      meeting.roomName,
+      url.searchParams.get("accessKey")
+    );
+
+    if (!participant) {
+      sendJson(
+        response,
+        401,
+        { error: "invalid_meeting_access" },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+
+    const limit = Math.max(
+      1,
+      Math.min(Number(url.searchParams.get("limit") ?? 500), 5000)
+    );
+    const segments = await intelligence.listTranscript(
+      meeting.roomName,
+      limit
+    );
+
+    sendJson(
+      response,
+      200,
+      { segments },
+      origin,
+      allowedOrigins
+    );
+    return true;
+  }
+
+  if (
+    request.method === "POST" &&
+    parsed.action === "transcript-worker"
+  ) {
+    try {
+      if (!workerAuthorized(request)) {
+        sendJson(
+          response,
+          401,
+          { error: "invalid_worker_secret" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const body = await readJson(request);
+      const rawSegments = Array.isArray(body.segments)
+        ? body.segments.slice(0, 100)
+        : [];
+
+      const segments: TranscriptSegment[] = rawSegments
+        .map((item) =>
+          item && typeof item === "object"
+            ? item as Record<string, unknown>
+            : {}
+        )
+        .map((item) => ({
+          segmentId: String(item.segmentId ?? "").slice(0, 200),
+          participantIdentity: String(
+            item.participantIdentity ?? ""
+          ).slice(0, 255),
+          participantName: item.participantName
+            ? String(item.participantName).slice(0, 255)
+            : undefined,
+          trackSid: item.trackSid
+            ? String(item.trackSid).slice(0, 255)
+            : undefined,
+          text: String(item.text ?? "").slice(0, 8000),
+          isFinal: Boolean(item.isFinal),
+          sourceTimestamp:
+            item.sourceTimestamp === undefined
+              ? undefined
+              : Number(item.sourceTimestamp),
+          receivedAt: new Date().toISOString()
+        }))
+        .filter(
+          (item) =>
+            item.segmentId &&
+            item.participantIdentity &&
+            item.text
+        );
+
+      const saved = await intelligence.upsertTranscript(
+        meeting.roomName,
+        segments
+      );
+
+      const state = await intelligence.saveCaptionState(
+        meeting.roomName,
+        {
+          desiredState: "running",
+          lastHeartbeatAt: new Date().toISOString(),
+          lastError: null
+        }
+      );
+
+      sendJson(
+        response,
+        200,
+        { ok: true, saved, state },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "transcript_ingest_failed"
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (request.method === "GET" && parsed.action === "notes") {
+    const participant = await findAccess(
+      meeting.roomName,
+      url.searchParams.get("accessKey")
+    );
+
+    if (!participant) {
+      sendJson(
+        response,
+        401,
+        { error: "invalid_meeting_access" },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+
+    const notes = await intelligence.getNotes(meeting.roomName);
+    sendJson(
+      response,
+      200,
+      { notes },
+      origin,
+      allowedOrigins
+    );
+    return true;
+  }
+
+  if (request.method === "POST" && parsed.action === "notes") {
+    try {
+      const body = await readJson(request);
+      const moderator = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
+      if (!canModerate(moderator)) {
+        sendJson(
+          response,
+          403,
+          { error: "moderator_access_required" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const noteBody = String(body.body ?? "").slice(0, 50_000);
+      const notes = await intelligence.saveNotes(
+        meeting.roomName,
+        noteBody,
+        moderator.id,
+        moderator.displayName
+      );
+
+      await collaboration.appendAudit({
+        roomName: meeting.roomName,
+        actorParticipantId: moderator.id,
+        actorDisplayName: moderator.displayName,
+        eventType: "meeting_notes_updated",
+        targetParticipantId: null,
+        metadata: {
+          length: noteBody.length
+        }
+      });
+
+      sendJson(
+        response,
+        200,
+        { notes },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "meeting_notes_failed"
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (request.method === "GET" && parsed.action === "summary") {
+    const participant = await findAccess(
+      meeting.roomName,
+      url.searchParams.get("accessKey")
+    );
+
+    if (!participant) {
+      sendJson(
+        response,
+        401,
+        { error: "invalid_meeting_access" },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+
+    const summary = await intelligence.getLatestSummary(
+      meeting.roomName
+    );
+
+    sendJson(
+      response,
+      200,
+      { summary },
+      origin,
+      allowedOrigins
+    );
+    return true;
+  }
+
+  if (request.method === "POST" && parsed.action === "summary") {
+    try {
+      const body = await readJson(request);
+      const moderator = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
+      if (!canModerate(moderator)) {
+        sendJson(
+          response,
+          403,
+          { error: "moderator_access_required" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const [segments, notes] = await Promise.all([
+        intelligence.listTranscript(meeting.roomName, 5000),
+        intelligence.getNotes(meeting.roomName)
+      ]);
+
+      const generated = await generateMeetingSummary({
+        roomName: meeting.roomName,
+        title: meeting.title,
+        segments,
+        notes: notes.body
+      });
+
+      const summary = await intelligence.saveSummary({
+        roomName: meeting.roomName,
+        summary: generated.summary,
+        actionItems: generated.actionItems,
+        provider: generated.provider,
+        createdByParticipantId: moderator.id,
+        createdByDisplayName: moderator.displayName
+      });
+
+      await collaboration.appendAudit({
+        roomName: meeting.roomName,
+        actorParticipantId: moderator.id,
+        actorDisplayName: moderator.displayName,
+        eventType: "meeting_summary_generated",
+        targetParticipantId: null,
+        metadata: {
+          provider: summary.provider,
+          transcriptSegments: segments.length,
+          actionItems: summary.actionItems.length
+        }
+      });
+
+      sendJson(
+        response,
+        201,
+        { summary },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "meeting_summary_failed"
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
   if (request.method === "GET" && parsed.action === "attendance") {
     const host = await findAccess(
       meeting.roomName,
@@ -2711,7 +3654,42 @@ export async function handleMeetingRequest(
 
       let mediaRoomClosed = false;
       let recordingStopped = false;
+      let breakoutsClosed = 0;
+      let captionsStopped = false;
       if (action === "end") {
+        const openBreakoutRooms = await breakouts.listRooms(
+          meeting.roomName
+        );
+        breakoutsClosed = await breakouts.returnAll(
+          meeting.roomName
+        );
+        const rooms = roomServiceClient();
+        if (rooms) {
+          await Promise.all(
+            openBreakoutRooms.map((room) =>
+              rooms
+                .deleteRoom(room.livekitRoomName)
+                .catch(() => undefined)
+            )
+          );
+        }
+
+        const captionState = await intelligence.getCaptionState(
+          meeting.roomName
+        );
+        if (captionState.desiredState === "running") {
+          captionsStopped = await stopCaptionAgent(
+            meeting.roomName,
+            captionState.dispatchId
+          ).catch(() => false);
+          await intelligence.saveCaptionState(
+            meeting.roomName,
+            {
+              desiredState: "stopped",
+              dispatchId: null
+            }
+          );
+        }
         const activeRecording = await recordings.getActiveRecording(
           meeting.roomName
         );
@@ -2764,7 +3742,12 @@ export async function handleMeetingRequest(
         targetParticipantId: null,
         metadata:
           action === "end"
-            ? { mediaRoomClosed, recordingStopped }
+            ? {
+                mediaRoomClosed,
+                recordingStopped,
+                breakoutsClosed,
+                captionsStopped
+              }
             : {}
       });
 
