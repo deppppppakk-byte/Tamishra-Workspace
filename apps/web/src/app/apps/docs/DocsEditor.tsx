@@ -50,6 +50,7 @@ import {
   type PersistedDocsDraft
 } from "@tamishra/docs-engine";
 import { TransactionHistory } from "@tamishra/history";
+import type { TamishraBlock } from "@tamishra/blocks-core";
 import {
   permanentlyDeleteWorkspaceFile,
   restoreWorkspaceFile,
@@ -66,6 +67,11 @@ import {
 } from "./docs-cloud";
 import { consumeNativeFileHandoff } from "../../../lib/native-file-handoff";
 import { mutateWorkspaceFileIndex } from "../../../lib/workspace-files";
+import {
+  consumeBlockHandoff,
+  loadWorkspaceBlockShelf,
+  subscribeWorkspaceBlocks
+} from "../../../lib/workspace-blocks";
 
 const STORAGE_KEY = "tamishra.docs.current.v2";
 const LEGACY_STORAGE_KEY = "tamishra.docs.current";
@@ -156,6 +162,7 @@ export default function DocsEditor() {
   const [language, setLanguage] = useState("en-US");
   const [spellcheck, setSpellcheck] = useState(true);
   const [tableActive, setTableActive] = useState(false);
+  const [selectedLiveBlockId, setSelectedLiveBlockId] = useState<string | null>(null);
   const [collaborators, setCollaborators] = useState<string[]>([]);
   const [cloudStatus, setCloudStatus] = useState("Local");
 
@@ -210,6 +217,163 @@ export default function DocsEditor() {
 
   const queryDocumentAll = (selector: string): Element[] =>
     getEditors().flatMap((editor) => Array.from(editor.querySelectorAll(selector)));
+
+  const renderWorkspaceTableBlock = (
+    container: HTMLElement,
+    block: TamishraBlock
+  ) => {
+    if (block.kind !== "table" || !block.payload || typeof block.payload !== "object") {
+      return false;
+    }
+
+    const payload = block.payload as {
+      tableData?: string[][];
+      sourceLabel?: string;
+    };
+    if (!Array.isArray(payload.tableData) || !payload.tableData.length) return false;
+
+    container.dataset.workspaceBlockId = block.id;
+    container.dataset.workspaceBlockVersion = String(block.version);
+    container.dataset.workspaceBlockMode =
+      block.binding?.mode === "live" ? "live" : "snapshot";
+    container.className = "docsWorkspaceBlock";
+    container.contentEditable = block.binding?.mode === "live" ? "false" : "true";
+
+    const badge = document.createElement("div");
+    badge.className = "docsWorkspaceBlockBadge";
+    badge.contentEditable = "false";
+    badge.textContent =
+      block.binding?.mode === "live"
+        ? "Live Block · " + (payload.sourceLabel || block.title)
+        : "Workspace Block · " + block.title;
+
+    const table = document.createElement("table");
+    table.dataset.tamishraId = createId("table");
+    const body = document.createElement("tbody");
+
+    payload.tableData.forEach((row, rowIndex) => {
+      const tr = document.createElement("tr");
+      row.forEach((value) => {
+        const cell = document.createElement(rowIndex === 0 ? "th" : "td");
+        cell.dataset.tamishraId = createId("cell");
+        cell.textContent = String(value ?? "");
+        tr.appendChild(cell);
+      });
+      body.appendChild(tr);
+    });
+
+    table.appendChild(body);
+    container.replaceChildren(badge, table);
+    return true;
+  };
+
+  const insertWorkspaceBlock = (block: TamishraBlock) => {
+    if (block.kind === "rich-text" && block.payload && typeof block.payload === "object") {
+      const payload = block.payload as { html?: string; plainText?: string };
+      focusEditor();
+      const wrapper = document.createElement("div");
+      wrapper.dataset.tamishraId = createId("block");
+      wrapper.innerHTML =
+        typeof payload.html === "string"
+          ? payload.html
+          : `<p>${escapeHtml(payload.plainText ?? "")}</p>`;
+      applyCommand("insertHTML", wrapper.outerHTML + "<p><br></p>");
+      updateCounts();
+      scheduleReflow();
+      setSavedState("Workspace Block inserted");
+      return true;
+    }
+
+    if (block.kind !== "table") return false;
+
+    focusEditor();
+    const container = document.createElement("div");
+    container.dataset.tamishraId = createId("workspace-block");
+    if (!renderWorkspaceTableBlock(container, block)) return false;
+
+    const selection = window.getSelection();
+    if (
+      selection &&
+      selection.rangeCount > 0 &&
+      editorRef.current?.contains(selection.getRangeAt(0).commonAncestorContainer)
+    ) {
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(container);
+      range.setStartAfter(container);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } else {
+      editorRef.current?.appendChild(container);
+    }
+
+    const spacer = document.createElement("p");
+    spacer.innerHTML = "<br>";
+    container.insertAdjacentElement("afterend", spacer);
+
+    ensureBlockIds();
+    updateCounts();
+    scheduleReflow();
+    setSelectedLiveBlockId(
+      block.binding?.mode === "live" ? block.id : null
+    );
+    setSavedState(
+      block.binding?.mode === "live"
+        ? "Live Workspace Block inserted"
+        : "Workspace Block inserted"
+    );
+    return true;
+  };
+
+  const refreshLinkedWorkspaceBlocks = () => {
+    const shelf = loadWorkspaceBlockShelf();
+    const byId = new Map(shelf.blocks.map((block) => [block.id, block]));
+    let changed = false;
+
+    queryDocumentAll("[data-workspace-block-id]").forEach((node) => {
+      if (!(node instanceof HTMLElement)) return;
+      if (node.dataset.workspaceBlockMode !== "live") return;
+
+      const id = node.dataset.workspaceBlockId;
+      if (!id) return;
+      const block = byId.get(id);
+      if (!block) return;
+
+      const currentVersion = Number(node.dataset.workspaceBlockVersion || "0");
+      if (block.version <= currentVersion) return;
+
+      if (renderWorkspaceTableBlock(node, block)) {
+        changed = true;
+      }
+    });
+
+    if (changed) {
+      updateCounts();
+      scheduleReflow();
+      setSavedState("Live Blocks refreshed");
+    }
+  };
+
+  const unlinkSelectedWorkspaceBlock = () => {
+    if (!selectedLiveBlockId) return;
+    const node = queryDocument<HTMLElement>(
+      `[data-workspace-block-id="${CSS.escape(selectedLiveBlockId)}"]`
+    );
+    if (!node) return;
+
+    node.removeAttribute("data-workspace-block-id");
+    node.removeAttribute("data-workspace-block-version");
+    node.removeAttribute("data-workspace-block-mode");
+    node.contentEditable = "true";
+    node.classList.remove("docsWorkspaceBlock");
+    node.querySelector(".docsWorkspaceBlockBadge")?.remove();
+
+    setSelectedLiveBlockId(null);
+    setSavedState("Workspace Block unlinked");
+    updateCounts();
+    scheduleReflow();
+  };
 
   const focusEditor = () => {
     const active = pageEditorsRef.current[activePageRef.current] ?? pageEditorsRef.current[0];
@@ -591,6 +755,20 @@ export default function DocsEditor() {
     updateCounts();
     scheduleReflow();
   }, [page, pageCount]);
+
+  useEffect(() => {
+    const refresh = () => refreshLinkedWorkspaceBlocks();
+    refresh();
+    return subscribeWorkspaceBlocks(refresh);
+  }, []);
+
+  useEffect(() => {
+    const block = consumeBlockHandoff("docs");
+    if (!block) return;
+    if (!insertWorkspaceBlock(block)) {
+      setSavedState("This Block type is not supported in Docs yet");
+    }
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -2280,6 +2458,7 @@ td,th{border:1px solid #d0d5dd;padding:8px}
             <button onClick={() => setActivePanel("files")}>File</button>
             <button onClick={() => setActivePanel("comments")}>Review</button>
             <button onClick={() => setActivePanel("insert")}>Insert</button>
+            <button onClick={() => { window.location.href = "/apps/blocks"; }}>Blocks</button>
             <button onClick={() => setActivePanel("format")}>Format</button>
             <button onClick={() => setActivePanel("proofing")}>Tools</button>
             <button onClick={() => window.alert("Tamishra Docs keyboard shortcuts: Ctrl/Cmd+S save version, Ctrl/Cmd+F find, Ctrl/Cmd+P print/PDF.")}>Help</button>
@@ -2522,7 +2701,17 @@ td,th{border:1px solid #d0d5dd;padding:8px}
                     const target = event.target;
                     selectImageElement(target instanceof HTMLImageElement ? target : null);
                     const element = target instanceof HTMLElement ? target : null;
-                    const cell = element?.closest("td, th") as HTMLTableCellElement | null;
+                    const liveBlock = element?.closest<HTMLElement>(
+                      "[data-workspace-block-id]"
+                    ) ?? null;
+                    setSelectedLiveBlockId(
+                      liveBlock?.dataset.workspaceBlockMode === "live"
+                        ? liveBlock.dataset.workspaceBlockId ?? null
+                        : null
+                    );
+                    const cell = liveBlock
+                      ? null
+                      : (element?.closest("td, th") as HTMLTableCellElement | null);
                     selectedTableCellRef.current = cell;
                     setTableActive(Boolean(cell));
                   }}
@@ -2657,6 +2846,27 @@ td,th{border:1px solid #d0d5dd;padding:8px}
               />
             </div>
   
+            {selectedLiveBlockId && (
+              <div className="docsInfoCard">
+                <span className="docsInfoLabel">Live Block</span>
+                <p className="docsInfoText">
+                  Linked to a Workspace source. Updates refresh automatically.
+                </p>
+                <button
+                  className="docsExportButton"
+                  onClick={unlinkSelectedWorkspaceBlock}
+                >
+                  Unlink from source
+                </button>
+                <button
+                  className="docsExportButton"
+                  onClick={() => { window.location.href = "/apps/blocks"; }}
+                >
+                  Open Block Shelf
+                </button>
+              </div>
+            )}
+
             {selectedImageId && (
               <div className="docsInfoCard">
                 <span className="docsInfoLabel">Image</span>
