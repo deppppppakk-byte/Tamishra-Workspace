@@ -1830,6 +1830,46 @@ export async function handleMeetingRequest(
         consent
       );
 
+      let recordingStopped = false;
+      if (consent === "declined") {
+        const active = await recordings.getActiveRecording(
+          meeting.roomName
+        );
+        const client = egressClient();
+
+        if (active && client) {
+          try {
+            const info = await client.stopEgress(active.egressId);
+            const file = info.fileResults[0];
+            await recordings.updateRecording(
+              meeting.roomName,
+              active.egressId,
+              {
+                status: recordingStatus(Number(info.status)),
+                location: file?.location || active.location,
+                endedAt: new Date().toISOString(),
+                durationNs:
+                  file?.duration === undefined
+                    ? active.durationNs
+                    : String(file.duration),
+                sizeBytes:
+                  file?.size === undefined
+                    ? active.sizeBytes
+                    : String(file.size),
+                error: info.error || null
+              }
+            );
+            recordingStopped = true;
+            await recordings.resetConsents(meeting.roomName);
+          } catch (error) {
+            console.warn(
+              "Unable to stop recording after consent withdrawal",
+              error
+            );
+          }
+        }
+      }
+
       await collaboration.appendAudit({
         roomName: meeting.roomName,
         actorParticipantId: participant.id,
@@ -1839,13 +1879,13 @@ export async function handleMeetingRequest(
             ? "recording_consent_accepted"
             : "recording_consent_declined",
         targetParticipantId: participant.id,
-        metadata: {}
+        metadata: { recordingStopped }
       });
 
       sendJson(
         response,
         200,
-        { consent: saved },
+        { consent: saved, recordingStopped },
         origin,
         allowedOrigins
       );
