@@ -225,6 +225,10 @@ export async function decodeTmsl<TSlide>(
 
   const headerOffset = MAGIC.byteLength;
   const minimumLength = headerOffset + HEADER_SIZE_BYTES;
+  if (bytes.byteLength < minimumLength) {
+    throw new Error("TMSL file is incomplete.");
+  }
+
   const headerLength = new DataView(
     bytes.buffer,
     bytes.byteOffset + headerOffset,
