@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { neon } from "@neondatabase/serverless";
+import postgres from "postgres";
 import nodemailer from "nodemailer";
 import PostalMime from "postal-mime";
 import { SMTPServer } from "smtp-server";
@@ -13,7 +13,7 @@ if (!databaseUrl) {
   throw new Error("WORKSPACE_DATABASE_URL is required for Patra Mailer.");
 }
 
-const sql = neon(databaseUrl);
+const sql = postgres(databaseUrl, { max: 5, prepare: false });
 const publicDomain =
   process.env.PATRA_MAIL_DOMAIN?.trim().toLowerCase() || "patra.tamishra.in";
 const companyDomain =
