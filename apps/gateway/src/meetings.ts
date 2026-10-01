@@ -173,6 +173,18 @@ async function removeFromLiveKit(roomNameValue: string, identity: string) {
   return true;
 }
 
+async function closeLiveKitRoom(roomNameValue: string) {
+  const livekit = liveKitConfig();
+  if (!livekit) return false;
+  const rooms = new RoomServiceClient(
+    livekit.apiUrl,
+    livekit.apiKey,
+    livekit.apiSecret
+  );
+  await rooms.deleteRoom(roomNameValue);
+  return true;
+}
+
 function meetingFromPath(pathname: string) {
   const match = pathname.match(/^\/v1\/meetings\/([^/]+)(?:\/(.+))?$/);
   if (!match) return null;
@@ -1274,6 +1286,15 @@ export async function handleMeetingRequest(
         return true;
       }
 
+      let mediaRoomClosed = false;
+      if (action === "end") {
+        try {
+          mediaRoomClosed = await closeLiveKitRoom(meeting.roomName);
+        } catch (error) {
+          console.warn("Unable to close LiveKit room", error);
+        }
+      }
+
       await collaboration.appendAudit({
         roomName: meeting.roomName,
         actorParticipantId: host.id,
@@ -1281,7 +1302,7 @@ export async function handleMeetingRequest(
         eventType:
           action === "start" ? "meeting_started" : "meeting_ended",
         targetParticipantId: null,
-        metadata: {}
+        metadata: action === "end" ? { mediaRoomClosed } : {}
       });
 
       sendJson(
