@@ -311,6 +311,11 @@
   margin: 8px 12px 0;
 }
 
+.roomErrorPlaceholder {
+  height: 0;
+  overflow: hidden;
+}
+
 .liveLayout {
   min-height: 0;
   padding: 10px;
@@ -462,13 +467,14 @@
   padding: 8px;
   border-bottom: 1px solid rgba(23, 32, 51, 0.07);
   background: rgba(255, 255, 255, 0.96);
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: flex;
+  align-items: center;
   gap: 5px;
 }
 
 .sidebarTabs button {
   min-height: 34px;
+  flex: 1 1 0;
   border: 0;
   border-radius: 10px;
   color: #778398;
@@ -490,7 +496,7 @@
 .sidebarTabs .sidebarClose {
   width: 30px;
   min-height: 30px;
-  justify-self: end;
+  flex: 0 0 30px;
   color: #758197;
   background: #f3f6fb;
   font-size: 16px;
