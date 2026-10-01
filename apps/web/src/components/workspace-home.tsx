@@ -95,7 +95,7 @@ export function WorkspaceHomeClient() {
 
   const indexedBytes = activeFiles.reduce((sum, item) => sum + (item.sizeBytes ?? 0), 0);
 
-  const create = (kind: "docs" | "sheets" | "slides") => {
+  const create = (kind: "docs" | "sheets" | "slides" | "notes") => {
     sessionStorage.setItem("tamishra.workspace.create", kind);
     location.assign(`/apps/${kind}`);
   };
@@ -133,6 +133,7 @@ export function WorkspaceHomeClient() {
               <button onClick={() => create("docs")}><b>D</b><span>Document<small>.tmdoc</small></span></button>
               <button onClick={() => create("sheets")}><b>S</b><span>Spreadsheet<small>.tmsh</small></span></button>
               <button onClick={() => create("slides")}><b>P</b><span>Presentation<small>.tmsl</small></span></button>
+              <button onClick={() => create("notes")}><b>N</b><span>Note<small>.tmnt</small></span></button>
             </div>
           )}
         </div>
@@ -201,7 +202,7 @@ export function WorkspaceHomeClient() {
               ref={fileInputRef}
               hidden
               type="file"
-              accept=".tmdoc,.tmsh,.tmsl,.docx,.csv,.json,.pdf"
+              accept=".tmdoc,.tmsh,.tmsl,.tmnt,.docx,.csv,.json,.pdf"
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 event.target.value = "";
