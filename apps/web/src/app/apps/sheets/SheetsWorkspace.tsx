@@ -33,9 +33,20 @@ import {
   type Workbook
 } from "@tamishra/sheets-engine";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  createBlock,
+  liveBlocksForSource,
+  refreshLiveBlock,
+  upsertBlock
+} from "@tamishra/blocks-core";
 import { upsertWorkspaceFile } from "@tamishra/file-core";
 import { consumeNativeFileHandoff } from "../../../lib/native-file-handoff";
 import { mutateWorkspaceFileIndex } from "../../../lib/workspace-files";
+import {
+  loadWorkspaceBlockShelf,
+  mutateWorkspaceBlockShelf,
+  saveWorkspaceBlockShelf
+} from "../../../lib/workspace-blocks";
 import styles from "./sheets.module.css";
 
 const STORAGE_KEY = "tamishra-sheets-workbook-v2";
@@ -93,6 +104,39 @@ function safeFileName(value: string) {
     .trim()
     .replace(/[^a-z0-9-_]+/gi, "-")
     .replace(/^-+|-+$/g, "") || "tamishra-sheet";
+}
+
+function rangeFromLocator(locator?: string) {
+  if (!locator) return null;
+  const [start, end = start] = locator.split(":");
+  return normalizeRange(start, end);
+}
+
+function displayMatrixForRange(
+  workbook: Workbook,
+  sheetId: string,
+  range: CellRange
+) {
+  const sheet = workbook.sheets.find((item) => item.id === sheetId);
+  const start = parseAddress(range.start);
+  const end = parseAddress(range.end);
+  if (!sheet || !start || !end) return [];
+
+  const matrix: string[][] = [];
+  for (let row = start.row; row <= end.row; row += 1) {
+    const values: string[] = [];
+    for (let col = start.col; col <= end.col; col += 1) {
+      const address = cellAddress(row, col);
+      values.push(
+        formatDisplay(
+          evaluateCell(workbook, sheet.id, address),
+          sheet.cells[address]?.style
+        )
+      );
+    }
+    matrix.push(values);
+  }
+  return matrix;
 }
 
 export default function SheetsWorkspace() {
@@ -194,6 +238,48 @@ export default function SheetsWorkspace() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+
+    const timer = window.setTimeout(() => {
+      const shelf = loadWorkspaceBlockShelf();
+      const liveBlocks = liveBlocksForSource(shelf, {
+        app: "sheets",
+        resourceId: workbook.id
+      });
+      if (!liveBlocks.length) return;
+
+      let next = shelf;
+      for (const block of liveBlocks) {
+        const source = block.binding?.source;
+        if (!source?.subresourceId) continue;
+        const range = rangeFromLocator(source.locator);
+        if (!range) continue;
+        const sheet = workbook.sheets.find(
+          (item) => item.id === source.subresourceId
+        );
+        if (!sheet) continue;
+
+        const dimensions = rangeDimensions(range);
+        next = refreshLiveBlock(
+          next,
+          block.id,
+          {
+            tableData: displayMatrixForRange(workbook, sheet.id, range),
+            sourceLabel: workbook.title + " · " + sheet.name + " · " + rangeLabel(range),
+            rows: dimensions.rows,
+            columns: dimensions.columns
+          },
+          workbook.version
+        );
+      }
+
+      if (next !== shelf) saveWorkspaceBlockShelf(next);
+    }, 360);
+
+    return () => window.clearTimeout(timer);
+  }, [workbook, loaded]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -484,6 +570,44 @@ export default function SheetsWorkspace() {
     setSelection({ anchor: "A1", focus: "A1" });
   }
 
+  function publishSelectionAsLiveBlock() {
+    const dimensions = rangeDimensions(selectedRange);
+    const block = createBlock({
+      title: activeSheet.name + " · " + rangeLabel(selectedRange),
+      kind: "table",
+      sourceApp: "sheets",
+      payload: {
+        tableData: displayMatrixForRange(
+          workbook,
+          activeSheet.id,
+          selectedRange
+        ),
+        sourceLabel:
+          workbook.title +
+          " · " +
+          activeSheet.name +
+          " · " +
+          rangeLabel(selectedRange),
+        rows: dimensions.rows,
+        columns: dimensions.columns
+      },
+      tags: ["sheets", "live-table", activeSheet.name],
+      binding: {
+        mode: "live",
+        source: {
+          app: "sheets",
+          resourceId: workbook.id,
+          subresourceId: activeSheet.id,
+          locator: rangeLabel(selectedRange),
+          revision: workbook.version
+        }
+      }
+    });
+
+    mutateWorkspaceBlockShelf((current) => upsertBlock(current, block));
+    setSaveState("Live Block published · " + block.title);
+  }
+
   function exportCsv() {
     downloadText(
       safeFileName(workbook.title) + ".csv",
@@ -735,6 +859,8 @@ export default function SheetsWorkspace() {
             <button onClick={() => void copySelection()}>Copy</button>
             <button onClick={() => void pasteSelection()}>Paste</button>
             <button onClick={findCell}>Find</button>
+            <button onClick={publishSelectionAsLiveBlock}>Publish Live Block</button>
+            <button onClick={() => { window.location.href = "/apps/blocks"; }}>Blocks</button>
             <button onClick={clearSheet}>Clear sheet</button>
           </div>
         </div>
@@ -871,6 +997,13 @@ export default function SheetsWorkspace() {
         </button>
         <button className={styles.actionButton} onClick={exportBackup}>
           Backup JSON
+        </button>
+        <button
+          className={styles.actionButton}
+          onClick={publishSelectionAsLiveBlock}
+          title="Publish selected cells as a linked Tamishra Block"
+        >
+          Live Block
         </button>
         <div className={styles.toolbarSpacer} />
         <select
