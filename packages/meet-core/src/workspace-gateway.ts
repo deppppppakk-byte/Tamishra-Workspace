@@ -59,6 +59,78 @@ export type MeetingSignal = {
   updatedAt: string;
 };
 
+export type MeetingRecording = {
+  id: string;
+  roomName: string;
+  egressId: string;
+  status:
+    | "starting"
+    | "active"
+    | "stopping"
+    | "complete"
+    | "failed"
+    | "aborted";
+  filepath: string;
+  location: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  durationNs: string | null;
+  sizeBytes: string | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MeetingRecordingConsent = {
+  roomName: string;
+  participantId: string;
+  displayName: string;
+  consent: "accepted" | "declined";
+  updatedAt: string;
+};
+
+export type MeetingRecordingState = {
+  configured: boolean;
+  active: MeetingRecording | null;
+  consent: MeetingRecordingConsent | null;
+  consents: MeetingRecordingConsent[];
+  recordings: MeetingRecording[];
+};
+
+export type MeetingHistoryItem = {
+  roomName: string;
+  title: string;
+  status: "scheduled" | "live" | "ended" | "cancelled";
+  role: "host" | "cohost" | "participant";
+  createdAt: string;
+  scheduledStartAt: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  joinCode: string | null;
+  participantCount: number;
+  attendanceCount: number;
+  recordingCount: number;
+};
+
+export type MeetingAttendanceReport = {
+  roomName: string;
+  title: string;
+  status: "scheduled" | "live" | "ended" | "cancelled";
+  startedAt: string | null;
+  endedAt: string | null;
+  meetingDurationMs: number;
+  participantCount: number;
+  totalAttendanceMs: number;
+  rows: Array<{
+    participantId: string;
+    displayName: string;
+    joinedAt: string;
+    lastSeenAt: string;
+    leftAt: string | null;
+    durationMs: number;
+  }>;
+};
+
 export type MeetingAuditEvent = {
   id: string;
   roomName: string;
@@ -107,6 +179,7 @@ export class WorkspaceMeetingGateway {
       persistence: string;
       mediaProvider: string;
       mediaConfigured: boolean;
+      recordingConfigured: boolean;
       capabilities: Record<string, boolean>;
     }>(response);
   }
@@ -139,6 +212,20 @@ export class WorkspaceMeetingGateway {
       meeting: MeetingJoinContext;
       accessKey: string;
     }>(response);
+  }
+
+  async listHistory(
+    entries: Array<Pick<MeetingAccess, "roomName" | "accessKey">>
+  ) {
+    const response = await fetch(this.url("/v1/meetings/history"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ entries })
+    });
+    const body = await parseResponse<{ history: MeetingHistoryItem[] }>(
+      response
+    );
+    return body.history;
   }
 
   async getContext(roomName: string, accessKey: string) {
@@ -310,6 +397,67 @@ export class WorkspaceMeetingGateway {
     return body.attendance;
   }
 
+  async getRecordingState(roomName: string, accessKey: string) {
+    const url = new URL(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/recording")
+    );
+    url.searchParams.set("accessKey", accessKey);
+    const response = await fetch(url, { cache: "no-store" });
+    return parseResponse<MeetingRecordingState>(response);
+  }
+
+  async setRecordingConsent(
+    roomName: string,
+    accessKey: string,
+    consent: "accepted" | "declined"
+  ) {
+    const response = await fetch(
+      this.url(
+        "/v1/meetings/" +
+          encodeURIComponent(roomName) +
+          "/recording-consent"
+      ),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accessKey, consent })
+      }
+    );
+    return parseResponse<{ consent: MeetingRecordingConsent }>(response);
+  }
+
+  async controlRecording(
+    roomName: string,
+    accessKey: string,
+    action: "start" | "stop"
+  ) {
+    const response = await fetch(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/recording"),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accessKey, action })
+      }
+    );
+    return parseResponse<{ recording: MeetingRecording }>(response);
+  }
+
+  async getAttendanceReport(roomName: string, accessKey: string) {
+    const url = new URL(
+      this.url(
+        "/v1/meetings/" +
+          encodeURIComponent(roomName) +
+          "/report/attendance"
+      )
+    );
+    url.searchParams.set("accessKey", accessKey);
+    const response = await fetch(url, { cache: "no-store" });
+    const body = await parseResponse<{ report: MeetingAttendanceReport }>(
+      response
+    );
+    return body.report;
+  }
+
   async heartbeat(roomName: string, accessKey: string) {
     const response = await fetch(
       this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/heartbeat"),
@@ -398,6 +546,36 @@ export class WorkspaceMeetingGateway {
       participantCameraEnabled: boolean;
     }>(response);
   }
+}
+
+export function listMeetingAccesses(): MeetingAccess[] {
+  if (typeof window === "undefined") return [];
+
+  const prefix = "tamishra-workspace-meet:";
+  const results: MeetingAccess[] = [];
+
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (!key?.startsWith(prefix)) continue;
+
+    const raw = localStorage.getItem(key);
+    if (!raw) continue;
+
+    try {
+      const parsed = JSON.parse(raw) as MeetingAccess;
+      if (
+        parsed.roomName &&
+        parsed.accessKey &&
+        parsed.displayName
+      ) {
+        results.push(parsed);
+      }
+    } catch {
+      // Ignore invalid historical entries.
+    }
+  }
+
+  return results;
 }
 
 export function meetingAccessStorageKey(roomName: string) {
