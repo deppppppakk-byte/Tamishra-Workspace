@@ -10,18 +10,44 @@ import {
   type PageConfig
 } from "@tamishra/document-model";
 import {
+  addDocsComment,
+  addDocsShareGrant,
+  addDocsVersion,
+  calculateDocsProofingStats,
   createDraftFromHtml,
+  duplicateDocsRecord,
+  exportDocsDocx,
+  extractDocsOutline,
+  importDocsDocx,
+  loadDocsWorkspace,
   migrateLegacyDraft,
   mmToCssPx,
+  permanentlyDeleteDocsRecord,
+  registerDocsDocxAdapter,
+  removeDocsShareGrant,
+  restoreDocsRecord,
+  saveDocsWorkspace,
+  trashDocsRecord,
+  updateDocsComment,
   updateDraft,
+  upsertDocsRecord,
+  type DocsEditingMode,
+  type DocsLibraryRecord,
+  type DocsOutlineEntry,
+  type DocsProofingStats,
+  type DocsVersion,
+  type DocsWorkspaceSnapshot,
   type PersistedDocsDraft
 } from "@tamishra/docs-engine";
 import { TransactionHistory } from "@tamishra/history";
 import HeaderFooterSettingsPanel from "./HeaderFooterSettings";
 import PageSettings from "./PageSettings";
+import DocsProductionPanel, { type DocsPanelTab } from "./DocsProductionPanel";
+import { browserDocsDocxAdapter } from "./docx-browser";
 
 const STORAGE_KEY = "tamishra.docs.current.v2";
 const LEGACY_STORAGE_KEY = "tamishra.docs.current";
+const CURRENT_DOCUMENT_ID_KEY = "tamishra.docs.current-id";
 
 type SavedDocument = {
   title: string;
@@ -60,7 +86,10 @@ export default function DocsEditor() {
   const activePageRef = useRef(0);
   const reflowFrameRef = useRef<number | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const docxInputRef = useRef<HTMLInputElement>(null);
+  const selectedTableCellRef = useRef<HTMLTableCellElement | null>(null);
   const draftRef = useRef<PersistedDocsDraft | null>(null);
+  const workspaceRef = useRef<DocsWorkspaceSnapshot>(loadDocsWorkspace());
   const pageHistoryRef = useRef(new TransactionHistory<PageConfig>(100));
   const [title, setTitle] = useState("Untitled document");
   const [page, setPage] = useState<PageConfig>(() => createPageConfig());
@@ -87,6 +116,33 @@ export default function DocsEditor() {
   const [headerFooter, setHeaderFooter] = useState<HeaderFooterSettings>(() => ({
     ...defaultHeaderFooterSettings
   }));
+  const [workspace, setWorkspace] = useState<DocsWorkspaceSnapshot>(() => workspaceRef.current);
+  const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
+  const [activePanel, setActivePanel] = useState<DocsPanelTab | null>(null);
+  const [outline, setOutline] = useState<DocsOutlineEntry[]>([]);
+  const [proofing, setProofing] = useState<DocsProofingStats>(() =>
+    calculateDocsProofingStats("")
+  );
+  const [editingMode, setEditingMode] = useState<DocsEditingMode>("editing");
+  const [language, setLanguage] = useState("en-US");
+  const [spellcheck, setSpellcheck] = useState(true);
+  const [tableActive, setTableActive] = useState(false);
+
+  const commitWorkspace = (next: DocsWorkspaceSnapshot) => {
+    workspaceRef.current = next;
+    setWorkspace(next);
+    saveDocsWorkspace(next);
+  };
+
+  const currentComments = workspace.comments.filter(
+    (item) => item.documentId === currentDocumentId
+  );
+  const currentVersions = workspace.versions.filter(
+    (item) => item.documentId === currentDocumentId
+  );
+  const currentGrants = workspace.grants.filter(
+    (item) => item.documentId === currentDocumentId
+  );
 
   const getEditors = () =>
     pageEditorsRef.current.filter(
