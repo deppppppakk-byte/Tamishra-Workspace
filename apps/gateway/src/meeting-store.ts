@@ -34,6 +34,15 @@ export type StoredParticipant = {
   lastSeenAt: string;
 };
 
+export type StoredAttendance = {
+  roomName: string;
+  participantId: string;
+  displayName: string;
+  joinedAt: string;
+  lastSeenAt: string;
+  leftAt: string | null;
+};
+
 export interface MeetingStore {
   readonly kind: "ephemeral-memory" | "postgres";
   ready(): Promise<void>;
@@ -59,6 +68,15 @@ export interface MeetingStore {
     participantId: string,
     status: "admitted" | "denied"
   ): Promise<StoredParticipant | null>;
+  heartbeatAttendance(
+    roomName: string,
+    participantId: string
+  ): Promise<StoredAttendance | null>;
+  leaveAttendance(
+    roomName: string,
+    participantId: string
+  ): Promise<StoredAttendance | null>;
+  listAttendance(roomName: string): Promise<StoredAttendance[]>;
   startMeeting(roomName: string): Promise<StoredMeeting | null>;
   endMeeting(roomName: string): Promise<StoredMeeting | null>;
 }
@@ -103,10 +121,24 @@ function toParticipant(
   };
 }
 
+function toAttendance(
+  row: Record<string, unknown>
+): StoredAttendance {
+  return {
+    roomName: String(row.room_name),
+    participantId: String(row.participant_id),
+    displayName: String(row.display_name),
+    joinedAt: iso(row.joined_at) ?? new Date().toISOString(),
+    lastSeenAt: iso(row.last_seen_at) ?? new Date().toISOString(),
+    leftAt: iso(row.left_at)
+  };
+}
+
 class MemoryMeetingStore implements MeetingStore {
   readonly kind = "ephemeral-memory" as const;
   private readonly meetings = new Map<string, StoredMeeting>();
   private readonly participants = new Map<string, StoredParticipant>();
+  private readonly attendance = new Map<string, StoredAttendance>();
 
   async ready() {}
 
@@ -186,6 +218,55 @@ class MemoryMeetingStore implements MeetingStore {
     return participant;
   }
 
+  async heartbeatAttendance(
+    roomName: string,
+    participantId: string
+  ) {
+    const participant = this.participants.get(participantId);
+    if (!participant || participant.roomName !== roomName) return null;
+
+    const key = roomName + ":" + participantId;
+    const now = new Date().toISOString();
+    const existing = this.attendance.get(key);
+
+    if (existing) {
+      existing.displayName = participant.displayName;
+      existing.lastSeenAt = now;
+      existing.leftAt = null;
+      return existing;
+    }
+
+    const attendance: StoredAttendance = {
+      roomName,
+      participantId,
+      displayName: participant.displayName,
+      joinedAt: now,
+      lastSeenAt: now,
+      leftAt: null
+    };
+    this.attendance.set(key, attendance);
+    return attendance;
+  }
+
+  async leaveAttendance(
+    roomName: string,
+    participantId: string
+  ) {
+    const key = roomName + ":" + participantId;
+    const existing = this.attendance.get(key);
+    if (!existing) return null;
+    const now = new Date().toISOString();
+    existing.lastSeenAt = now;
+    existing.leftAt = now;
+    return existing;
+  }
+
+  async listAttendance(roomName: string) {
+    return Array.from(this.attendance.values())
+      .filter((entry) => entry.roomName === roomName)
+      .sort((left, right) => left.joinedAt.localeCompare(right.joinedAt));
+  }
+
   async startMeeting(roomName: string) {
     const meeting = this.meetings.get(roomName);
     if (!meeting) return null;
@@ -246,6 +327,18 @@ class PostgresMeetingStore implements MeetingStore {
         admission_status text not null,
         created_at timestamptz not null default now(),
         last_seen_at timestamptz not null default now()
+      )
+    `;
+
+    await this.sql`
+      create table if not exists workspace_meeting_attendance (
+        room_name text not null references workspace_meetings(room_name) on delete cascade,
+        participant_id text not null references workspace_meeting_participants(id) on delete cascade,
+        display_name text not null,
+        joined_at timestamptz not null default now(),
+        last_seen_at timestamptz not null default now(),
+        left_at timestamptz,
+        primary key(room_name, participant_id)
       )
     `;
 
@@ -464,6 +557,87 @@ class PostgresMeetingStore implements MeetingStore {
     return rows[0]
       ? toParticipant(rows[0] as Record<string, unknown>)
       : null;
+  }
+
+  async heartbeatAttendance(
+    roomName: string,
+    participantId: string
+  ) {
+    await this.ready();
+    const rows = await this.sql`
+      insert into workspace_meeting_attendance (
+        room_name,
+        participant_id,
+        display_name,
+        joined_at,
+        last_seen_at,
+        left_at
+      )
+      select
+        p.room_name,
+        p.id,
+        p.display_name,
+        now(),
+        now(),
+        null
+      from workspace_meeting_participants p
+      where p.room_name=${roomName} and p.id=${participantId}
+      on conflict(room_name, participant_id) do update set
+        display_name=excluded.display_name,
+        last_seen_at=now(),
+        left_at=null
+      returning
+        room_name,
+        participant_id,
+        display_name,
+        joined_at,
+        last_seen_at,
+        left_at
+    `;
+    return rows[0]
+      ? toAttendance(rows[0] as Record<string, unknown>)
+      : null;
+  }
+
+  async leaveAttendance(
+    roomName: string,
+    participantId: string
+  ) {
+    await this.ready();
+    const rows = await this.sql`
+      update workspace_meeting_attendance
+      set last_seen_at=now(), left_at=now()
+      where room_name=${roomName} and participant_id=${participantId}
+      returning
+        room_name,
+        participant_id,
+        display_name,
+        joined_at,
+        last_seen_at,
+        left_at
+    `;
+    return rows[0]
+      ? toAttendance(rows[0] as Record<string, unknown>)
+      : null;
+  }
+
+  async listAttendance(roomName: string) {
+    await this.ready();
+    const rows = await this.sql`
+      select
+        room_name,
+        participant_id,
+        display_name,
+        joined_at,
+        last_seen_at,
+        left_at
+      from workspace_meeting_attendance
+      where room_name=${roomName}
+      order by joined_at asc
+    `;
+    return rows.map((row) =>
+      toAttendance(row as Record<string, unknown>)
+    );
   }
 
   async startMeeting(roomName: string) {
