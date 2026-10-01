@@ -1,7 +1,7 @@
 import {
   normalizeWorkbook,
   type Workbook
-} from "./index.js";
+} from "./index";
 
 export const TMSHEET_EXTENSION = ".tmsh";
 export const TMSHEET_MIME_TYPE = "application/vnd.tamishra.spreadsheet";
