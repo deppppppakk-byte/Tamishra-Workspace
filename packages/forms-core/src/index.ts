@@ -247,6 +247,35 @@ export function validateAnswers(
   return errors;
 }
 
+export function responsesToMatrix(
+  form: TamishraForm,
+  responses: FormResponse[]
+) {
+  const ordered = responses
+    .filter((response) => response.formId === form.id)
+    .slice()
+    .sort((left, right) =>
+      left.submittedAt.localeCompare(right.submittedAt)
+    );
+
+  const header = [
+    "Response ID",
+    "Submitted at",
+    ...form.fields.map((field) => field.label || "Question")
+  ];
+
+  const rows = ordered.map((response) => [
+    response.id,
+    response.submittedAt,
+    ...form.fields.map((field) => {
+      const value = response.answers[field.id];
+      return Array.isArray(value) ? value.join("; ") : String(value ?? "");
+    })
+  ]);
+
+  return [header, ...rows];
+}
+
 export function responsesToCsv(
   form: TamishraForm,
   responses: FormResponse[]
