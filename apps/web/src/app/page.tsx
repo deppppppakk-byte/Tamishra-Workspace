@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AccountButton } from "../components/account-button";
+import { MailWorkspace } from "../components/mail/mail-workspace";
 import { workspaceApps } from "@tamishra/workspace-core";
 
 const recentFiles = [
@@ -9,6 +10,10 @@ const recentFiles = [
 ];
 
 export default function HomePage() {
+  if (process.env.NEXT_PUBLIC_WORKSPACE_SURFACE === "patra") {
+    return <MailWorkspace />;
+  }
+
   return (
     <main className="workspace">
       <aside className="sidebar">
