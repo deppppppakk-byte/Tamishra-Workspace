@@ -196,7 +196,7 @@ export async function exportDeckToPptx(deck: ExportDeck) {
             pt: 1
           },
           color: normalizeColor(element.color, "172033"),
-          fill: "FFFFFF",
+          fill: { color: "FFFFFF" },
           fontFace: "Arial",
           fontSize: 12,
           margin: 0.05,
