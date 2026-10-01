@@ -53,6 +53,7 @@ export function registerWorkspaceConsumerLink(input: {
   targetLocator?: string;
   targetTitle?: string;
   targetHref: string;
+  consumerVersion?: number;
 }) {
   const binding = input.block.binding;
   if (!binding || binding.mode !== "live") return null;
@@ -69,7 +70,7 @@ export function registerWorkspaceConsumerLink(input: {
       targetLocator: input.targetLocator,
       targetTitle: input.targetTitle,
       targetHref: input.targetHref,
-      blockVersion: input.block.version,
+      blockVersion: input.consumerVersion ?? input.block.version,
       lastSyncedAt: binding.lastSyncedAt
     })
   );
