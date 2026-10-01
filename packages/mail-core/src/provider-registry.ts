@@ -22,7 +22,7 @@ export const builtInMailProviders: MailProviderDescriptor[] = [
   {
     key: "tamishra",
     name: "Tamishra Patra",
-    description: "First-party Tamishra Patra service owned and operated by Tamishra Workspace.",
+    description: "First-party Tamishra Patra service for @patra.in mailboxes, owned and operated by Tamishra Workspace.",
     connectionMethod: "native",
     recommended: true,
     capabilities: {
@@ -48,7 +48,7 @@ export const builtInMailProviders: MailProviderDescriptor[] = [
       pushSync: false
     },
     fields: [
-      { key: "email", label: "Email address", type: "email", placeholder: "you@yourdomain.com" },
+      { key: "email", label: "Email address", type: "email", placeholder: "you@patra.in" },
       { key: "imapHost", label: "IMAP host", type: "text", placeholder: "imap.yourdomain.com" },
       { key: "imapPort", label: "IMAP port", type: "number", placeholder: "993" },
       { key: "smtpHost", label: "SMTP host", type: "text", placeholder: "smtp.yourdomain.com" },
