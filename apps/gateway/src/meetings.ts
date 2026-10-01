@@ -44,12 +44,12 @@ function sendJson(
   status: number,
   body: JsonObject,
   origin: string | undefined,
-  allowedOrigin: string
+  allowedOrigins: ReadonlySet<string>
 ) {
   response.statusCode = status;
   response.setHeader("content-type", "application/json; charset=utf-8");
   response.setHeader("cache-control", "no-store");
-  if (origin && origin === allowedOrigin) {
+  if (origin && allowedOrigins.has(origin)) {
     response.setHeader("access-control-allow-origin", origin);
     response.setHeader("vary", "origin");
   }
@@ -172,7 +172,7 @@ export async function handleMeetingRequest(
   response: ServerResponse,
   url: URL,
   origin: string | undefined,
-  allowedOrigin: string
+  allowedOrigins: ReadonlySet<string>
 ) {
   if (request.method === "GET" && url.pathname === "/v1/meet/capabilities") {
     sendJson(response, 200, {
@@ -192,7 +192,7 @@ export async function handleMeetingRequest(
         scheduledMeetings: true,
         hostLifecycle: true
       }
-    }, origin, allowedOrigin);
+    }, origin, allowedOrigins);
     return true;
   }
 
@@ -206,7 +206,7 @@ export async function handleMeetingRequest(
           : null;
 
       if (scheduledStartAt && Number.isNaN(scheduledStartAt.getTime())) {
-        sendJson(response, 400, { error: "invalid_schedule" }, origin, allowedOrigin);
+        sendJson(response, 400, { error: "invalid_schedule" }, origin, allowedOrigins);
         return true;
       }
 
@@ -248,13 +248,13 @@ export async function handleMeetingRequest(
         meeting: publicContext(meeting, host),
         joinCode: code,
         accessKey: hostKey
-      }, origin, allowedOrigin);
+      }, origin, allowedOrigins);
       return true;
     } catch (error) {
       const status = Number((error as { status?: number }).status ?? 500);
       sendJson(response, status, {
         error: error instanceof Error ? error.message : "meeting_create_failed"
-      }, origin, allowedOrigin);
+      }, origin, allowedOrigins);
       return true;
     }
   }
@@ -264,18 +264,18 @@ export async function handleMeetingRequest(
       const body = await readJson(request);
       const code = normalizeCode(body.code);
       if (code.length !== 10) {
-        sendJson(response, 400, { error: "invalid_meeting_code" }, origin, allowedOrigin);
+        sendJson(response, 400, { error: "invalid_meeting_code" }, origin, allowedOrigins);
         return true;
       }
 
       const room = roomByJoinCode.get(code);
       const meeting = room ? meetings.get(room) : undefined;
       if (!meeting) {
-        sendJson(response, 404, { error: "meeting_not_found" }, origin, allowedOrigin);
+        sendJson(response, 404, { error: "meeting_not_found" }, origin, allowedOrigins);
         return true;
       }
       if (meeting.status === "ended" || meeting.status === "cancelled") {
-        sendJson(response, 410, { error: "meeting_closed" }, origin, allowedOrigin);
+        sendJson(response, 410, { error: "meeting_closed" }, origin, allowedOrigins);
         return true;
       }
 
@@ -296,13 +296,13 @@ export async function handleMeetingRequest(
       sendJson(response, 200, {
         meeting: publicContext(meeting, participant),
         accessKey: key
-      }, origin, allowedOrigin);
+      }, origin, allowedOrigins);
       return true;
     } catch (error) {
       const status = Number((error as { status?: number }).status ?? 500);
       sendJson(response, status, {
         error: error instanceof Error ? error.message : "meeting_join_failed"
-      }, origin, allowedOrigin);
+      }, origin, allowedOrigins);
       return true;
     }
   }
@@ -312,26 +312,26 @@ export async function handleMeetingRequest(
 
   const meeting = meetings.get(parsed.roomName);
   if (!meeting) {
-    sendJson(response, 404, { error: "meeting_not_found" }, origin, allowedOrigin);
+    sendJson(response, 404, { error: "meeting_not_found" }, origin, allowedOrigins);
     return true;
   }
 
   if (request.method === "GET" && parsed.action === "context") {
     const participant = findAccess(meeting, url.searchParams.get("accessKey"));
     if (!participant) {
-      sendJson(response, 401, { error: "invalid_meeting_access" }, origin, allowedOrigin);
+      sendJson(response, 401, { error: "invalid_meeting_access" }, origin, allowedOrigins);
       return true;
     }
     sendJson(response, 200, {
       meeting: publicContext(meeting, participant)
-    }, origin, allowedOrigin);
+    }, origin, allowedOrigins);
     return true;
   }
 
   if (request.method === "GET" && parsed.action === "participants") {
     const host = findAccess(meeting, url.searchParams.get("accessKey"));
     if (!host || host.role !== "host") {
-      sendJson(response, 403, { error: "host_access_required" }, origin, allowedOrigin);
+      sendJson(response, 403, { error: "host_access_required" }, origin, allowedOrigins);
       return true;
     }
     sendJson(response, 200, {
@@ -343,7 +343,7 @@ export async function handleMeetingRequest(
         createdAt: participant.createdAt,
         lastSeenAt: participant.lastSeenAt
       }))
-    }, origin, allowedOrigin);
+    }, origin, allowedOrigins);
     return true;
   }
 
@@ -352,19 +352,19 @@ export async function handleMeetingRequest(
       const body = await readJson(request);
       const host = findAccess(meeting, String(body.accessKey ?? ""));
       if (!host || host.role !== "host") {
-        sendJson(response, 403, { error: "host_access_required" }, origin, allowedOrigin);
+        sendJson(response, 403, { error: "host_access_required" }, origin, allowedOrigins);
         return true;
       }
       const target = meeting.participants.get(String(body.participantId ?? ""));
       if (!target || target.role === "host") {
-        sendJson(response, 404, { error: "participant_not_found" }, origin, allowedOrigin);
+        sendJson(response, 404, { error: "participant_not_found" }, origin, allowedOrigins);
         return true;
       }
       const status =
         body.status === "denied" ? "denied" :
         body.status === "admitted" ? "admitted" : null;
       if (!status) {
-        sendJson(response, 400, { error: "invalid_admission_status" }, origin, allowedOrigin);
+        sendJson(response, 400, { error: "invalid_admission_status" }, origin, allowedOrigins);
         return true;
       }
       target.admissionStatus = status;
@@ -374,13 +374,13 @@ export async function handleMeetingRequest(
           displayName: target.displayName,
           admissionStatus: target.admissionStatus
         }
-      }, origin, allowedOrigin);
+      }, origin, allowedOrigins);
       return true;
     } catch (error) {
       const status = Number((error as { status?: number }).status ?? 500);
       sendJson(response, status, {
         error: error instanceof Error ? error.message : "admission_update_failed"
-      }, origin, allowedOrigin);
+      }, origin, allowedOrigins);
       return true;
     }
   }
@@ -390,7 +390,7 @@ export async function handleMeetingRequest(
       const body = await readJson(request);
       const host = findAccess(meeting, String(body.accessKey ?? ""));
       if (!host || host.role !== "host") {
-        sendJson(response, 403, { error: "host_access_required" }, origin, allowedOrigin);
+        sendJson(response, 403, { error: "host_access_required" }, origin, allowedOrigins);
         return true;
       }
       const action = String(body.action ?? "");
@@ -401,18 +401,18 @@ export async function handleMeetingRequest(
         meeting.status = "ended";
         meeting.endedAt = new Date().toISOString();
       } else {
-        sendJson(response, 400, { error: "invalid_lifecycle_action" }, origin, allowedOrigin);
+        sendJson(response, 400, { error: "invalid_lifecycle_action" }, origin, allowedOrigins);
         return true;
       }
       sendJson(response, 200, {
         meeting: publicContext(meeting, host)
-      }, origin, allowedOrigin);
+      }, origin, allowedOrigins);
       return true;
     } catch (error) {
       const status = Number((error as { status?: number }).status ?? 500);
       sendJson(response, status, {
         error: error instanceof Error ? error.message : "meeting_lifecycle_failed"
-      }, origin, allowedOrigin);
+      }, origin, allowedOrigins);
       return true;
     }
   }
@@ -422,24 +422,24 @@ export async function handleMeetingRequest(
       const body = await readJson(request);
       const participant = findAccess(meeting, String(body.accessKey ?? ""));
       if (!participant) {
-        sendJson(response, 401, { error: "invalid_meeting_access" }, origin, allowedOrigin);
+        sendJson(response, 401, { error: "invalid_meeting_access" }, origin, allowedOrigins);
         return true;
       }
       if (meeting.status !== "live") {
-        sendJson(response, 409, { error: "meeting_not_live" }, origin, allowedOrigin);
+        sendJson(response, 409, { error: "meeting_not_live" }, origin, allowedOrigins);
         return true;
       }
       if (participant.admissionStatus !== "admitted") {
         sendJson(response, 403, {
           error: "waiting_for_admission",
           admissionStatus: participant.admissionStatus
-        }, origin, allowedOrigin);
+        }, origin, allowedOrigins);
         return true;
       }
 
       const livekit = liveKitConfig();
       if (!livekit) {
-        sendJson(response, 503, { error: "livekit_not_configured" }, origin, allowedOrigin);
+        sendJson(response, 503, { error: "livekit_not_configured" }, origin, allowedOrigins);
         return true;
       }
 
@@ -470,13 +470,13 @@ export async function handleMeetingRequest(
         role: participant.role,
         allowParticipantScreenShare:
           participant.role === "host" || meeting.allowParticipantScreenShare
-      }, origin, allowedOrigin);
+      }, origin, allowedOrigins);
       return true;
     } catch (error) {
       const status = Number((error as { status?: number }).status ?? 500);
       sendJson(response, status, {
         error: error instanceof Error ? error.message : "meeting_token_failed"
-      }, origin, allowedOrigin);
+      }, origin, allowedOrigins);
       return true;
     }
   }
