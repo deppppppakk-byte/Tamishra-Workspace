@@ -1,4 +1,4 @@
-export const publicPatraDomain = "patra.in";
+export const publicPatraDomain = "patra.tamishra.in";
 export const tamishraCompanyDomain = "tamishra.in";
 
 export type NativeMailboxClass = "public" | "tamishra-company";
