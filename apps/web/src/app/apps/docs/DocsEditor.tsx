@@ -197,9 +197,9 @@ export default function DocsEditor() {
         const afterBreak: Node[] = [];
         let node: ChildNode | null = manualBreak.nextSibling;
         while (node) {
-          const next = node.nextSibling;
+          const followingSibling: ChildNode | null = node.nextSibling;
           afterBreak.push(node);
-          node = next;
+          node = followingSibling;
         }
         prependNodes(nextEditor, afterBreak);
       }
