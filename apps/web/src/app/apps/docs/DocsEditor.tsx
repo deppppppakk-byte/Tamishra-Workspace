@@ -123,6 +123,10 @@ export default function DocsEditor() {
     return () => window.clearTimeout(timer);
   }, [title, wordCount, charCount, page]);
 
+  useEffect(() => {
+    updateCounts();
+  }, [page]);
+
   const updateCounts = () => {
     const editor = editorRef.current;
     const text = editor?.innerText ?? "";
