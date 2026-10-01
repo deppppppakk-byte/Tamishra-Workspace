@@ -51,6 +51,10 @@ import {
   saveWorkspaceBlockShelf,
   subscribeWorkspaceBlocks
 } from "../../../lib/workspace-blocks";
+import {
+  registerWorkspaceConsumerLink,
+  unregisterWorkspaceConsumerLink
+} from "../../../lib/workspace-links";
 import styles from "./sheets.module.css";
 
 const STORAGE_KEY = "tamishra-sheets-workbook-v2";
@@ -450,6 +454,27 @@ export default function SheetsWorkspace() {
     refresh();
     return subscribeWorkspaceBlocks(refresh);
   }, [loaded]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    const shelf = loadWorkspaceBlockShelf();
+    const byId = new Map(shelf.blocks.map((block) => [block.id, block]));
+
+    (workbook.liveBindings ?? []).forEach((binding) => {
+      const block = byId.get(binding.blockId);
+      if (!block) return;
+
+      registerWorkspaceConsumerLink({
+        block,
+        targetApp: "sheets",
+        targetResourceId: workbook.id,
+        targetLocator: binding.sheetId,
+        targetTitle: workbook.title,
+        targetHref: "/apps/sheets",
+        consumerVersion: binding.blockVersion
+      });
+    });
+  }, [workbook, loaded]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
@@ -920,6 +945,32 @@ export default function SheetsWorkspace() {
     setSaveState("Live Chart published · " + block.title);
   }
 
+  function detachLiveFormsResults() {
+    const bindings = (workbook.liveBindings ?? []).filter(
+      (binding) => binding.kind === "form-results"
+    );
+    if (!bindings.length) return;
+
+    bindings.forEach((binding) => {
+      unregisterWorkspaceConsumerLink({
+        blockId: binding.blockId,
+        targetApp: "sheets",
+        targetResourceId: workbook.id,
+        targetLocator: binding.sheetId
+      });
+    });
+
+    setWorkbook((current) => ({
+      ...current,
+      liveBindings: (current.liveBindings ?? []).filter(
+        (binding) => binding.kind !== "form-results"
+      ),
+      version: current.version + 1,
+      updatedAt: new Date().toISOString()
+    }));
+    setSaveState("Forms link detached · data kept as snapshot");
+  }
+
   function exportCsv() {
     downloadText(
       safeFileName(workbook.title) + ".csv",
@@ -1179,6 +1230,12 @@ export default function SheetsWorkspace() {
             <button onClick={publishSelectionAsLiveBlock}>Publish Live Block</button>
             <button onClick={publishSelectionAsLiveChart}>Publish Live Chart</button>
             <button onClick={() => { window.location.href = "/apps/blocks"; }}>Blocks</button>
+            <button onClick={() => { window.location.href = "/apps/links"; }}>Links</button>
+            {workbook.liveBindings?.some(
+              (binding) => binding.kind === "form-results"
+            ) && (
+              <button onClick={detachLiveFormsResults}>Detach Forms</button>
+            )}
             <button onClick={clearSheet}>Clear sheet</button>
           </div>
         </div>
