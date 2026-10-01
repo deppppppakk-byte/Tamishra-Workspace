@@ -1,8 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   ChatAttachment,
+  ChatConversation,
   ChatConversationKind,
-  ChatMemberRole
+  ChatEventType,
+  ChatMemberRole,
+  ChatMessage,
+  ChatNotificationKind
 } from "@tamishra/chat-core";
 import { hasPermission, type WorkspacePermission } from "@tamishra/permissions";
 import {
@@ -15,6 +19,9 @@ type JsonObject = Record<string, unknown>;
 
 const store = createChatStore();
 const MAX_BODY_BYTES = 256 * 1024;
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const EVENT_POLL_MS = 900;
+const EVENT_PING_MS = 15_000;
 
 function isChatConversationKind(value: unknown): value is ChatConversationKind {
   return value === "channel" || value === "group" || value === "direct";
@@ -65,6 +72,48 @@ async function readJson(request: IncomingMessage): Promise<JsonObject> {
   } catch {
     throw Object.assign(new Error("invalid_json"), { status: 400 });
   }
+}
+
+async function readBinary(request: IncomingMessage, maxBytes = MAX_FILE_BYTES) {
+  const length = Number(request.headers["content-length"] ?? 0);
+  if (Number.isFinite(length) && length > maxBytes) {
+    throw Object.assign(new Error("file_too_large"), { status: 413 });
+  }
+
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > maxBytes) {
+      throw Object.assign(new Error("file_too_large"), { status: 413 });
+    }
+    chunks.push(buffer);
+  }
+  if (!size) {
+    throw Object.assign(new Error("file_empty"), { status: 400 });
+  }
+  return Buffer.concat(chunks);
+}
+
+function applyCors(
+  response: ServerResponse,
+  origin: string | undefined,
+  allowedOrigins: ReadonlySet<string>
+) {
+  if (origin && allowedOrigins.has(origin)) {
+    response.setHeader("access-control-allow-origin", origin);
+    response.setHeader("access-control-allow-credentials", "true");
+    response.setHeader("vary", "origin");
+  }
+}
+
+function safeDownloadName(value: string) {
+  return value.replace(/[\r\n"]/g, "_").slice(0, 255) || "attachment";
+}
+
+function eventData(event: unknown) {
+  return JSON.stringify(event).replace(/[\u2028\u2029]/g, " ");
 }
 
 function mutationOriginAllowed(
@@ -169,6 +218,149 @@ async function canManageConversation(
   const members = await store.listMembers(conversationId);
   const member = members.find((item) => item.userId === userId);
   return member?.role === "owner" || member?.role === "moderator";
+}
+
+async function emitChatEvent(input: {
+  organizationId: string;
+  conversationId?: string | null;
+  actorId?: string | null;
+  targetUserId?: string | null;
+  type: ChatEventType;
+  payload?: Record<string, unknown>;
+}) {
+  return store.appendEvent(input);
+}
+
+async function createMessageNotifications(
+  conversation: ChatConversation,
+  message: ChatMessage,
+  currentUserId: string
+) {
+  const members = await store.listMembers(conversation.id);
+  const memberIds = new Set(members.map((member) => member.userId));
+  const targets = new Map<string, ChatNotificationKind>();
+
+  for (const mentionedUserId of message.mentions) {
+    if (mentionedUserId !== currentUserId && memberIds.has(mentionedUserId)) {
+      targets.set(mentionedUserId, "mention");
+    }
+  }
+
+  if (conversation.kind === "direct") {
+    for (const member of members) {
+      if (member.userId !== currentUserId && !targets.has(member.userId)) {
+        targets.set(member.userId, "direct");
+      }
+    }
+  }
+
+  if (message.parentMessageId) {
+    const parent = await store.getMessageForUser(
+      message.parentMessageId,
+      currentUserId
+    );
+    if (
+      parent &&
+      parent.authorId !== currentUserId &&
+      memberIds.has(parent.authorId) &&
+      !targets.has(parent.authorId)
+    ) {
+      targets.set(parent.authorId, "thread");
+    }
+  }
+
+  const preview = (message.body.trim() || "Shared an attachment").slice(0, 220);
+  for (const [userId, kind] of targets) {
+    const title =
+      kind === "mention"
+        ? message.authorDisplayName + " mentioned you"
+        : kind === "thread"
+          ? message.authorDisplayName + " replied to your thread"
+          : message.authorDisplayName + " sent you a message";
+    const notification = await store.createNotification({
+      organizationId: conversation.organizationId,
+      userId,
+      conversationId: conversation.id,
+      messageId: message.id,
+      kind,
+      title,
+      bodyPreview: preview
+    });
+    await emitChatEvent({
+      organizationId: conversation.organizationId,
+      conversationId: conversation.id,
+      actorId: currentUserId,
+      targetUserId: userId,
+      type: "notification.created",
+      payload: { notificationId: notification.id, messageId: message.id, kind }
+    });
+  }
+}
+
+function startEventStream(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: {
+    organizationId: string;
+    userId: string;
+    afterId: string;
+    origin: string | undefined;
+    allowedOrigins: ReadonlySet<string>;
+  }
+) {
+  let cursor = /^\d+$/.test(options.afterId) ? options.afterId : "0";
+  let closed = false;
+  let polling = false;
+
+  response.statusCode = 200;
+  response.setHeader("content-type", "text/event-stream; charset=utf-8");
+  response.setHeader("cache-control", "no-cache, no-transform");
+  response.setHeader("connection", "keep-alive");
+  response.setHeader("x-accel-buffering", "no");
+  applyCors(response, options.origin, options.allowedOrigins);
+  response.flushHeaders();
+  response.write("retry: 2500\n\n");
+
+  const poll = async () => {
+    if (closed || polling) return;
+    polling = true;
+    try {
+      const events = await store.listEvents(
+        options.organizationId,
+        options.userId,
+        cursor,
+        100
+      );
+      for (const event of events) {
+        cursor = event.id;
+        response.write(
+          "id: " + event.id + "\n" +
+          "event: chat\n" +
+          "data: " + eventData(event) + "\n\n"
+        );
+      }
+    } catch (error) {
+      console.error("Chat event stream polling failed", error);
+      response.write("event: error\ndata: {\"error\":\"event_poll_failed\"}\n\n");
+    } finally {
+      polling = false;
+    }
+  };
+
+  const pollTimer = setInterval(() => void poll(), EVENT_POLL_MS);
+  const pingTimer = setInterval(() => {
+    if (!closed) response.write(": ping\n\n");
+  }, EVENT_PING_MS);
+
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    clearInterval(pollTimer);
+    clearInterval(pingTimer);
+  };
+  request.on("close", cleanup);
+  response.on("close", cleanup);
+  void poll();
 }
 
 export async function handleChatRequest(
