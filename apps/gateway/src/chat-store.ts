@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
+import postgres from "postgres";
 import type {
   ChatAttachment,
   ChatConversation,
@@ -427,7 +427,7 @@ class PostgresChatStore implements ChatStore {
   readonly kind = "postgres" as const;
   private initialized = false;
 
-  constructor(private readonly sql: NeonQueryFunction<false, false>) {}
+  constructor(private readonly sql: ReturnType<typeof postgres>) {}
 
   async ready() {
     if (this.initialized) return;
@@ -886,5 +886,5 @@ class PostgresChatStore implements ChatStore {
 export function createChatStore(): ChatStore {
   const databaseUrl = process.env.WORKSPACE_DATABASE_URL?.trim();
   if (!databaseUrl) return new MemoryChatStore();
-  return new PostgresChatStore(neon(databaseUrl));
+  return new PostgresChatStore(postgres(databaseUrl, { max: 5, prepare: false }));
 }
