@@ -21,6 +21,8 @@ export default function DocsEditor() {
   const [zoom, setZoom] = useState(100);
   const [wordCount, setWordCount] = useState(0);
   const [charCount, setCharCount] = useState(0);
+  const [fontSize, setFontSize] = useState("3");
+  const [textColor, setTextColor] = useState("#202939");
 
   const saveDocument = () => {
     const html = editorRef.current?.innerHTML ?? "";
@@ -36,7 +38,10 @@ export default function DocsEditor() {
 
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
+    if (!raw) {
+      updateCounts();
+      return;
+    }
 
     try {
       const saved = JSON.parse(raw) as SavedDocument;
@@ -92,6 +97,30 @@ export default function DocsEditor() {
     command("removeFormat");
   };
 
+  const insertTable = () => {
+    editorRef.current?.focus();
+    applyCommand(
+      "insertHTML",
+      '<table><tbody><tr><th>Heading 1</th><th>Heading 2</th></tr><tr><td>Cell</td><td>Cell</td></tr><tr><td>Cell</td><td>Cell</td></tr></tbody></table><p><br></p>'
+    );
+    updateCounts();
+  };
+
+  const insertDivider = () => {
+    command("insertHorizontalRule");
+  };
+
+  const handleExportText = () => {
+    const text = editorRef.current?.innerText ?? "";
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = `${(title.trim() || "document").replace(/[^a-z0-9-_]+/gi, "-")}.txt`;
+    anchor.click();
+    URL.revokeObjectURL(href);
+  };
+
   const handlePrint = () => {
     window.print();
   };
@@ -121,6 +150,23 @@ td,th{border:1px solid #d0d5dd;padding:8px}
     anchor.click();
     URL.revokeObjectURL(href);
   };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        saveDocument();
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        handlePrint();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [title]);
 
   const zoomStyle = useMemo(
     () => ({ transform: `scale(${zoom / 100})`, transformOrigin: "top center" }),
@@ -185,6 +231,35 @@ td,th{border:1px solid #d0d5dd;padding:8px}
 
         <div className="docsToolDivider" />
 
+        <select
+          aria-label="Font size"
+          value={fontSize}
+          onChange={(event) => {
+            setFontSize(event.target.value);
+            command("fontSize", event.target.value);
+          }}
+        >
+          <option value="2">Small</option>
+          <option value="3">Normal</option>
+          <option value="4">Medium</option>
+          <option value="5">Large</option>
+          <option value="6">Extra large</option>
+        </select>
+
+        <input
+          className="docsColorPicker"
+          type="color"
+          value={textColor}
+          aria-label="Text color"
+          title="Text color"
+          onChange={(event) => {
+            setTextColor(event.target.value);
+            command("foreColor", event.target.value);
+          }}
+        />
+
+        <div className="docsToolDivider" />
+
         <div className="docsToolGroup">
           <button onClick={() => command("bold")} title="Bold"><strong>B</strong></button>
           <button onClick={() => command("italic")} title="Italic"><em>I</em></button>
@@ -213,6 +288,8 @@ td,th{border:1px solid #d0d5dd;padding:8px}
 
         <div className="docsToolGroup">
           <button onClick={insertLink} title="Insert link">⌁</button>
+          <button onClick={insertTable} title="Insert table">▦</button>
+          <button onClick={insertDivider} title="Insert divider">—</button>
           <button onClick={clearFormatting} title="Clear formatting">Tx</button>
         </div>
 
@@ -232,7 +309,8 @@ td,th{border:1px solid #d0d5dd;padding:8px}
           <option value={150}>150%</option>
         </select>
 
-        <button className="docsExportButton" onClick={handleExportHtml}>Export</button>
+        <button className="docsExportButton" onClick={handleExportText}>TXT</button>
+        <button className="docsExportButton" onClick={handleExportHtml}>HTML</button>
       </section>
 
       <div className="docsWorkArea">
