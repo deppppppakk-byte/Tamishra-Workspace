@@ -1954,3 +1954,41 @@ kbd {
     display: none !important;
   }
 }
+
+
+/* Tamishra Workspace live blocks inside Docs */
+.docsWorkspaceBlock {
+  margin: 14px 0;
+  padding: 10px;
+  border: 1px solid #cfc8ff;
+  border-radius: 10px;
+  background: #fbfaff;
+  box-shadow: 0 4px 16px rgba(78, 61, 180, 0.06);
+}
+
+.docsWorkspaceBlockBadge {
+  margin: -2px 0 8px;
+  color: #5b49d6;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+}
+
+.docsWorkspaceBlock table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+}
+
+.docsWorkspaceBlock th,
+.docsWorkspaceBlock td {
+  border: 1px solid #d9ddea;
+  padding: 7px 9px;
+  text-align: left;
+}
+
+.docsWorkspaceBlock th {
+  background: #f3f1ff;
+  color: #3f385f;
+  font-weight: 750;
+}
