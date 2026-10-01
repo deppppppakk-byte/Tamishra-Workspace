@@ -8,6 +8,9 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
+    "@tamishra/docs-engine": "0.1.0",
+    "@tamishra/document-model": "0.1.0",
+    "@tamishra/history": "0.1.0",
     "@tamishra/mail-core": "0.1.0",
     "@tamishra/meet-core": "0.1.0",
     "@tamishra/sheets-engine": "0.1.0",
