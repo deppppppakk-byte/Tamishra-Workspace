@@ -2433,10 +2433,9 @@ td,th{border:1px solid #d0d5dd;padding:8px}
               <span>HTML export available</span>
             </div>
           </aside>
-        </div>
-  
-  
         )}
+
+      </div>
 
       <footer className="docsStatusBar">
         <span>Page {activePage} of {pageCount}</span>
