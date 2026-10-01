@@ -63,6 +63,8 @@ type Selection = {
   focus: string;
 };
 
+type LiveChartKind = "bar" | "line" | "donut";
+
 function starterWorkbook(): Workbook {
   const workbook = createWorkbook("Project tracker");
   workbook.id = "tamishra-starter-workbook";
@@ -139,6 +141,86 @@ function displayMatrixForRange(
   return matrix;
 }
 
+function chartPayloadForRange(
+  workbook: Workbook,
+  sheetId: string,
+  range: CellRange,
+  chartKind: LiveChartKind
+) {
+  const sheet = workbook.sheets.find((item) => item.id === sheetId);
+  const start = parseAddress(range.start);
+  const end = parseAddress(range.end);
+  if (!sheet || !start || !end) {
+    return { chartKind, labels: [] as string[], values: [] as number[] };
+  }
+
+  const rows: Array<Array<string | number | boolean | null>> = [];
+  for (let row = start.row; row <= end.row; row += 1) {
+    const values: Array<string | number | boolean | null> = [];
+    for (let col = start.col; col <= end.col; col += 1) {
+      values.push(evaluateCell(workbook, sheet.id, cellAddress(row, col)));
+    }
+    rows.push(values);
+  }
+
+  if (!rows.length) {
+    return { chartKind, labels: [] as string[], values: [] as number[] };
+  }
+
+  const firstNumericColumn = (() => {
+    const columns = Math.max(1, ...rows.map((row) => row.length));
+    for (let col = 1; col < columns; col += 1) {
+      if (rows.some((row) => typeof row[col] === "number" && Number.isFinite(row[col]))) {
+        return col;
+      }
+    }
+    for (let col = 0; col < columns; col += 1) {
+      if (rows.some((row) => typeof row[col] === "number" && Number.isFinite(row[col]))) {
+        return col;
+      }
+    }
+    return -1;
+  })();
+
+  if (firstNumericColumn < 0) {
+    return { chartKind, labels: [] as string[], values: [] as number[] };
+  }
+
+  const headerLike =
+    rows.length > 1 &&
+    typeof rows[0]?.[firstNumericColumn] !== "number" &&
+    rows.slice(1).some(
+      (row) =>
+        typeof row[firstNumericColumn] === "number" &&
+        Number.isFinite(row[firstNumericColumn])
+    );
+  const dataRows = headerLike ? rows.slice(1) : rows;
+  const labels: string[] = [];
+  const values: number[] = [];
+
+  dataRows.forEach((row, index) => {
+    const raw = row[firstNumericColumn];
+    if (typeof raw !== "number" || !Number.isFinite(raw)) return;
+
+    const labelValue =
+      firstNumericColumn > 0
+        ? row[0]
+        : cellAddress(start.row + index + (headerLike ? 1 : 0), start.col);
+    labels.push(String(labelValue ?? "Item " + (index + 1)));
+    values.push(raw);
+  });
+
+  return {
+    chartKind,
+    labels,
+    values,
+    seriesName:
+      headerLike && rows[0]?.[firstNumericColumn] != null
+        ? String(rows[0][firstNumericColumn])
+        : "Series 1"
+  };
+}
+
 export default function SheetsWorkspace() {
   const [workbook, setWorkbook] = useState<Workbook>(() => starterWorkbook());
   const [selection, setSelection] = useState<Selection>({
@@ -152,6 +234,7 @@ export default function SheetsWorkspace() {
   const [loaded, setLoaded] = useState(false);
   const [saveState, setSaveState] = useState("Local");
   const [zoom, setZoom] = useState(100);
+  const [liveChartKind, setLiveChartKind] = useState<LiveChartKind>("bar");
   const [recoveryAvailable, setRecoveryAvailable] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const undoStack = useRef<string[]>([]);
@@ -262,17 +345,42 @@ export default function SheetsWorkspace() {
         if (!sheet) continue;
 
         const dimensions = rangeDimensions(range);
-        next = refreshLiveBlock(
-          next,
-          block.id,
-          {
-            tableData: displayMatrixForRange(workbook, sheet.id, range),
-            sourceLabel: workbook.title + " · " + sheet.name + " · " + rangeLabel(range),
-            rows: dimensions.rows,
-            columns: dimensions.columns
-          },
-          workbook.version
-        );
+        const sourceLabel =
+          workbook.title + " · " + sheet.name + " · " + rangeLabel(range);
+
+        if (block.kind === "chart") {
+          const current = block.payload as { chartKind?: LiveChartKind };
+          const chart = chartPayloadForRange(
+            workbook,
+            sheet.id,
+            range,
+            current.chartKind ?? "bar"
+          );
+          next = refreshLiveBlock(
+            next,
+            block.id,
+            {
+              ...chart,
+              sourceLabel
+            },
+            workbook.version
+          );
+          continue;
+        }
+
+        if (block.kind === "table") {
+          next = refreshLiveBlock(
+            next,
+            block.id,
+            {
+              tableData: displayMatrixForRange(workbook, sheet.id, range),
+              sourceLabel,
+              rows: dimensions.rows,
+              columns: dimensions.columns
+            },
+            workbook.version
+          );
+        }
       }
 
       if (next !== shelf) saveWorkspaceBlockShelf(next);
@@ -608,6 +716,54 @@ export default function SheetsWorkspace() {
     setSaveState("Live Block published · " + block.title);
   }
 
+  function publishSelectionAsLiveChart() {
+    const chart = chartPayloadForRange(
+      workbook,
+      activeSheet.id,
+      selectedRange,
+      liveChartKind
+    );
+
+    if (chart.values.length < 2) {
+      setSaveState("Select a range with at least two numeric values");
+      return;
+    }
+
+    const block = createBlock({
+      title:
+        activeSheet.name +
+        " · " +
+        rangeLabel(selectedRange) +
+        " · " +
+        liveChartKind,
+      kind: "chart",
+      sourceApp: "sheets",
+      payload: {
+        ...chart,
+        sourceLabel:
+          workbook.title +
+          " · " +
+          activeSheet.name +
+          " · " +
+          rangeLabel(selectedRange)
+      },
+      tags: ["sheets", "live-chart", liveChartKind, activeSheet.name],
+      binding: {
+        mode: "live",
+        source: {
+          app: "sheets",
+          resourceId: workbook.id,
+          subresourceId: activeSheet.id,
+          locator: rangeLabel(selectedRange),
+          revision: workbook.version
+        }
+      }
+    });
+
+    mutateWorkspaceBlockShelf((current) => upsertBlock(current, block));
+    setSaveState("Live Chart published · " + block.title);
+  }
+
   function exportCsv() {
     downloadText(
       safeFileName(workbook.title) + ".csv",
@@ -860,6 +1016,7 @@ export default function SheetsWorkspace() {
             <button onClick={() => void pasteSelection()}>Paste</button>
             <button onClick={findCell}>Find</button>
             <button onClick={publishSelectionAsLiveBlock}>Publish Live Block</button>
+            <button onClick={publishSelectionAsLiveChart}>Publish Live Chart</button>
             <button onClick={() => { window.location.href = "/apps/blocks"; }}>Blocks</button>
             <button onClick={clearSheet}>Clear sheet</button>
           </div>
@@ -1004,6 +1161,26 @@ export default function SheetsWorkspace() {
           title="Publish selected cells as a linked Tamishra Block"
         >
           Live Block
+        </button>
+        <select
+          className={styles.formatSelect}
+          value={liveChartKind}
+          onChange={(event) =>
+            setLiveChartKind(event.target.value as LiveChartKind)
+          }
+          aria-label="Live chart type"
+          title="Live chart type"
+        >
+          <option value="bar">Bar chart</option>
+          <option value="line">Line chart</option>
+          <option value="donut">Donut chart</option>
+        </select>
+        <button
+          className={styles.actionButton}
+          onClick={publishSelectionAsLiveChart}
+          title="Publish selected cells as a linked chart"
+        >
+          Live Chart
         </button>
         <div className={styles.toolbarSpacer} />
         <select
