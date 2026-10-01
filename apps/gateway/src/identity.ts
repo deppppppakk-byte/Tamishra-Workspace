@@ -339,6 +339,11 @@ async function currentIdentity(request: IncomingMessage) {
   return { user, session };
 }
 
+export async function resolveWorkspaceIdentity(request: IncomingMessage) {
+  await store.ready();
+  return currentIdentity(request);
+}
+
 function errorStatus(error: unknown) {
   return Number((error as { status?: number }).status ?? 500);
 }
