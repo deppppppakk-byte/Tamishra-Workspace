@@ -272,6 +272,13 @@ export default function DocsEditor() {
     const desiredCount = Math.max(1, lastUsed + 1);
     if (desiredCount !== pageCount) {
       setPageCount(desiredCount);
+
+      if (activePageRef.current >= desiredCount) {
+        const nextActiveIndex = desiredCount - 1;
+        activePageRef.current = nextActiveIndex;
+        setActivePage(desiredCount);
+        editorRef.current = pageEditorsRef.current[nextActiveIndex];
+      }
     }
 
     ensureBlockIds();
@@ -779,6 +786,7 @@ export default function DocsEditor() {
     selection.removeAllRanges();
     selection.addRange(range);
     updateCounts();
+    scheduleReflow();
     setFindStatus("Replaced");
     requestAnimationFrame(() => findInDocument(false));
   };
