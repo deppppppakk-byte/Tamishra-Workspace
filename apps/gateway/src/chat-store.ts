@@ -4,11 +4,17 @@ import type {
   ChatAttachment,
   ChatConversation,
   ChatConversationKind,
+  ChatEvent,
+  ChatEventType,
   ChatMember,
   ChatMemberRole,
   ChatMessage,
+  ChatNotification,
+  ChatNotificationKind,
+  ChatPresence,
   ChatReactionSummary,
-  ChatSearchResult
+  ChatSearchResult,
+  ChatTypingState
 } from "@tamishra/chat-core";
 
 type StoredReaction = {
@@ -37,6 +43,37 @@ type NewMessageInput = {
   attachments: ChatAttachment[];
 };
 
+export type StoredChatFile = {
+  id: string;
+  organizationId: string;
+  conversationId: string;
+  uploaderId: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  bytes: Buffer;
+  createdAt: string;
+};
+
+type AppendEventInput = {
+  organizationId: string;
+  conversationId?: string | null;
+  actorId?: string | null;
+  targetUserId?: string | null;
+  type: ChatEventType;
+  payload?: Record<string, unknown>;
+};
+
+type CreateNotificationInput = {
+  organizationId: string;
+  userId: string;
+  conversationId: string;
+  messageId: string;
+  kind: ChatNotificationKind;
+  title: string;
+  bodyPreview: string;
+};
+
 export interface ChatStore {
   readonly kind: "ephemeral-memory" | "postgres";
   ready(): Promise<void>;
@@ -58,6 +95,49 @@ export interface ChatStore {
   setRead(conversationId: string, userId: string, messageId?: string | null): Promise<ChatMember | null>;
   addReaction(messageId: string, userId: string, emoji: string): Promise<boolean>;
   removeReaction(messageId: string, userId: string, emoji: string): Promise<boolean>;
+  updateMemberSettings(
+    conversationId: string,
+    userId: string,
+    settings: { muted?: boolean; pinned?: boolean }
+  ): Promise<ChatMember | null>;
+  createFile(input: {
+    organizationId: string;
+    conversationId: string;
+    uploaderId: string;
+    name: string;
+    mimeType: string;
+    bytes: Buffer;
+  }): Promise<ChatAttachment>;
+  validateFiles(conversationId: string, fileIds: string[]): Promise<boolean>;
+  getFileForUser(fileId: string, userId: string): Promise<StoredChatFile | null>;
+  appendEvent(input: AppendEventInput): Promise<ChatEvent>;
+  listEvents(
+    organizationId: string,
+    userId: string,
+    afterId: string,
+    limit?: number
+  ): Promise<ChatEvent[]>;
+  createNotification(input: CreateNotificationInput): Promise<ChatNotification>;
+  listNotifications(
+    organizationId: string,
+    userId: string,
+    limit?: number
+  ): Promise<ChatNotification[]>;
+  markNotificationRead(notificationId: string, userId: string): Promise<boolean>;
+  markAllNotificationsRead(organizationId: string, userId: string): Promise<number>;
+  heartbeatPresence(
+    organizationId: string,
+    userId: string,
+    displayName: string
+  ): Promise<ChatPresence>;
+  listPresence(organizationId: string): Promise<ChatPresence[]>;
+  setTyping(
+    conversationId: string,
+    userId: string,
+    displayName: string,
+    active: boolean
+  ): Promise<ChatTypingState | null>;
+  listTyping(conversationId: string): Promise<ChatTypingState[]>;
   searchMessages(organizationId: string, userId: string, query: string): Promise<ChatSearchResult[]>;
 }
 
@@ -73,6 +153,28 @@ function iso(value: unknown) {
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+function normalizeJsonObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string") return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function presenceStatus(lastSeenAt: string): ChatPresence["status"] {
+  const age = Date.now() - Date.parse(lastSeenAt);
+  if (age <= 60_000) return "online";
+  if (age <= 5 * 60_000) return "away";
+  return "offline";
 }
 
 function normalizeJsonArray<T>(value: unknown): T[] {
@@ -117,6 +219,7 @@ function toConversation(row: Record<string, unknown>): ChatConversation {
     memberCount: Number(row.member_count ?? 0),
     unreadCount: Number(row.unread_count ?? 0),
     muted: Boolean(row.muted),
+    pinned: Boolean(row.pinned),
     lastReadAt: iso(row.last_read_at)
   };
 }
@@ -128,6 +231,7 @@ function toMember(row: Record<string, unknown>): ChatMember {
     role: String(row.role) as ChatMemberRole,
     joinedAt: iso(row.joined_at) ?? nowIso(),
     muted: Boolean(row.muted),
+    pinned: Boolean(row.pinned),
     lastReadMessageId: row.last_read_message_id ? String(row.last_read_message_id) : null,
     lastReadAt: iso(row.last_read_at)
   };
@@ -150,6 +254,54 @@ function toMessage(
     createdAt: iso(row.created_at) ?? nowIso(),
     editedAt: iso(row.edited_at),
     deletedAt: iso(row.deleted_at)
+  };
+}
+
+function toEvent(row: Record<string, unknown>): ChatEvent {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    conversationId: row.conversation_id ? String(row.conversation_id) : null,
+    actorId: row.actor_id ? String(row.actor_id) : null,
+    targetUserId: row.target_user_id ? String(row.target_user_id) : null,
+    type: String(row.type) as ChatEventType,
+    payload: normalizeJsonObject(row.payload),
+    createdAt: iso(row.created_at) ?? nowIso()
+  };
+}
+
+function toNotification(row: Record<string, unknown>): ChatNotification {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    userId: String(row.user_id),
+    conversationId: String(row.conversation_id),
+    messageId: String(row.message_id),
+    kind: String(row.kind) as ChatNotificationKind,
+    title: String(row.title ?? ""),
+    bodyPreview: String(row.body_preview ?? ""),
+    createdAt: iso(row.created_at) ?? nowIso(),
+    readAt: iso(row.read_at)
+  };
+}
+
+function toPresence(row: Record<string, unknown>): ChatPresence {
+  const lastSeenAt = iso(row.last_seen_at) ?? nowIso();
+  return {
+    organizationId: String(row.organization_id),
+    userId: String(row.user_id),
+    displayName: String(row.display_name ?? "Workspace member"),
+    status: presenceStatus(lastSeenAt),
+    lastSeenAt
+  };
+}
+
+function toTyping(row: Record<string, unknown>): ChatTypingState {
+  return {
+    conversationId: String(row.conversation_id),
+    userId: String(row.user_id),
+    displayName: String(row.display_name ?? "Workspace member"),
+    expiresAt: iso(row.expires_at) ?? nowIso()
   };
 }
 
