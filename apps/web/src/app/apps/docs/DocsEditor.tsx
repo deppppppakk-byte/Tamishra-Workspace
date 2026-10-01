@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  createId,
   createPageConfig,
   type PageConfig
 } from "@tamishra/document-model";
@@ -41,7 +42,24 @@ export default function DocsEditor() {
   const [fontSize, setFontSize] = useState("3");
   const [textColor, setTextColor] = useState("#202939");
 
+  const ensureBlockIds = () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const assign = (element: Element, prefix: string) => {
+      if (element instanceof HTMLElement && !element.dataset.tamishraId) {
+        element.dataset.tamishraId = createId(prefix);
+      }
+    };
+
+    Array.from(editor.children).forEach((element) => assign(element, "block"));
+    editor
+      .querySelectorAll("a, img, hr, ul, ol, li, table, tr, th, td, [data-page-break]")
+      .forEach((element) => assign(element, element.tagName.toLowerCase()));
+  };
+
   const saveDocument = () => {
+    ensureBlockIds();
     const html = editorRef.current?.innerHTML ?? "";
     const safeTitle = title.trim() || "Untitled document";
     const nextDraft = draftRef.current
@@ -85,6 +103,7 @@ export default function DocsEditor() {
 
       if (editorRef.current && draft.editorHtml) {
         editorRef.current.innerHTML = draft.editorHtml;
+        ensureBlockIds();
       }
 
       updateCounts();
