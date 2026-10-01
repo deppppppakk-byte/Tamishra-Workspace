@@ -134,8 +134,24 @@ function blocksFromContainer(container: ParentNode): DocumentBlock[] {
       continue;
     }
 
+    if (node.dataset.sectionBreak === "true") {
+      blocks.push({ id, type: "section-break", kind: "next-page" });
+      continue;
+    }
+
     if (node.dataset.pageBreak === "true") {
       blocks.push({ id, type: "page-break" });
+      continue;
+    }
+
+    if (node.dataset.columns) {
+      const count = Math.max(1, Math.min(3, Number(node.dataset.columns) || 1)) as 1 | 2 | 3;
+      blocks.push({
+        id,
+        type: "columns",
+        count,
+        blocks: blocksFromContainer(node)
+      });
       continue;
     }
 
