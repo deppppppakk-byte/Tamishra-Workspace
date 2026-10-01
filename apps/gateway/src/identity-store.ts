@@ -110,6 +110,10 @@ export interface IdentityStore {
     membership: StoredMembership;
     organization: StoredOrganization;
   }>>;
+  listOrganizationMembers(organizationId: string): Promise<Array<{
+    membership: StoredMembership;
+    user: StoredIdentityUser;
+  }>>;
 }
 
 function iso(value: unknown) {
@@ -359,6 +363,22 @@ class MemoryIdentityStore implements IdentityStore {
           : null;
       })
       .filter((value): value is { membership: StoredMembership; organization: StoredOrganization } => Boolean(value));
+  }
+
+  async listOrganizationMembers(organizationId: string) {
+    return Array.from(this.memberships.values())
+      .filter(
+        (membership) =>
+          membership.organizationId === organizationId && !membership.disabled
+      )
+      .map((membership) => {
+        const user = this.users.get(membership.userId);
+        return user && !user.disabled
+          ? { membership: structuredClone(membership), user: structuredClone(user) }
+          : null;
+      })
+      .filter((value): value is { membership: StoredMembership; user: StoredIdentityUser } => Boolean(value))
+      .sort((left, right) => left.user.displayName.localeCompare(right.user.displayName));
   }
 }
 
@@ -829,6 +849,54 @@ class PostgresIdentityStore implements IdentityStore {
           slug: String(value.organization_slug),
           createdAt: iso(value.organization_created_at) ?? new Date().toISOString(),
           updatedAt: iso(value.organization_updated_at) ?? new Date().toISOString()
+        }
+      };
+    });
+  }
+
+  async listOrganizationMembers(organizationId: string) {
+    await this.ready();
+    const rows = await this.sql`
+      select
+        m.id as membership_id,
+        m.user_id,
+        m.organization_id,
+        m.role,
+        m.joined_at,
+        m.disabled,
+        u.email,
+        u.display_name,
+        u.email_verified,
+        u.disabled as user_disabled,
+        u.created_at as user_created_at,
+        u.updated_at as user_updated_at
+      from workspace_memberships m
+      join workspace_users u on u.id=m.user_id
+      where m.organization_id=${organizationId}
+        and m.disabled=false
+        and u.disabled=false
+      order by lower(u.display_name) asc, lower(u.email) asc
+    `;
+
+    return rows.map((row) => {
+      const value = row as Record<string, unknown>;
+      return {
+        membership: {
+          id: String(value.membership_id),
+          userId: String(value.user_id),
+          organizationId: String(value.organization_id),
+          role: String(value.role) as StoredMembership["role"],
+          joinedAt: iso(value.joined_at) ?? new Date().toISOString(),
+          disabled: Boolean(value.disabled)
+        },
+        user: {
+          id: String(value.user_id),
+          email: String(value.email),
+          displayName: String(value.display_name),
+          emailVerified: Boolean(value.email_verified),
+          disabled: Boolean(value.user_disabled),
+          createdAt: iso(value.user_created_at) ?? new Date().toISOString(),
+          updatedAt: iso(value.user_updated_at) ?? new Date().toISOString()
         }
       };
     });
