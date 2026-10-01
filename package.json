@@ -8,10 +8,15 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm --workspace apps/web run dev",
-    "build": "npm --workspace apps/web run build",
-    "start": "npm --workspace apps/web run start",
-    "lint": "npm --workspace apps/web run lint"
+    "dev": "npm run dev:web",
+    "dev:web": "npm run dev --workspace @tamishra/web",
+    "build": "npm run build:web",
+    "build:web": "npm run build --workspace @tamishra/web",
+    "desktop:dev": "npm run tauri:dev --workspace @tamishra/desktop",
+    "desktop:build": "npm run tauri:build --workspace @tamishra/desktop",
+    "mobile:sync": "npm run sync --workspace @tamishra/mobile",
+    "mobile:add:android": "npm run android:add --workspace @tamishra/mobile",
+    "mobile:add:ios": "npm run ios:add --workspace @tamishra/mobile"
   },
   "engines": {
     "node": ">=22"
