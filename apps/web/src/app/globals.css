@@ -1555,3 +1555,402 @@ kbd {
     display: none !important;
   }
 }
+
+
+/* Tamishra Docs production panels and long-document hardening */
+.docsProductionPanel {
+  min-width: 0;
+  overflow: hidden;
+  border-left: 1px solid rgba(23, 32, 51, 0.08);
+  background: rgba(249, 251, 254, 0.96);
+  display: flex;
+  flex-direction: column;
+}
+
+.docsPanelHeader {
+  min-height: 48px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(23, 32, 51, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.docsPanelHeader strong {
+  font-size: 12px;
+}
+
+.docsPanelHeader button {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #667085;
+  cursor: pointer;
+}
+
+.docsPanelBody {
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.docsPanelBody h4 {
+  margin: 18px 0 8px;
+  color: #475467;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.docsPanelActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.docsPanelActions button,
+.docsPanelPrimary,
+.docsRecordActions button,
+.docsVersionItem button,
+.docsShareItem button,
+.docsInsertGrid button {
+  min-height: 30px;
+  border: 1px solid rgba(23, 32, 51, 0.09);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: #fff;
+  color: #475467;
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.docsPanelPrimary {
+  border-color: rgba(49, 92, 244, 0.18);
+  background: rgba(49, 92, 244, 0.08);
+  color: #2448ca;
+}
+
+.docsPanelHint,
+.docsPanelEmpty {
+  padding: 9px 10px;
+  border-radius: 9px;
+  color: #788496;
+  background: rgba(23, 32, 51, 0.035);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.docsRecordList,
+.docsCommentList,
+.docsVersionList,
+.docsShareList,
+.docsOutlineList {
+  display: grid;
+  gap: 7px;
+}
+
+.docsRecordItem,
+.docsCommentCard,
+.docsVersionItem,
+.docsShareItem {
+  border: 1px solid rgba(23, 32, 51, 0.07);
+  border-radius: 10px;
+  padding: 9px;
+  background: #fff;
+}
+
+.docsRecordItem.active {
+  border-color: rgba(49, 92, 244, 0.32);
+  box-shadow: inset 3px 0 0 #315cf4;
+}
+
+.docsRecordOpen {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.docsRecordOpen strong,
+.docsRecordOpen span,
+.docsVersionItem strong,
+.docsVersionItem span,
+.docsShareItem strong,
+.docsShareItem span {
+  display: block;
+}
+
+.docsRecordOpen strong,
+.docsVersionItem strong,
+.docsShareItem strong {
+  font-size: 10px;
+}
+
+.docsRecordOpen span,
+.docsVersionItem span,
+.docsShareItem span {
+  margin-top: 3px;
+  color: #98a2b3;
+  font-size: 9px;
+}
+
+.docsRecordActions {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.docsOutlineList button {
+  border: 0;
+  border-radius: 7px;
+  padding: 7px 8px;
+  background: transparent;
+  color: #475467;
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.docsOutlineList button:hover {
+  background: rgba(49, 92, 244, 0.06);
+  color: #2448ca;
+}
+
+.docsCommentMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #98a2b3;
+  font-size: 8px;
+}
+
+.docsCommentMeta strong {
+  color: #475467;
+}
+
+.docsCommentCard blockquote {
+  margin: 8px 0;
+  padding: 7px 8px;
+  border-left: 2px solid #315cf4;
+  background: #f8faff;
+  color: #667085;
+  font-size: 9px;
+}
+
+.docsCommentCard p {
+  margin: 7px 0;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.docsCommentCard.resolved {
+  opacity: 0.65;
+}
+
+.docsCommentReply {
+  margin-top: 5px;
+  padding: 6px 7px;
+  border-radius: 7px;
+  background: #f8fafc;
+  font-size: 9px;
+}
+
+.docsCommentReply strong,
+.docsCommentReply span {
+  display: block;
+}
+
+.docsField {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+
+.docsField > span {
+  color: #667085;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.docsField select,
+.docsField input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  border: 1px solid rgba(23, 32, 51, 0.1);
+  border-radius: 8px;
+  padding: 0 8px;
+  background: #fff;
+  color: #344054;
+  font-size: 10px;
+}
+
+.docsInsertGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.docsStatsList {
+  display: grid;
+  gap: 6px;
+}
+
+.docsStatsList > div,
+.docsPresenceStrip {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: rgba(23, 32, 51, 0.035);
+  color: #667085;
+  font-size: 9px;
+}
+
+.docsPresenceStrip {
+  margin: 8px 0;
+  display: grid;
+}
+
+.docsPresenceStrip strong {
+  color: #14875c;
+}
+
+.docsCommentAnchor {
+  border-bottom: 2px solid #b47c16;
+  background: rgba(255, 211, 92, 0.18);
+}
+
+.docsSuggestionDelete {
+  color: #b42318;
+  background: rgba(216, 74, 74, 0.08);
+  text-decoration-thickness: 1.5px;
+}
+
+.docsSuggestionInsert {
+  color: #087443;
+  background: rgba(20, 135, 92, 0.1);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(20, 135, 92, 0.35);
+}
+
+.docsSectionBreak {
+  position: relative;
+  height: 28px;
+  margin: 28px 0;
+  border-top: 1px dashed #667085;
+  color: #667085;
+  text-align: center;
+  user-select: none;
+}
+
+.docsSectionBreak span {
+  position: relative;
+  top: -10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fff;
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.docsColumns {
+  column-fill: balance;
+}
+
+.docsEquation {
+  display: inline-block;
+  margin: 0 2px;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: rgba(49, 92, 244, 0.06);
+  font-family: "Times New Roman", serif;
+  font-style: italic;
+}
+
+.docsFootnotes,
+.docsEndnotes {
+  margin-top: 22px;
+  padding-top: 6px;
+  font-size: 9px;
+}
+
+.docsToc {
+  margin: 14px 0 22px;
+  padding: 12px;
+  border: 1px solid rgba(23, 32, 51, 0.08);
+  border-radius: 10px;
+  background: #fafbfc;
+}
+
+.docsToc p {
+  margin: 4px 0;
+}
+
+.docsTocLevel2 { padding-left: 14px; }
+.docsTocLevel3 { padding-left: 28px; }
+.docsTocLevel4 { padding-left: 42px; }
+
+.docsPage {
+  content-visibility: auto;
+  contain-intrinsic-size: 794px 1123px;
+}
+
+@media (max-width: 820px) {
+  .docsProductionPanel {
+    position: fixed;
+    z-index: 60;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: 72vh;
+    border-left: 0;
+    border-top: 1px solid rgba(23, 32, 51, 0.1);
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -20px 55px rgba(23, 32, 51, 0.16);
+  }
+
+  .docsPanelBody {
+    padding-bottom: max(18px, env(safe-area-inset-bottom));
+  }
+}
+
+@media print {
+  .docsCommentAnchor {
+    border-bottom: 0;
+    background: transparent;
+  }
+
+  .docsSuggestionDelete {
+    display: none !important;
+  }
+
+  .docsSuggestionInsert {
+    color: inherit;
+    background: transparent;
+    border: 0;
+  }
+
+  .docsSectionBreak {
+    height: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .docsSectionBreak span {
+    display: none !important;
+  }
+}
