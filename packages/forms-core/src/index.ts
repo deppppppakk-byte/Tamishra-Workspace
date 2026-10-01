@@ -297,8 +297,10 @@ export function createTemplateForm(
 export function getFieldsForPage(form: TamishraForm, pageId: string) {
   const page = form.pages.find((item) => item.id === pageId);
   if (!page) return [];
-  const ids = new Set(page.fieldIds);
-  return form.fields.filter((field) => ids.has(field.id));
+  const byId = new Map(form.fields.map((field) => [field.id, field]));
+  return page.fieldIds
+    .map((fieldId) => byId.get(fieldId))
+    .filter((field): field is FormField => Boolean(field));
 }
 
 export function getNextPageId(
