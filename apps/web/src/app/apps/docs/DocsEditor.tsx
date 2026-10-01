@@ -12,6 +12,7 @@ import {
 import {
   addDocsComment,
   addDocsShareGrant,
+  addDocsSuggestion,
   addDocsVersion,
   calculateDocsProofingStats,
   createDraftFromHtml,
@@ -29,6 +30,7 @@ import {
   saveDocsWorkspace,
   trashDocsRecord,
   updateDocsComment,
+  updateDocsSuggestion,
   updateDraft,
   upsertDocsRecord,
   type DocsEditingMode,
@@ -91,6 +93,8 @@ export default function DocsEditor() {
   const draftRef = useRef<PersistedDocsDraft | null>(null);
   const workspaceRef = useRef<DocsWorkspaceSnapshot>(loadDocsWorkspace());
   const currentDocumentIdRef = useRef<string | null>(null);
+  const collaborationChannelRef = useRef<BroadcastChannel | null>(null);
+  const collaborationClientIdRef = useRef(createId("client"));
   const pageHistoryRef = useRef(new TransactionHistory<PageConfig>(100));
   const [title, setTitle] = useState("Untitled document");
   const [page, setPage] = useState<PageConfig>(() => createPageConfig());
@@ -128,6 +132,7 @@ export default function DocsEditor() {
   const [language, setLanguage] = useState("en-US");
   const [spellcheck, setSpellcheck] = useState(true);
   const [tableActive, setTableActive] = useState(false);
+  const [collaborators, setCollaborators] = useState<string[]>([]);
 
   const commitWorkspace = (next: DocsWorkspaceSnapshot) => {
     workspaceRef.current = next;
@@ -153,6 +158,9 @@ export default function DocsEditor() {
     (item) => item.documentId === currentDocumentId
   );
   const currentGrants = workspace.grants.filter(
+    (item) => item.documentId === currentDocumentId
+  );
+  const currentSuggestions = workspace.suggestions.filter(
     (item) => item.documentId === currentDocumentId
   );
 
@@ -453,6 +461,14 @@ export default function DocsEditor() {
     }
 
     setSavedState("Saved locally");
+
+    collaborationChannelRef.current?.postMessage({
+      type: "document",
+      source: collaborationClientIdRef.current,
+      documentId: result.record.id,
+      draft: nextDraft
+    });
+
     return nextDraft;
   };
 
@@ -548,6 +564,76 @@ export default function DocsEditor() {
   useEffect(() => {
     registerDocsDocxAdapter(browserDocsDocxAdapter);
   }, []);
+
+  useEffect(() => {
+    collaborationChannelRef.current?.close();
+    collaborationChannelRef.current = null;
+    setCollaborators([]);
+
+    if (!currentDocumentId || typeof BroadcastChannel === "undefined") return;
+
+    const channel = new BroadcastChannel(`tamishra-docs-${currentDocumentId}`);
+    collaborationChannelRef.current = channel;
+    const peers = new Map<string, string>();
+
+    const publishPresence = () => {
+      channel.postMessage({
+        type: "presence",
+        source: collaborationClientIdRef.current,
+        name: "Collaborator",
+        documentId: currentDocumentId
+      });
+    };
+
+    channel.onmessage = (event) => {
+      const message = event.data as {
+        type?: string;
+        source?: string;
+        name?: string;
+        documentId?: string;
+        draft?: PersistedDocsDraft;
+      };
+
+      if (!message.source || message.source === collaborationClientIdRef.current) return;
+      if (message.documentId !== currentDocumentId) return;
+
+      if (message.type === "presence") {
+        peers.set(message.source, message.name || "Collaborator");
+        setCollaborators(Array.from(peers.values()));
+        return;
+      }
+
+      if (message.type === "leave") {
+        peers.delete(message.source);
+        setCollaborators(Array.from(peers.values()));
+        return;
+      }
+
+      if (message.type === "document" && message.draft) {
+        const focused = getEditors().some((editor) => editor.contains(document.activeElement));
+        const localTimestamp = draftRef.current?.updatedAt ?? "";
+        if (!focused && message.draft.updatedAt > localTimestamp) {
+          applyDraftToEditor(message.draft, currentDocumentId, "Live update received");
+        }
+      }
+    };
+
+    publishPresence();
+    const heartbeat = window.setInterval(publishPresence, 5000);
+
+    return () => {
+      window.clearInterval(heartbeat);
+      channel.postMessage({
+        type: "leave",
+        source: collaborationClientIdRef.current,
+        documentId: currentDocumentId
+      });
+      channel.close();
+      if (collaborationChannelRef.current === channel) {
+        collaborationChannelRef.current = null;
+      }
+    };
+  }, [currentDocumentId]);
 
   const applyDraftToEditor = (
     draft: PersistedDocsDraft,
@@ -663,6 +749,81 @@ export default function DocsEditor() {
   const handleDeleteRecordForever = (id: string) => {
     if (!window.confirm("Permanently delete this document and its versions/comments?")) return;
     commitWorkspace(permanentlyDeleteDocsRecord(workspaceRef.current, id));
+  };
+
+  const handleSuggestReplacement = () => {
+    let documentId = currentDocumentIdRef.current;
+    if (!documentId) {
+      saveDocument();
+      documentId = currentDocumentIdRef.current;
+    }
+    if (!documentId) return;
+
+    const context = selectionContext();
+    if (!context || context.range.collapsed || !context.text.trim()) {
+      setSavedState("Select text to suggest a replacement");
+      return;
+    }
+
+    const replacement = window.prompt("Suggested replacement", context.text);
+    if (replacement === null || replacement === context.text) return;
+
+    const result = addDocsSuggestion(workspaceRef.current, {
+      documentId,
+      kind: "insert",
+      blockId: context.blockId,
+      beforeText: context.text,
+      afterText: replacement,
+      authorId: "local-user",
+      authorName: "You"
+    });
+    commitWorkspace(result.snapshot);
+
+    const del = document.createElement("del");
+    del.dataset.suggestionId = result.suggestion.id;
+    del.className = "docsSuggestionDelete";
+    const ins = document.createElement("ins");
+    ins.dataset.suggestionId = result.suggestion.id;
+    ins.className = "docsSuggestionInsert";
+    ins.textContent = replacement;
+
+    const contents = context.range.extractContents();
+    del.appendChild(contents);
+    context.range.insertNode(ins);
+    context.range.insertNode(del);
+    context.selection.removeAllRanges();
+    updateCounts();
+    scheduleReflow();
+  };
+
+  const unwrapElement = (element: HTMLElement) => {
+    const parent = element.parentNode;
+    if (!parent) return;
+    while (element.firstChild) parent.insertBefore(element.firstChild, element);
+    element.remove();
+  };
+
+  const handleResolveSuggestion = (
+    suggestionId: string,
+    status: "accepted" | "rejected"
+  ) => {
+    const nodes = queryDocumentAll(
+      `[data-suggestion-id="${CSS.escape(suggestionId)}"]`
+    ) as HTMLElement[];
+    const deletion = nodes.find((node) => node.tagName.toLowerCase() === "del");
+    const insertion = nodes.find((node) => node.tagName.toLowerCase() === "ins");
+
+    if (status === "accepted") {
+      deletion?.remove();
+      if (insertion) unwrapElement(insertion);
+    } else {
+      insertion?.remove();
+      if (deletion) unwrapElement(deletion);
+    }
+
+    commitWorkspace(updateDocsSuggestion(workspaceRef.current, suggestionId, status));
+    updateCounts();
+    scheduleReflow();
   };
 
   const createVersionSnapshot = (label?: string) => {
@@ -2123,6 +2284,8 @@ td,th{border:1px solid #d0d5dd;padding:8px}
             comments={currentComments}
             versions={currentVersions}
             grants={currentGrants}
+            suggestions={currentSuggestions}
+            collaborators={collaborators}
             proofing={proofing}
             editingMode={editingMode}
             language={language}
@@ -2142,6 +2305,8 @@ td,th{border:1px solid #d0d5dd;padding:8px}
             onAddComment={handleAddComment}
             onReplyComment={handleReplyComment}
             onToggleResolveComment={handleToggleResolveComment}
+            onSuggestReplacement={handleSuggestReplacement}
+            onResolveSuggestion={handleResolveSuggestion}
             onCreateVersion={createVersionSnapshot}
             onRestoreVersion={restoreVersionSnapshot}
             onAddGrant={handleAddGrant}
