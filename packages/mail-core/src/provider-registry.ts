@@ -21,8 +21,8 @@ export type MailProviderDescriptor = {
 export const builtInMailProviders: MailProviderDescriptor[] = [
   {
     key: "tamishra",
-    name: "Tamishra Mail",
-    description: "First-party Tamishra mailbox service owned and operated by Tamishra Workspace.",
+    name: "Tamishra Patra",
+    description: "First-party Tamishra Patra service owned and operated by Tamishra Workspace.",
     connectionMethod: "native",
     recommended: true,
     capabilities: {
