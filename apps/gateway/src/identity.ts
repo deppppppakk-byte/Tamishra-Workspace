@@ -11,10 +11,12 @@ import {
   type StoredIdentitySession,
   type StoredIdentityUser
 } from "./identity-store.js";
+import { getPatraStore } from "./patra-store.js";
 
 type JsonObject = Record<string, unknown>;
 
 const store = createIdentityStore();
+const patraStore = getPatraStore();
 const MAX_BODY_BYTES = 16_384;
 const SESSION_COOKIE =
   process.env.WORKSPACE_SESSION_COOKIE_NAME?.trim() ||
@@ -527,7 +529,15 @@ export async function handleIdentityRequest(
         throw Object.assign(new Error("invalid_credentials"), { status: 401 });
       }
 
-      const user = await store.findUserByEmail(email);
+      let user = await store.findUserByEmail(email);
+
+      if (!user && email.includes("@")) {
+        const mailbox = await patraStore.getMailboxByAddress(email).catch(() => null);
+        if (mailbox) {
+          user = await store.getUser(mailbox.userId);
+        }
+      }
+
       if (!user) {
         await fakePasswordWork(password);
         throw Object.assign(new Error("invalid_credentials"), { status: 401 });
