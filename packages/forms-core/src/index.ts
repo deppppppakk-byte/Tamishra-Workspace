@@ -26,6 +26,7 @@ export type TamishraForm = {
   fields: FormField[];
   createdAt: string;
   updatedAt: string;
+  trashedAt: string | null;
 };
 
 export type FormResponse = {
@@ -71,7 +72,8 @@ export function createForm(title = "Untitled form"): TamishraForm {
       createField("short-text", "Question")
     ],
     createdAt: now,
-    updatedAt: now
+    updatedAt: now,
+    trashedAt: null
   };
 }
 
