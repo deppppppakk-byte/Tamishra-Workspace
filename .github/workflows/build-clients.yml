@@ -1,0 +1,109 @@
+name: Build Tamishra Clients
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  web:
+    name: Website
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build website
+        run: npm run build:web
+
+      - name: Upload website bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: tamishra-workspace-web
+          path: apps/web/out
+          if-no-files-found: error
+
+  windows:
+    name: Windows EXE and MSI
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable
+          rustup default stable
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Windows desktop app
+        run: npm run desktop:build
+
+      - name: Upload Windows packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: tamishra-workspace-windows
+          path: |
+            apps/desktop/src-tauri/target/release/*.exe
+            apps/desktop/src-tauri/target/release/bundle/**/*.exe
+            apps/desktop/src-tauri/target/release/bundle/**/*.msi
+          if-no-files-found: error
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build shared frontend
+        run: npm run build:web
+
+      - name: Create Android native project
+        working-directory: apps/mobile
+        run: npx cap add android
+
+      - name: Sync Android project
+        working-directory: apps/mobile
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: apps/mobile/android
+        run: ./gradlew assembleDebug
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tamishra-workspace-android
+          path: apps/mobile/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
