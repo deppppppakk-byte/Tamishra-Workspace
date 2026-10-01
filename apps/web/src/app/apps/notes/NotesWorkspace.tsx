@@ -5,6 +5,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createNote,
   createNotesSnapshot,
+  mergeNotesSnapshots,
+  normalizeNotesSnapshot,
   parseTamishraNote,
   searchNotes,
   serializeTamishraNote,
@@ -21,6 +23,10 @@ import {
 } from "@tamishra/file-core";
 import { consumeNativeFileHandoff } from "../../../lib/native-file-handoff";
 import { mutateWorkspaceFileIndex } from "../../../lib/workspace-files";
+import {
+  hydrateWorkspaceContent,
+  pushWorkspaceContent
+} from "../../../lib/workspace-content-sync";
 import styles from "./notes.module.css";
 
 const STORAGE_KEY = "tamishra.notes.snapshot.v1";
@@ -170,7 +176,8 @@ export default function NotesWorkspace() {
   };
 
   useEffect(() => {
-    const restored = loadSnapshot();
+    let cancelled = false;
+    const restored = normalizeNotesSnapshot(loadSnapshot());
     setSnapshot(restored);
 
     const requestedId = new URLSearchParams(location.search).get("note");
@@ -182,7 +189,36 @@ export default function NotesWorkspace() {
       );
     }
 
-    setLoaded(true);
+    void hydrateWorkspaceContent(
+      "notes",
+      restored,
+      normalizeNotesSnapshot,
+      mergeNotesSnapshots
+    ).then((result) => {
+      if (cancelled) return;
+
+      setSnapshot((current) =>
+        mergeNotesSnapshots(current, result.state)
+      );
+
+      if (!requestedId) {
+        const first = result.state.notes.find((note) => !note.trashedAt);
+        if (first) setSelectedId((current) => current ?? first.id);
+      }
+
+      setStatus(
+        result.cloudAvailable
+          ? result.persistence === "postgres"
+            ? "Cloud synchronized"
+            : "Synced to session storage"
+          : "Local-first"
+      );
+      setLoaded(true);
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -268,7 +304,28 @@ export default function NotesWorkspace() {
         return next;
       });
 
-      setStatus("Saved locally");
+      void pushWorkspaceContent(
+        "notes",
+        snapshot,
+        normalizeNotesSnapshot,
+        mergeNotesSnapshots
+      ).then((result) => {
+        if (result.cloudAvailable) {
+          setStatus(
+            result.persistence === "postgres"
+              ? "Saved · cloud synchronized"
+              : "Saved · session synchronized"
+          );
+        } else {
+          setStatus("Saved locally");
+        }
+
+        const merged = normalizeNotesSnapshot(result.state);
+        if (JSON.stringify(merged) !== JSON.stringify(snapshot)) {
+          setSnapshot(merged);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+        }
+      });
     }, 450);
 
     return () => window.clearTimeout(timer);
