@@ -118,6 +118,7 @@ export function MailWorkspace() {
   const [selectedId, setSelectedId] = useState(seedMessages[0].id);
   const [checked, setChecked] = useState<string[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
+  const [mobileReading, setMobileReading] = useState(false);
   const [compose, setCompose] = useState({ to: "", subject: "", body: "" });
   const [notice, setNotice] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
@@ -176,10 +177,12 @@ export function MailWorkspace() {
     setFolder(nextFolder);
     setChecked([]);
     setSelectedId("");
+    setMobileReading(false);
   }
 
   function openMessage(id: string) {
     setSelectedId(id);
+    setMobileReading(true);
     setMessages((current) =>
       current.map((message) => (message.id === id ? { ...message, read: true } : message))
     );
@@ -372,7 +375,7 @@ export function MailWorkspace() {
         </div>
 
         <div className={styles.mailLayout}>
-          <section className={styles.listPane}>
+          <section className={[styles.listPane, mobileReading ? styles.listMobileHidden : ""].join(" ")}>
             <div className={styles.listHeader}>
               <div>
                 <p>{folder === "starred" ? "Starred" : folder[0].toUpperCase() + folder.slice(1)}</p>
@@ -446,10 +449,18 @@ export function MailWorkspace() {
             </div>
           </section>
 
-          <section className={styles.readerPane}>
+          <section className={[styles.readerPane, mobileReading ? styles.readerMobileOpen : ""].join(" ")}>
             {activeMessage ? (
               <>
                 <div className={styles.readerToolbar}>
+                  <button
+                    className={styles.mobileBack}
+                    type="button"
+                    onClick={() => setMobileReading(false)}
+                    aria-label="Back to message list"
+                  >
+                    ←
+                  </button>
                   <button type="button" onClick={() => moveMessage(activeMessage.id, "archive")} aria-label="Archive message">□</button>
                   <button
                     type="button"
