@@ -40,7 +40,7 @@ const seedMessages: MailMessage[] = [
     id: "m-102",
     folder: "inbox",
     from: "Tamishra Workspace",
-    address: "updates@tamishra.local",
+    address: "updates@patra.in",
     subject: "Your workspace foundation is ready",
     preview: "Mail, chat, meetings, notes and forms now share one product shell...",
     body: "Welcome to Tamishra Workspace.\n\nThis inbox is running in local demo mode. External delivery will be enabled through provider adapters, so the interface does not depend on one email service.",
@@ -81,7 +81,7 @@ const seedMessages: MailMessage[] = [
     id: "m-105",
     folder: "sent",
     from: "You",
-    address: "you@tamishra.local",
+    address: "you@patra.in",
     subject: "Re: Project schedule",
     preview: "The updated schedule works for me. I have marked the review checkpoints...",
     body: "The updated schedule works for me. I have marked the review checkpoints and dependencies in the shared plan.",
@@ -288,7 +288,7 @@ export function MailWorkspace() {
     setMessages((current) => [sent, ...current]);
     setCompose({ to: "", subject: "", body: "" });
     setComposeOpen(false);
-    setNotice("Saved to Sent locally — connect a mail provider for external delivery");
+    setNotice("Saved to Sent locally — Patra delivery will use your @patra.in mailbox");
     window.setTimeout(() => setNotice(""), 3600);
   }
 
@@ -571,7 +571,7 @@ export function MailWorkspace() {
             <input
               value={compose.to}
               onChange={(event) => setCompose((current) => ({ ...current, to: event.target.value }))}
-              placeholder="name@example.com"
+              placeholder="name@patra.in"
             />
           </label>
           <label>
