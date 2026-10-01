@@ -978,21 +978,22 @@ export function MeetRoomClient() {
                         <strong>✋ {signal.displayName}</strong>
                         <small>Waiting to speak</small>
                       </div>
-                      {isHost && (
-                        <div>
-                          <button
-                            className={styles.denyButton}
-                            onClick={() =>
-                              void moderateParticipant(
-                                signal.participantId,
-                                "clear-hand"
-                              )
-                            }
-                          >
-                            Clear
-                          </button>
-                        </div>
-                      )}
+                      {isHost &&
+                        signal.participantId !== context.participantId && (
+                          <div>
+                            <button
+                              className={styles.denyButton}
+                              onClick={() =>
+                                void moderateParticipant(
+                                  signal.participantId,
+                                  "clear-hand"
+                                )
+                              }
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        )}
                     </article>
                   ))}
                 </div>
