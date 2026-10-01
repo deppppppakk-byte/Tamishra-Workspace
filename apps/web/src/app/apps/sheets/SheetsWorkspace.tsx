@@ -30,22 +30,26 @@ import {
   worksheetToCsv,
   type CellRange,
   type CellStyle,
-  type Workbook
+  type Workbook,
+  type Worksheet
 } from "@tamishra/sheets-engine";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createBlock,
   liveBlocksForSource,
   refreshLiveBlock,
-  upsertBlock
+  upsertBlock,
+  type TamishraBlock
 } from "@tamishra/blocks-core";
 import { upsertWorkspaceFile } from "@tamishra/file-core";
 import { consumeNativeFileHandoff } from "../../../lib/native-file-handoff";
 import { mutateWorkspaceFileIndex } from "../../../lib/workspace-files";
 import {
+  consumeBlockHandoff,
   loadWorkspaceBlockShelf,
   mutateWorkspaceBlockShelf,
-  saveWorkspaceBlockShelf
+  saveWorkspaceBlockShelf,
+  subscribeWorkspaceBlocks
 } from "../../../lib/workspace-blocks";
 import styles from "./sheets.module.css";
 
@@ -139,6 +143,83 @@ function displayMatrixForRange(
     matrix.push(values);
   }
   return matrix;
+}
+
+function populateWorksheetFromMatrix(
+  sheet: Worksheet,
+  matrix: string[][]
+) {
+  sheet.cells = {};
+  applyMatrixToSheet(sheet, "A1", matrix);
+
+  const header = matrix[0] ?? [];
+  header.forEach((_, colIndex) => {
+    const address = cellAddress(0, colIndex);
+    const cell = sheet.cells[address];
+    if (!cell) return;
+    sheet.cells[address] = {
+      ...cell,
+      style: {
+        ...cell.style,
+        bold: true,
+        fill: "#ece9ff",
+        color: "#29235c"
+      }
+    };
+  });
+  sheet.frozenRows = matrix.length ? 1 : 0;
+}
+
+function tablePayload(block: TamishraBlock) {
+  if (
+    block.kind !== "table" ||
+    !block.payload ||
+    typeof block.payload !== "object"
+  ) {
+    return null;
+  }
+
+  const payload = block.payload as {
+    tableData?: string[][];
+    sourceLabel?: string;
+    formId?: string;
+  };
+
+  if (!Array.isArray(payload.tableData)) return null;
+  return payload;
+}
+
+function workbookFromTableBlock(block: TamishraBlock) {
+  const payload = tablePayload(block);
+  if (!payload) return null;
+
+  const workbook = createWorkbook(
+    block.binding?.source.app === "forms"
+      ? block.title.replace(/\s*·\s*Responses$/i, "") + " · Live responses"
+      : block.title
+  );
+  const sheet = workbook.sheets[0];
+  sheet.name =
+    block.binding?.source.app === "forms" ? "Responses" : "Block data";
+  populateWorksheetFromMatrix(sheet, payload.tableData);
+
+  if (block.binding?.mode === "live" && block.binding.source.app === "forms") {
+    workbook.id = "forms-results-" + block.binding.source.resourceId;
+    workbook.liveBindings = [
+      {
+        id: "form-results:" + block.id,
+        kind: "form-results",
+        sourceApp: "forms",
+        sourceResourceId: block.binding.source.resourceId,
+        blockId: block.id,
+        blockVersion: block.version,
+        sheetId: sheet.id,
+        lastSyncedAt: block.binding.lastSyncedAt
+      }
+    ];
+  }
+
+  return workbook;
 }
 
 function chartPayloadForRange(
@@ -294,6 +375,71 @@ export default function SheetsWorkspace() {
         setSaveState("Workspace file could not be opened");
       });
   }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+
+    const block = consumeBlockHandoff("sheets");
+    if (!block) return;
+
+    const linkedWorkbook = workbookFromTableBlock(block);
+    if (!linkedWorkbook) {
+      setSaveState("This Block type is not supported in Sheets yet");
+      return;
+    }
+
+    setWorkbook(linkedWorkbook);
+    setSelection({ anchor: "A1", focus: "A1" });
+    setSaveState(
+      linkedWorkbook.liveBindings?.length
+        ? "Live Forms results connected"
+        : "Workspace Block opened"
+    );
+  }, [loaded]);
+
+  useEffect(() => {
+    if (!loaded) return;
+
+    const refresh = () => {
+      const shelf = loadWorkspaceBlockShelf();
+      const byId = new Map(shelf.blocks.map((block) => [block.id, block]));
+
+      setWorkbook((current) => {
+        if (!current.liveBindings?.length) return current;
+
+        const next = cloneWorkbook(current);
+        let changed = false;
+
+        next.liveBindings = (next.liveBindings ?? []).map((binding) => {
+          const block = byId.get(binding.blockId);
+          if (!block || block.version <= binding.blockVersion) return binding;
+
+          const payload = tablePayload(block);
+          const sheet = next.sheets.find((item) => item.id === binding.sheetId);
+          if (!payload || !sheet) return binding;
+
+          populateWorksheetFromMatrix(sheet, payload.tableData);
+          changed = true;
+          return {
+            ...binding,
+            blockVersion: block.version,
+            lastSyncedAt:
+              block.binding?.lastSyncedAt ?? new Date().toISOString()
+          };
+        });
+
+        if (!changed) return current;
+        next.version = current.version + 1;
+        next.updatedAt = new Date().toISOString();
+        next.activeSheetId =
+          next.liveBindings[0]?.sheetId ?? next.activeSheetId;
+        return next;
+      });
+    };
+
+    refresh();
+    return subscribeWorkspaceBlocks(refresh);
+  }, [loaded]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
@@ -1001,6 +1147,11 @@ export default function SheetsWorkspace() {
               }
             >
               {saveState}
+              {workbook.liveBindings?.some(
+                (binding) => binding.kind === "form-results"
+              )
+                ? " · Live Forms"
+                : ""}
             </span>
           </div>
           <div className={styles.menuRow}>
