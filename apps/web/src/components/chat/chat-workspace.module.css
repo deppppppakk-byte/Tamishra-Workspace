@@ -871,3 +871,423 @@
   .messageScroll { padding-top: 10px; }
   .composerHint { display: none; }
 }
+
+
+.hiddenInput {
+  display: none;
+}
+
+.sidebarHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.realtimeState {
+  margin-top: 3px;
+  color: #8a94a5;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.realtimeState i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #a8b0be;
+  box-shadow: 0 0 0 3px rgba(168, 176, 190, 0.12);
+}
+
+.realtimeState[data-state="live"] i {
+  background: #1c9a67;
+  box-shadow: 0 0 0 3px rgba(28, 154, 103, 0.13);
+}
+
+.realtimeState[data-state="connecting"] i {
+  background: #d8992b;
+  box-shadow: 0 0 0 3px rgba(216, 153, 43, 0.13);
+}
+
+.notificationButton {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(24, 32, 51, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.76);
+  color: #505c70;
+  cursor: pointer;
+}
+
+.notificationButton > span {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 99px;
+  background: #674dc4;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 7px;
+  font-weight: 850;
+}
+
+.notificationPanel {
+  margin: 0 12px 10px;
+  border: 1px solid rgba(24, 32, 51, 0.08);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 14px 35px rgba(38, 47, 68, 0.08);
+  overflow: hidden;
+}
+
+.notificationPanel > header {
+  padding: 10px 11px;
+  border-bottom: 1px solid rgba(24, 32, 51, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.notificationPanel header strong,
+.notificationPanel header span {
+  display: block;
+}
+
+.notificationPanel header strong {
+  font-size: 10px;
+}
+
+.notificationPanel header span {
+  margin-top: 2px;
+  color: #929cab;
+  font-size: 8px;
+}
+
+.notificationPanel header button {
+  border: 0;
+  background: transparent;
+  color: #684fc5;
+  font-size: 8px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.notificationList {
+  max-height: 250px;
+  overflow: auto;
+}
+
+.notificationItem {
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-bottom: 1px solid rgba(24, 32, 51, 0.055);
+  background: #fff;
+  color: inherit;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.notificationUnread {
+  background: rgba(104, 79, 197, 0.055);
+}
+
+.notificationGlyph {
+  width: 26px;
+  height: 26px;
+  border-radius: 9px;
+  background: #ece8fc;
+  color: #654bc5;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.notificationItem strong,
+.notificationItem p,
+.notificationItem small {
+  display: block;
+}
+
+.notificationItem strong {
+  font-size: 9px;
+}
+
+.notificationItem p {
+  margin: 3px 0 0;
+  color: #697487;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.notificationItem small {
+  margin-top: 4px;
+  color: #9aa3b1;
+  font-size: 7px;
+}
+
+.notificationEmpty {
+  padding: 18px 10px;
+  color: #969faf;
+  text-align: center;
+  font-size: 9px;
+}
+
+.pinGlyph {
+  margin-right: 4px;
+  color: #7155cf;
+  font-size: 7px;
+}
+
+.controlButton,
+.controlActive {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(24, 32, 51, 0.08);
+  border-radius: 10px;
+  background: #fff;
+  color: #7a8494;
+  cursor: pointer;
+}
+
+.controlActive {
+  border-color: rgba(104, 79, 197, 0.2);
+  background: rgba(104, 79, 197, 0.09);
+  color: #6248c3;
+}
+
+.attachments {
+  margin-top: 7px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 6px;
+}
+
+.attachmentCard {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid rgba(24, 32, 51, 0.08);
+  border-radius: 10px;
+  background: rgba(248, 249, 252, 0.92);
+  color: inherit;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+}
+
+.attachmentIcon {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: #ebe7fb;
+  color: #674dc4;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+}
+
+.attachmentCard strong,
+.attachmentCard small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachmentCard strong {
+  font-size: 9px;
+}
+
+.attachmentCard small {
+  margin-top: 2px;
+  color: #929baa;
+  font-size: 7px;
+}
+
+.composerZone {
+  position: relative;
+}
+
+.typingIndicator {
+  min-height: 22px;
+  margin: 0 18px 4px;
+  color: #7d8797;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 8px;
+}
+
+.typingIndicator > span {
+  color: #674dc4;
+  letter-spacing: 0.12em;
+}
+
+.mentionMenu {
+  position: absolute;
+  z-index: 20;
+  left: 10px;
+  right: 10px;
+  bottom: calc(100% - 2px);
+  padding: 5px;
+  border: 1px solid rgba(24, 32, 51, 0.08);
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(32, 40, 60, 0.12);
+}
+
+.mentionMenu > button {
+  width: 100%;
+  padding: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mentionMenu > button:hover {
+  background: #f7f5ff;
+}
+
+.mentionMenu strong,
+.mentionMenu small {
+  display: block;
+}
+
+.mentionMenu strong {
+  font-size: 9px;
+}
+
+.mentionMenu small {
+  margin-top: 2px;
+  color: #9099a8;
+  font-size: 7px;
+}
+
+.pendingFiles {
+  padding: 8px 10px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.pendingFiles > span {
+  min-height: 25px;
+  padding: 0 4px 0 8px;
+  border: 1px solid rgba(104, 79, 197, 0.13);
+  border-radius: 8px;
+  background: rgba(104, 79, 197, 0.055);
+  color: #5e4bad;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 8px;
+}
+
+.pendingFiles button {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #7d6cb9;
+  cursor: pointer;
+}
+
+.attachButton,
+.threadAttachButton {
+  min-height: 28px !important;
+  margin: 0 !important;
+  padding: 0 9px !important;
+  border: 1px solid rgba(24, 32, 51, 0.08) !important;
+  border-radius: 8px !important;
+  background: #fff !important;
+  color: #697386 !important;
+  font-size: 8px !important;
+}
+
+.threadComposer {
+  position: relative;
+}
+
+.threadComposerActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.threadComposerActions > button:last-child {
+  margin-left: auto;
+}
+
+.memberPresenceList {
+  width: 100%;
+  max-height: 260px;
+  margin-top: 10px;
+  overflow: auto;
+  display: grid;
+  gap: 5px;
+}
+
+.memberPresenceList > div {
+  padding: 8px 9px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.7);
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  text-align: left;
+}
+
+.memberPresenceList strong,
+.memberPresenceList small {
+  display: block;
+}
+
+.memberPresenceList strong {
+  color: #4d586a;
+  font-size: 9px;
+}
+
+.memberPresenceList small {
+  margin-top: 2px;
+  color: #939cac;
+  font-size: 7px;
+}
+
+.presenceDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 99px;
+  background: #b8c0cc;
+}
+
+.presenceDot[data-status="online"] {
+  background: #1c9a67;
+}
+
+.presenceDot[data-status="away"] {
+  background: #d79b2d;
+}

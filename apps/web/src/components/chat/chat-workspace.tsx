@@ -1,15 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type {
+  ChatAttachment,
   ChatConversation,
+  ChatEvent,
+  ChatMember,
   ChatMessage,
-  ChatSearchResult
+  ChatNotification,
+  ChatPresence,
+  ChatSearchResult,
+  ChatTypingState
 } from "@tamishra/chat-core";
 import {
   workspaceApi,
+  workspaceApiBase,
   type WorkspaceSessionResponse
 } from "../../lib/workspace-api";
 import styles from "./chat-workspace.module.css";
@@ -30,6 +37,8 @@ type DirectoryMember = {
 type CreateMode = "channel" | "group" | "direct";
 
 const quickReactions = ["👍", "✅", "❤️"];
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_ATTACHMENTS = 10;
 
 function formatTime(value: string) {
   const date = new Date(value);
@@ -38,6 +47,13 @@ function formatTime(value: string) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(date);
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  if (value < 1024) return Math.round(value) + " B";
+  if (value < 1024 * 1024) return (value / 1024).toFixed(1) + " KB";
+  return (value / (1024 * 1024)).toFixed(1) + " MB";
 }
 
 function conversationIcon(conversation: ChatConversation) {
@@ -51,6 +67,20 @@ function conversationTitle(conversation: ChatConversation) {
   if (conversation.kind === "direct") return "Direct message";
   if (conversation.kind === "group") return "Group chat";
   return "Channel";
+}
+
+function findMentionIds(
+  value: string,
+  directory: DirectoryMember[],
+  allowedIds: Set<string>
+) {
+  const lower = value.toLowerCase();
+  return directory
+    .filter((member) => allowedIds.has(member.user.id))
+    .filter((member) =>
+      lower.includes("@" + member.user.displayName.toLowerCase())
+    )
+    .map((member) => member.user.id);
 }
 
 export function ChatWorkspace() {
@@ -73,6 +103,19 @@ export function ChatWorkspace() {
   const [createName, setCreateName] = useState("");
   const [createTopic, setCreateTopic] = useState("");
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+  const [conversationMembers, setConversationMembers] = useState<ChatMember[]>([]);
+  const [notifications, setNotifications] = useState<ChatNotification[]>([]);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [presence, setPresence] = useState<ChatPresence[]>([]);
+  const [typing, setTyping] = useState<ChatTypingState[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [threadFiles, setThreadFiles] = useState<File[]>([]);
+  const [realtimeStatus, setRealtimeStatus] = useState<"connecting" | "live" | "offline">("connecting");
+  const mainFileInputRef = useRef<HTMLInputElement>(null);
+  const threadFileInputRef = useRef<HTMLInputElement>(null);
+  const typingLastSentRef = useRef(0);
+  const typingStopTimerRef = useRef<number | null>(null);
+  const eventCursorRef = useRef("0");
 
   const currentUser = session?.authenticated ? session.user : null;
   const memberships = session?.authenticated ? session.memberships : [];
@@ -88,19 +131,121 @@ export function ChatWorkspace() {
     () => messages.filter((message) => !message.parentMessageId),
     [messages]
   );
+  const unreadNotificationCount = useMemo(
+    () => notifications.filter((notification) => !notification.readAt).length,
+    [notifications]
+  );
+  const activeMemberIds = useMemo(
+    () => new Set(conversationMembers.map((member) => member.userId)),
+    [conversationMembers]
+  );
+  const presenceByUser = useMemo(
+    () => new Map(presence.map((item) => [item.userId, item])),
+    [presence]
+  );
+  const mainMentionSuggestions = useMemo(
+    () => mentionSuggestions(composer),
+    [composer, directory, activeMemberIds]
+  );
+  const threadMentionSuggestions = useMemo(
+    () => mentionSuggestions(threadComposer),
+    [threadComposer, directory, activeMemberIds]
+  );
+
+  function mentionSuggestions(value: string) {
+    const match = value.match(/(?:^|\s)@([^\s@]{0,40})$/);
+    if (!match) return [] as DirectoryMember[];
+    const query = match[1].toLowerCase();
+    return directory
+      .filter((member) => activeMemberIds.has(member.user.id))
+      .filter((member) => member.user.id !== currentUser?.id)
+      .filter(
+        (member) =>
+          !query || member.user.displayName.toLowerCase().includes(query)
+      )
+      .slice(0, 6);
+  }
+
+  function insertMention(
+    member: DirectoryMember,
+    target: "main" | "thread"
+  ) {
+    const setter = target === "main" ? setComposer : setThreadComposer;
+    setter((current) =>
+      current.replace(
+        /(?:^|\s)@([^\s@]{0,40})$/,
+        (matched) =>
+          (matched.startsWith(" ") ? " " : "") +
+          "@" +
+          member.user.displayName +
+          " "
+      )
+    );
+  }
+
 
   useEffect(() => {
     void initialize();
   }, []);
 
   useEffect(() => {
-    if (!activeConversationId || !organizationId) return;
-    const timer = window.setInterval(() => {
-      void refreshMessages(activeConversationId, false);
+    if (!organizationId || !currentUser) return;
+
+    setRealtimeStatus("connecting");
+    const source = new EventSource(
+      workspaceApiBase +
+        "/v1/chat/events?organizationId=" +
+        encodeURIComponent(organizationId) +
+        "&after=" +
+        encodeURIComponent(eventCursorRef.current),
+      { withCredentials: true }
+    );
+
+    source.onopen = () => setRealtimeStatus("live");
+    source.onerror = () => setRealtimeStatus("offline");
+    source.addEventListener("chat", (event) => {
+      try {
+        const chatEvent = JSON.parse((event as MessageEvent).data) as ChatEvent;
+        eventCursorRef.current = chatEvent.id;
+        void handleRealtimeEvent(chatEvent);
+      } catch {
+        // Ignore malformed event frames; EventSource will continue.
+      }
+    });
+
+    const recoveryTimer = window.setInterval(() => {
       void loadConversations(organizationId, activeConversationId, false);
-    }, 5000);
+      void loadNotifications(organizationId);
+      void loadPresence(organizationId);
+      if (activeConversationId) {
+        void refreshMessages(activeConversationId, false);
+        void loadTyping(activeConversationId);
+      }
+    }, 30_000);
+
+    return () => {
+      source.close();
+      window.clearInterval(recoveryTimer);
+    };
+  }, [organizationId, currentUser?.id, activeConversationId]);
+
+  useEffect(() => {
+    if (!organizationId || !currentUser) return;
+    void heartbeatPresence(organizationId);
+    const timer = window.setInterval(
+      () => void heartbeatPresence(organizationId),
+      30_000
+    );
     return () => window.clearInterval(timer);
-  }, [activeConversationId, organizationId]);
+  }, [organizationId, currentUser?.id]);
+
+  useEffect(() => {
+    return () => {
+      if (typingStopTimerRef.current) {
+        window.clearTimeout(typingStopTimerRef.current);
+      }
+    };
+  }, []);
 
   async function initialize() {
     setLoading(true);
@@ -114,7 +259,10 @@ export function ChatWorkspace() {
       if (firstOrganization) {
         await Promise.all([
           loadDirectory(firstOrganization),
-          loadConversations(firstOrganization)
+          loadConversations(firstOrganization),
+          loadNotifications(firstOrganization),
+          loadPresence(firstOrganization),
+          heartbeatPresence(firstOrganization)
         ]);
       }
     } catch (caught) {
@@ -131,6 +279,169 @@ export function ChatWorkspace() {
         "/members"
     );
     setDirectory(response.members);
+  }
+
+  async function loadNotifications(nextOrganizationId: string) {
+    const response = await workspaceApi<{ notifications: ChatNotification[] }>(
+      "/v1/chat/notifications?organizationId=" +
+        encodeURIComponent(nextOrganizationId)
+    );
+    setNotifications(response.notifications);
+  }
+
+  async function loadPresence(nextOrganizationId: string) {
+    const response = await workspaceApi<{ presence: ChatPresence[] }>(
+      "/v1/chat/presence?organizationId=" +
+        encodeURIComponent(nextOrganizationId)
+    );
+    setPresence(response.presence);
+  }
+
+  async function heartbeatPresence(nextOrganizationId: string) {
+    await workspaceApi("/v1/chat/presence", {
+      method: "POST",
+      body: JSON.stringify({ organizationId: nextOrganizationId })
+    }).catch(() => undefined);
+  }
+
+  async function loadConversationMembers(conversationId: string) {
+    const response = await workspaceApi<{ members: ChatMember[] }>(
+      "/v1/chat/conversations/" +
+        encodeURIComponent(conversationId) +
+        "/members"
+    );
+    setConversationMembers(response.members);
+  }
+
+  async function loadTyping(conversationId: string) {
+    const response = await workspaceApi<{ typing: ChatTypingState[] }>(
+      "/v1/chat/conversations/" +
+        encodeURIComponent(conversationId) +
+        "/typing"
+    );
+    setTyping(response.typing);
+  }
+
+  async function handleRealtimeEvent(event: ChatEvent) {
+    if (event.type === "notification.created") {
+      await loadNotifications(organizationId);
+    }
+    if (event.type === "presence.changed") {
+      await loadPresence(organizationId);
+    }
+    if (event.type === "typing.changed" && activeConversationId) {
+      await loadTyping(activeConversationId);
+      return;
+    }
+    await loadConversations(organizationId, activeConversationId, false);
+    if (
+      activeConversationId &&
+      (!event.conversationId || event.conversationId === activeConversationId)
+    ) {
+      await Promise.all([
+        refreshMessages(activeConversationId, false),
+        loadConversationMembers(activeConversationId),
+        loadTyping(activeConversationId)
+      ]);
+    }
+  }
+
+  async function sendTyping(active: boolean) {
+    if (!activeConversationId) return;
+    const now = Date.now();
+    if (active && now - typingLastSentRef.current < 1500) return;
+    if (active) typingLastSentRef.current = now;
+    await workspaceApi(
+      "/v1/chat/conversations/" +
+        encodeURIComponent(activeConversationId) +
+        "/typing",
+      {
+        method: "POST",
+        body: JSON.stringify({ active })
+      }
+    ).catch(() => undefined);
+  }
+
+  function noteTyping(value: string) {
+    void sendTyping(Boolean(value.trim()));
+    if (typingStopTimerRef.current) {
+      window.clearTimeout(typingStopTimerRef.current);
+    }
+    typingStopTimerRef.current = window.setTimeout(() => {
+      void sendTyping(false);
+    }, 3500);
+  }
+
+  async function uploadFiles(files: File[]) {
+    if (!activeConversationId) return [] as ChatAttachment[];
+    const uploaded: ChatAttachment[] = [];
+    for (const file of files.slice(0, MAX_ATTACHMENTS)) {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        throw new Error(file.name + " exceeds the 10 MB Chat limit.");
+      }
+      const response = await fetch(
+        workspaceApiBase +
+          "/v1/chat/conversations/" +
+          encodeURIComponent(activeConversationId) +
+          "/files?name=" +
+          encodeURIComponent(file.name),
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "content-type": file.type || "application/octet-stream"
+          },
+          body: file
+        }
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          typeof body?.error === "string" ? body.error : "file_upload_failed"
+        );
+      }
+      uploaded.push(body.attachment as ChatAttachment);
+    }
+    return uploaded;
+  }
+
+  async function updateConversationSetting(
+    setting: "muted" | "pinned",
+    value: boolean
+  ) {
+    if (!activeConversationId) return;
+    await workspaceApi(
+      "/v1/chat/conversations/" +
+        encodeURIComponent(activeConversationId) +
+        "/settings",
+      {
+        method: "PATCH",
+        body: JSON.stringify({ [setting]: value })
+      }
+    );
+    await loadConversations(organizationId, activeConversationId, false);
+  }
+
+  async function openNotification(notification: ChatNotification) {
+    if (!notification.readAt) {
+      await workspaceApi(
+        "/v1/chat/notifications/" +
+          encodeURIComponent(notification.id) +
+          "/read",
+        { method: "POST", body: "{}" }
+      ).catch(() => undefined);
+    }
+    setNotificationsOpen(false);
+    await openConversation(notification.conversationId);
+    await loadNotifications(organizationId);
+  }
+
+  async function markAllNotificationsRead() {
+    await workspaceApi("/v1/chat/notifications/read-all", {
+      method: "POST",
+      body: JSON.stringify({ organizationId })
+    });
+    await loadNotifications(organizationId);
   }
 
   async function loadConversations(
@@ -156,7 +467,11 @@ export function ChatWorkspace() {
 
       if (nextActive && nextActive !== activeConversationId) {
         setActiveConversationId(nextActive);
-        await refreshMessages(nextActive);
+        await Promise.all([
+          refreshMessages(nextActive),
+          loadConversationMembers(nextActive),
+          loadTyping(nextActive)
+        ]);
       } else if (!nextActive) {
         setActiveConversationId("");
         setMessages([]);
@@ -188,6 +503,7 @@ export function ChatWorkspace() {
   }
 
   async function changeOrganization(nextOrganizationId: string) {
+    eventCursorRef.current = "0";
     setOrganizationId(nextOrganizationId);
     setActiveConversationId("");
     setMessages([]);
@@ -197,7 +513,10 @@ export function ChatWorkspace() {
     try {
       await Promise.all([
         loadDirectory(nextOrganizationId),
-        loadConversations(nextOrganizationId)
+        loadConversations(nextOrganizationId),
+        loadNotifications(nextOrganizationId),
+        loadPresence(nextOrganizationId),
+        heartbeatPresence(nextOrganizationId)
       ]);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to change workspace.");
@@ -210,7 +529,11 @@ export function ChatWorkspace() {
     setSearchResults(null);
     setError("");
     try {
-      await refreshMessages(conversationId);
+      await Promise.all([
+        refreshMessages(conversationId),
+        loadConversationMembers(conversationId),
+        loadTyping(conversationId)
+      ]);
       await loadConversations(organizationId, conversationId, false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to load conversation.");
@@ -224,22 +547,40 @@ export function ChatWorkspace() {
     event.preventDefault();
     if (!activeConversationId || sending) return;
     const body = (parentMessageId ? threadComposer : composer).trim();
-    if (!body) return;
+    const files = parentMessageId ? threadFiles : pendingFiles;
+    if (!body && !files.length) return;
 
     setSending(true);
     setError("");
     try {
+      const attachments = await uploadFiles(files);
+      const mentions = findMentionIds(
+        body,
+        directory,
+        activeMemberIds
+      );
       await workspaceApi(
         "/v1/chat/conversations/" +
           encodeURIComponent(activeConversationId) +
           "/messages",
         {
           method: "POST",
-          body: JSON.stringify({ body, parentMessageId })
+          body: JSON.stringify({
+            body,
+            parentMessageId,
+            mentions,
+            attachments
+          })
         }
       );
-      if (parentMessageId) setThreadComposer("");
-      else setComposer("");
+      void sendTyping(false);
+      if (parentMessageId) {
+        setThreadComposer("");
+        setThreadFiles([]);
+      } else {
+        setComposer("");
+        setPendingFiles([]);
+      }
       await refreshMessages(activeConversationId);
       await loadConversations(organizationId, activeConversationId, false);
     } catch (caught) {
@@ -365,6 +706,28 @@ export function ChatWorkspace() {
 
   return (
     <main className={styles.shell}>
+      <input
+        ref={mainFileInputRef}
+        className={styles.hiddenInput}
+        type="file"
+        multiple
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []).slice(0, MAX_ATTACHMENTS);
+          setPendingFiles((current) => [...current, ...files].slice(0, MAX_ATTACHMENTS));
+          event.currentTarget.value = "";
+        }}
+      />
+      <input
+        ref={threadFileInputRef}
+        className={styles.hiddenInput}
+        type="file"
+        multiple
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []).slice(0, MAX_ATTACHMENTS);
+          setThreadFiles((current) => [...current, ...files].slice(0, MAX_ATTACHMENTS));
+          event.currentTarget.value = "";
+        }}
+      />
       <aside className={styles.rail}>
         <Link className={styles.brand} href="/" aria-label="Tamishra Workspace home">T</Link>
         <button className={styles.railActive} aria-label="Chat">◉</button>
@@ -381,14 +744,30 @@ export function ChatWorkspace() {
           <div>
             <span className={styles.kicker}>TAMISHRA</span>
             <strong>Chat</strong>
+            <span className={styles.realtimeState} data-state={realtimeStatus}>
+              <i />
+              {realtimeStatus === "live" ? "Live" : realtimeStatus === "connecting" ? "Connecting" : "Reconnecting"}
+            </span>
           </div>
-          <button
-            className={styles.iconButton}
-            onClick={() => setCreateOpen((open) => !open)}
-            aria-label="New conversation"
-          >
-            +
-          </button>
+          <div className={styles.sidebarHeaderActions}>
+            <button
+              className={styles.notificationButton}
+              onClick={() => setNotificationsOpen((open) => !open)}
+              aria-label="Notifications"
+            >
+              ◔
+              {unreadNotificationCount > 0 && (
+                <span>{Math.min(99, unreadNotificationCount)}</span>
+              )}
+            </button>
+            <button
+              className={styles.iconButton}
+              onClick={() => setCreateOpen((open) => !open)}
+              aria-label="New conversation"
+            >
+              +
+            </button>
+          </div>
         </div>
 
         {memberships.length > 1 ? (
@@ -421,6 +800,46 @@ export function ChatWorkspace() {
             aria-label="Search messages"
           />
         </form>
+
+        {notificationsOpen && (
+          <section className={styles.notificationPanel}>
+            <header>
+              <div>
+                <strong>Notifications</strong>
+                <span>{unreadNotificationCount} unread</span>
+              </div>
+              {unreadNotificationCount > 0 && (
+                <button onClick={() => void markAllNotificationsRead()}>
+                  Mark all read
+                </button>
+              )}
+            </header>
+            <div className={styles.notificationList}>
+              {notifications.map((notification) => (
+                <button
+                  key={notification.id}
+                  className={
+                    styles.notificationItem +
+                    (!notification.readAt ? " " + styles.notificationUnread : "")
+                  }
+                  onClick={() => void openNotification(notification)}
+                >
+                  <span className={styles.notificationGlyph}>
+                    {notification.kind === "mention" ? "@" : notification.kind === "thread" ? "↳" : "•"}
+                  </span>
+                  <span>
+                    <strong>{notification.title}</strong>
+                    <p>{notification.bodyPreview}</p>
+                    <small>{formatTime(notification.createdAt)}</small>
+                  </span>
+                </button>
+              ))}
+              {notifications.length === 0 && (
+                <div className={styles.notificationEmpty}>No notifications yet.</div>
+              )}
+            </div>
+          </section>
+        )}
 
         {createOpen && (
           <form className={styles.createCard} onSubmit={createConversation}>
@@ -528,7 +947,10 @@ export function ChatWorkspace() {
                   {conversationIcon(conversation)}
                 </span>
                 <span className={styles.conversationText}>
-                  <strong>{conversationTitle(conversation)}</strong>
+                  <strong>
+                    {conversation.pinned && <span className={styles.pinGlyph}>◆</span>}
+                    {conversationTitle(conversation)}
+                  </strong>
                   <small>
                     {conversation.kind === "channel"
                       ? conversation.topic || "Channel"
@@ -575,8 +997,25 @@ export function ChatWorkspace() {
                 </div>
               </div>
               <div className={styles.headerActions}>
+                <button
+                  className={activeConversation.pinned ? styles.controlActive : styles.controlButton}
+                  onClick={() =>
+                    void updateConversationSetting("pinned", !activeConversation.pinned)
+                  }
+                  aria-label={activeConversation.pinned ? "Unpin conversation" : "Pin conversation"}
+                >
+                  ◆
+                </button>
+                <button
+                  className={activeConversation.muted ? styles.controlActive : styles.controlButton}
+                  onClick={() =>
+                    void updateConversationSetting("muted", !activeConversation.muted)
+                  }
+                  aria-label={activeConversation.muted ? "Unmute conversation" : "Mute conversation"}
+                >
+                  {activeConversation.muted ? "◒" : "◉"}
+                </button>
                 <Link href="/apps/meet" className={styles.meetButton}>⌁ Start Meet</Link>
-                <button className={styles.iconButton} aria-label="Conversation details">ⓘ</button>
               </div>
             </header>
 
@@ -615,6 +1054,29 @@ export function ChatWorkspace() {
                         {message.editedAt && <span>edited</span>}
                       </div>
                       <p>{message.deletedAt ? "Message removed" : message.body}</p>
+                      {!message.deletedAt && message.attachments.length > 0 && (
+                        <div className={styles.attachments}>
+                          {message.attachments.map((attachment) => (
+                            <a
+                              key={attachment.id}
+                              className={styles.attachmentCard}
+                              href={
+                                workspaceApiBase +
+                                "/v1/chat/files/" +
+                                encodeURIComponent(attachment.fileId ?? attachment.id)
+                              }
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              <span className={styles.attachmentIcon}>↧</span>
+                              <span>
+                                <strong>{attachment.name}</strong>
+                                <small>{formatBytes(attachment.size)}</small>
+                              </span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
                       {!message.deletedAt && (
                         <div className={styles.messageFooter}>
                           {message.reactions.map((reaction) => (
@@ -652,26 +1114,87 @@ export function ChatWorkspace() {
               })}
             </div>
 
-            <form className={styles.composer} onSubmit={(event) => void sendMessage(event)}>
-              <textarea
-                value={composer}
-                onChange={(event) => setComposer(event.target.value)}
-                placeholder={"Message " + conversationTitle(activeConversation)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    event.currentTarget.form?.requestSubmit();
-                  }
-                }}
-                rows={1}
-              />
-              <div className={styles.composerBar}>
-                <span className={styles.composerHint}>Shift + Enter for a new line</span>
-                <button type="submit" disabled={sending || !composer.trim()}>
-                  {sending ? "Sending…" : "Send"}
-                </button>
-              </div>
-            </form>
+            <div className={styles.composerZone}>
+              {typing.length > 0 && (
+                <div className={styles.typingIndicator}>
+                  <span>•••</span>
+                  {typing.map((item) => item.displayName).join(", ")}
+                  {typing.length === 1 ? " is typing" : " are typing"}
+                </div>
+              )}
+              <form className={styles.composer} onSubmit={(event) => void sendMessage(event)}>
+                {mainMentionSuggestions.length > 0 && (
+                  <div className={styles.mentionMenu}>
+                    {mainMentionSuggestions.map((member) => (
+                      <button
+                        type="button"
+                        key={member.user.id}
+                        onClick={() => insertMention(member, "main")}
+                      >
+                        <span className={styles.personAvatar}>
+                          {member.user.displayName.slice(0, 2).toUpperCase()}
+                        </span>
+                        <span>
+                          <strong>{member.user.displayName}</strong>
+                          <small>{member.user.email}</small>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {pendingFiles.length > 0 && (
+                  <div className={styles.pendingFiles}>
+                    {pendingFiles.map((file, index) => (
+                      <span key={file.name + index}>
+                        {file.name}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPendingFiles((current) =>
+                              current.filter((_, itemIndex) => itemIndex !== index)
+                            )
+                          }
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <textarea
+                  value={composer}
+                  onChange={(event) => {
+                    setComposer(event.target.value);
+                    noteTyping(event.target.value);
+                  }}
+                  placeholder={"Message " + conversationTitle(activeConversation)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  rows={1}
+                />
+                <div className={styles.composerBar}>
+                  <button
+                    type="button"
+                    className={styles.attachButton}
+                    onClick={() => mainFileInputRef.current?.click()}
+                    aria-label="Attach files"
+                  >
+                    ＋ File
+                  </button>
+                  <span className={styles.composerHint}>Use @ to mention · Shift + Enter for new line</span>
+                  <button
+                    type="submit"
+                    disabled={sending || (!composer.trim() && pendingFiles.length === 0)}
+                  >
+                    {sending ? "Sending…" : "Send"}
+                  </button>
+                </div>
+              </form>
+            </div>
           </>
         ) : (
           <div className={styles.emptyMain}>
@@ -698,6 +1221,26 @@ export function ChatWorkspace() {
                 <strong>{threadRoot.authorDisplayName}</strong>
                 <time>{formatTime(threadRoot.createdAt)}</time>
                 <p>{threadRoot.body}</p>
+                {threadRoot.attachments.length > 0 && (
+                  <div className={styles.attachments}>
+                    {threadRoot.attachments.map((attachment) => (
+                      <a
+                        key={attachment.id}
+                        className={styles.attachmentCard}
+                        href={
+                          workspaceApiBase +
+                          "/v1/chat/files/" +
+                          encodeURIComponent(attachment.fileId ?? attachment.id)
+                        }
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <span className={styles.attachmentIcon}>↧</span>
+                        <span><strong>{attachment.name}</strong><small>{formatBytes(attachment.size)}</small></span>
+                      </a>
+                    ))}
+                  </div>
+                )}
               </article>
               {threadReplies.map((reply) => (
                 <article className={styles.threadReply} key={reply.id}>
@@ -708,6 +1251,26 @@ export function ChatWorkspace() {
                     <strong>{reply.authorDisplayName}</strong>
                     <time>{formatTime(reply.createdAt)}</time>
                     <p>{reply.body}</p>
+                    {reply.attachments.length > 0 && (
+                      <div className={styles.attachments}>
+                        {reply.attachments.map((attachment) => (
+                          <a
+                            key={attachment.id}
+                            className={styles.attachmentCard}
+                            href={
+                              workspaceApiBase +
+                              "/v1/chat/files/" +
+                              encodeURIComponent(attachment.fileId ?? attachment.id)
+                            }
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            <span className={styles.attachmentIcon}>↧</span>
+                            <span><strong>{attachment.name}</strong><small>{formatBytes(attachment.size)}</small></span>
+                          </a>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </article>
               ))}
@@ -716,15 +1279,63 @@ export function ChatWorkspace() {
               className={styles.threadComposer}
               onSubmit={(event) => void sendMessage(event, threadRoot.id)}
             >
+              {threadMentionSuggestions.length > 0 && (
+                <div className={styles.mentionMenu}>
+                  {threadMentionSuggestions.map((member) => (
+                    <button
+                      type="button"
+                      key={member.user.id}
+                      onClick={() => insertMention(member, "thread")}
+                    >
+                      <span className={styles.personAvatar}>
+                        {member.user.displayName.slice(0, 2).toUpperCase()}
+                      </span>
+                      <span><strong>{member.user.displayName}</strong><small>{member.user.email}</small></span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {threadFiles.length > 0 && (
+                <div className={styles.pendingFiles}>
+                  {threadFiles.map((file, index) => (
+                    <span key={file.name + index}>
+                      {file.name}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setThreadFiles((current) =>
+                            current.filter((_, itemIndex) => itemIndex !== index)
+                          )
+                        }
+                      >×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
               <textarea
                 rows={2}
                 value={threadComposer}
-                onChange={(event) => setThreadComposer(event.target.value)}
+                onChange={(event) => {
+                  setThreadComposer(event.target.value);
+                  noteTyping(event.target.value);
+                }}
                 placeholder="Reply in thread"
               />
-              <button type="submit" disabled={sending || !threadComposer.trim()}>
-                Reply
-              </button>
+              <div className={styles.threadComposerActions}>
+                <button
+                  type="button"
+                  className={styles.threadAttachButton}
+                  onClick={() => threadFileInputRef.current?.click()}
+                >
+                  ＋ File
+                </button>
+                <button
+                  type="submit"
+                  disabled={sending || (!threadComposer.trim() && threadFiles.length === 0)}
+                >
+                  Reply
+                </button>
+              </div>
             </form>
           </>
         ) : (
@@ -735,11 +1346,32 @@ export function ChatWorkspace() {
               Open a thread to keep focused replies separate from the main conversation.
             </p>
             {activeConversation && (
-              <div className={styles.detailStats}>
-                <div><span>Type</span><strong>{activeConversation.kind}</strong></div>
-                <div><span>Members</span><strong>{activeConversation.memberCount}</strong></div>
-                <div><span>Unread</span><strong>{activeConversation.unreadCount}</strong></div>
-              </div>
+              <>
+                <div className={styles.detailStats}>
+                  <div><span>Type</span><strong>{activeConversation.kind}</strong></div>
+                  <div><span>Members</span><strong>{activeConversation.memberCount}</strong></div>
+                  <div><span>Unread</span><strong>{activeConversation.unreadCount}</strong></div>
+                  <div><span>Notifications</span><strong>{activeConversation.muted ? "Muted" : "On"}</strong></div>
+                </div>
+                <div className={styles.memberPresenceList}>
+                  {conversationMembers.map((member) => {
+                    const person = directory.find((entry) => entry.user.id === member.userId);
+                    const personPresence = presenceByUser.get(member.userId);
+                    return (
+                      <div key={member.userId}>
+                        <span
+                          className={styles.presenceDot}
+                          data-status={personPresence?.status ?? "offline"}
+                        />
+                        <span>
+                          <strong>{person?.user.displayName ?? "Workspace member"}</strong>
+                          <small>{personPresence?.status ?? "offline"} · {member.role}</small>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
             )}
           </div>
         )}

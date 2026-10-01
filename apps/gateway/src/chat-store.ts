@@ -4,11 +4,17 @@ import type {
   ChatAttachment,
   ChatConversation,
   ChatConversationKind,
+  ChatEvent,
+  ChatEventType,
   ChatMember,
   ChatMemberRole,
   ChatMessage,
+  ChatNotification,
+  ChatNotificationKind,
+  ChatPresence,
   ChatReactionSummary,
-  ChatSearchResult
+  ChatSearchResult,
+  ChatTypingState
 } from "@tamishra/chat-core";
 
 type StoredReaction = {
@@ -37,6 +43,37 @@ type NewMessageInput = {
   attachments: ChatAttachment[];
 };
 
+export type StoredChatFile = {
+  id: string;
+  organizationId: string;
+  conversationId: string;
+  uploaderId: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  bytes: Buffer;
+  createdAt: string;
+};
+
+type AppendEventInput = {
+  organizationId: string;
+  conversationId?: string | null;
+  actorId?: string | null;
+  targetUserId?: string | null;
+  type: ChatEventType;
+  payload?: Record<string, unknown>;
+};
+
+type CreateNotificationInput = {
+  organizationId: string;
+  userId: string;
+  conversationId: string;
+  messageId: string;
+  kind: ChatNotificationKind;
+  title: string;
+  bodyPreview: string;
+};
+
 export interface ChatStore {
   readonly kind: "ephemeral-memory" | "postgres";
   ready(): Promise<void>;
@@ -58,6 +95,49 @@ export interface ChatStore {
   setRead(conversationId: string, userId: string, messageId?: string | null): Promise<ChatMember | null>;
   addReaction(messageId: string, userId: string, emoji: string): Promise<boolean>;
   removeReaction(messageId: string, userId: string, emoji: string): Promise<boolean>;
+  updateMemberSettings(
+    conversationId: string,
+    userId: string,
+    settings: { muted?: boolean; pinned?: boolean }
+  ): Promise<ChatMember | null>;
+  createFile(input: {
+    organizationId: string;
+    conversationId: string;
+    uploaderId: string;
+    name: string;
+    mimeType: string;
+    bytes: Buffer;
+  }): Promise<ChatAttachment>;
+  validateFiles(conversationId: string, fileIds: string[]): Promise<boolean>;
+  getFileForUser(fileId: string, userId: string): Promise<StoredChatFile | null>;
+  appendEvent(input: AppendEventInput): Promise<ChatEvent>;
+  listEvents(
+    organizationId: string,
+    userId: string,
+    afterId: string,
+    limit?: number
+  ): Promise<ChatEvent[]>;
+  createNotification(input: CreateNotificationInput): Promise<ChatNotification>;
+  listNotifications(
+    organizationId: string,
+    userId: string,
+    limit?: number
+  ): Promise<ChatNotification[]>;
+  markNotificationRead(notificationId: string, userId: string): Promise<boolean>;
+  markAllNotificationsRead(organizationId: string, userId: string): Promise<number>;
+  heartbeatPresence(
+    organizationId: string,
+    userId: string,
+    displayName: string
+  ): Promise<ChatPresence>;
+  listPresence(organizationId: string): Promise<ChatPresence[]>;
+  setTyping(
+    conversationId: string,
+    userId: string,
+    displayName: string,
+    active: boolean
+  ): Promise<ChatTypingState | null>;
+  listTyping(conversationId: string): Promise<ChatTypingState[]>;
   searchMessages(organizationId: string, userId: string, query: string): Promise<ChatSearchResult[]>;
 }
 
@@ -73,6 +153,28 @@ function iso(value: unknown) {
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+function normalizeJsonObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string") return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function presenceStatus(lastSeenAt: string): ChatPresence["status"] {
+  const age = Date.now() - Date.parse(lastSeenAt);
+  if (age <= 60_000) return "online";
+  if (age <= 5 * 60_000) return "away";
+  return "offline";
 }
 
 function normalizeJsonArray<T>(value: unknown): T[] {
@@ -117,6 +219,7 @@ function toConversation(row: Record<string, unknown>): ChatConversation {
     memberCount: Number(row.member_count ?? 0),
     unreadCount: Number(row.unread_count ?? 0),
     muted: Boolean(row.muted),
+    pinned: Boolean(row.pinned),
     lastReadAt: iso(row.last_read_at)
   };
 }
@@ -128,6 +231,7 @@ function toMember(row: Record<string, unknown>): ChatMember {
     role: String(row.role) as ChatMemberRole,
     joinedAt: iso(row.joined_at) ?? nowIso(),
     muted: Boolean(row.muted),
+    pinned: Boolean(row.pinned),
     lastReadMessageId: row.last_read_message_id ? String(row.last_read_message_id) : null,
     lastReadAt: iso(row.last_read_at)
   };
@@ -153,12 +257,66 @@ function toMessage(
   };
 }
 
+function toEvent(row: Record<string, unknown>): ChatEvent {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    conversationId: row.conversation_id ? String(row.conversation_id) : null,
+    actorId: row.actor_id ? String(row.actor_id) : null,
+    targetUserId: row.target_user_id ? String(row.target_user_id) : null,
+    type: String(row.type) as ChatEventType,
+    payload: normalizeJsonObject(row.payload),
+    createdAt: iso(row.created_at) ?? nowIso()
+  };
+}
+
+function toNotification(row: Record<string, unknown>): ChatNotification {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    userId: String(row.user_id),
+    conversationId: String(row.conversation_id),
+    messageId: String(row.message_id),
+    kind: String(row.kind) as ChatNotificationKind,
+    title: String(row.title ?? ""),
+    bodyPreview: String(row.body_preview ?? ""),
+    createdAt: iso(row.created_at) ?? nowIso(),
+    readAt: iso(row.read_at)
+  };
+}
+
+function toPresence(row: Record<string, unknown>): ChatPresence {
+  const lastSeenAt = iso(row.last_seen_at) ?? nowIso();
+  return {
+    organizationId: String(row.organization_id),
+    userId: String(row.user_id),
+    displayName: String(row.display_name ?? "Workspace member"),
+    status: presenceStatus(lastSeenAt),
+    lastSeenAt
+  };
+}
+
+function toTyping(row: Record<string, unknown>): ChatTypingState {
+  return {
+    conversationId: String(row.conversation_id),
+    userId: String(row.user_id),
+    displayName: String(row.display_name ?? "Workspace member"),
+    expiresAt: iso(row.expires_at) ?? nowIso()
+  };
+}
+
 class MemoryChatStore implements ChatStore {
   readonly kind = "ephemeral-memory" as const;
   private readonly conversations = new Map<string, ChatConversation>();
   private readonly members = new Map<string, ChatMember>();
   private readonly messages = new Map<string, ChatMessage>();
   private readonly reactions = new Map<string, StoredReaction>();
+  private readonly files = new Map<string, StoredChatFile>();
+  private readonly events: ChatEvent[] = [];
+  private eventSequence = 0;
+  private readonly notifications = new Map<string, ChatNotification>();
+  private readonly presence = new Map<string, ChatPresence>();
+  private readonly typing = new Map<string, ChatTypingState>();
 
   async ready() {}
 
@@ -189,6 +347,7 @@ class MemoryChatStore implements ChatStore {
       memberCount,
       unreadCount,
       muted: member.muted,
+      pinned: member.pinned,
       lastReadAt: member.lastReadAt
     };
   }
@@ -198,7 +357,10 @@ class MemoryChatStore implements ChatStore {
       .filter((conversation) => conversation.organizationId === organizationId)
       .map((conversation) => this.withUnread(conversation, userId))
       .filter((conversation): conversation is ChatConversation => Boolean(conversation))
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .sort((left, right) =>
+        Number(right.pinned) - Number(left.pinned) ||
+        right.updatedAt.localeCompare(left.updatedAt)
+      )
       .map(clone);
   }
 
@@ -224,6 +386,7 @@ class MemoryChatStore implements ChatStore {
       memberCount: 0,
       unreadCount: 0,
       muted: false,
+      pinned: false,
       lastReadAt: createdAt
     };
     this.conversations.set(id, conversation);
@@ -236,6 +399,7 @@ class MemoryChatStore implements ChatStore {
         role,
         joinedAt: createdAt,
         muted: false,
+        pinned: false,
         lastReadMessageId: null,
         lastReadAt: createdAt
       });
@@ -263,6 +427,7 @@ class MemoryChatStore implements ChatStore {
       role,
       joinedAt: nowIso(),
       muted: false,
+      pinned: false,
       lastReadMessageId: null,
       lastReadAt: null
     };
@@ -388,6 +553,215 @@ class MemoryChatStore implements ChatStore {
     return this.reactions.delete(this.reactionKey(messageId, userId, emoji));
   }
 
+  async updateMemberSettings(
+    conversationId: string,
+    userId: string,
+    settings: { muted?: boolean; pinned?: boolean }
+  ) {
+    const member = this.members.get(this.memberKey(conversationId, userId));
+    if (!member) return null;
+    if (typeof settings.muted === "boolean") member.muted = settings.muted;
+    if (typeof settings.pinned === "boolean") member.pinned = settings.pinned;
+    return clone(member);
+  }
+
+  async createFile(input: {
+    organizationId: string;
+    conversationId: string;
+    uploaderId: string;
+    name: string;
+    mimeType: string;
+    bytes: Buffer;
+  }) {
+    if (!this.members.has(this.memberKey(input.conversationId, input.uploaderId))) {
+      throw Object.assign(new Error("conversation_not_found"), { status: 404 });
+    }
+    const id = randomUUID();
+    const createdAt = nowIso();
+    this.files.set(id, {
+      id,
+      organizationId: input.organizationId,
+      conversationId: input.conversationId,
+      uploaderId: input.uploaderId,
+      name: input.name,
+      mimeType: input.mimeType,
+      size: input.bytes.byteLength,
+      bytes: Buffer.from(input.bytes),
+      createdAt
+    });
+    return {
+      id,
+      fileId: id,
+      name: input.name,
+      mimeType: input.mimeType,
+      size: input.bytes.byteLength
+    } satisfies ChatAttachment;
+  }
+
+  async validateFiles(conversationId: string, fileIds: string[]) {
+    return fileIds.every((fileId) => {
+      const file = this.files.get(fileId);
+      return file?.conversationId === conversationId;
+    });
+  }
+
+  async getFileForUser(fileId: string, userId: string) {
+    const file = this.files.get(fileId);
+    if (!file || !this.members.has(this.memberKey(file.conversationId, userId))) {
+      return null;
+    }
+    return { ...file, bytes: Buffer.from(file.bytes) };
+  }
+
+  async appendEvent(input: AppendEventInput) {
+    const event: ChatEvent = {
+      id: String(++this.eventSequence),
+      organizationId: input.organizationId,
+      conversationId: input.conversationId ?? null,
+      actorId: input.actorId ?? null,
+      targetUserId: input.targetUserId ?? null,
+      type: input.type,
+      payload: clone(input.payload ?? {}),
+      createdAt: nowIso()
+    };
+    this.events.push(event);
+    if (this.events.length > 5000) this.events.splice(0, this.events.length - 5000);
+    return clone(event);
+  }
+
+  async listEvents(
+    organizationId: string,
+    userId: string,
+    afterId: string,
+    limit = 100
+  ) {
+    const after = Number(afterId) || 0;
+    return this.events
+      .filter((event) => {
+        if (event.organizationId !== organizationId || Number(event.id) <= after) return false;
+        if (event.targetUserId && event.targetUserId !== userId) return false;
+        if (
+          event.conversationId &&
+          !this.members.has(this.memberKey(event.conversationId, userId))
+        ) return false;
+        return true;
+      })
+      .slice(0, Math.max(1, Math.min(250, limit)))
+      .map(clone);
+  }
+
+  async createNotification(input: CreateNotificationInput) {
+    const notification: ChatNotification = {
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      userId: input.userId,
+      conversationId: input.conversationId,
+      messageId: input.messageId,
+      kind: input.kind,
+      title: input.title,
+      bodyPreview: input.bodyPreview,
+      createdAt: nowIso(),
+      readAt: null
+    };
+    this.notifications.set(notification.id, notification);
+    return clone(notification);
+  }
+
+  async listNotifications(organizationId: string, userId: string, limit = 50) {
+    return Array.from(this.notifications.values())
+      .filter(
+        (notification) =>
+          notification.organizationId === organizationId &&
+          notification.userId === userId
+      )
+      .sort(
+        (left, right) =>
+          Number(Boolean(left.readAt)) - Number(Boolean(right.readAt)) ||
+          right.createdAt.localeCompare(left.createdAt)
+      )
+      .slice(0, Math.max(1, Math.min(100, limit)))
+      .map(clone);
+  }
+
+  async markNotificationRead(notificationId: string, userId: string) {
+    const notification = this.notifications.get(notificationId);
+    if (!notification || notification.userId !== userId) return false;
+    notification.readAt = notification.readAt ?? nowIso();
+    return true;
+  }
+
+  async markAllNotificationsRead(organizationId: string, userId: string) {
+    let count = 0;
+    for (const notification of this.notifications.values()) {
+      if (
+        notification.organizationId === organizationId &&
+        notification.userId === userId &&
+        !notification.readAt
+      ) {
+        notification.readAt = nowIso();
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  async heartbeatPresence(
+    organizationId: string,
+    userId: string,
+    displayName: string
+  ) {
+    const presence: ChatPresence = {
+      organizationId,
+      userId,
+      displayName,
+      status: "online",
+      lastSeenAt: nowIso()
+    };
+    this.presence.set(organizationId + ":" + userId, presence);
+    return clone(presence);
+  }
+
+  async listPresence(organizationId: string) {
+    return Array.from(this.presence.values())
+      .filter((presence) => presence.organizationId === organizationId)
+      .map((presence) => ({
+        ...clone(presence),
+        status: presenceStatus(presence.lastSeenAt)
+      }));
+  }
+
+  async setTyping(
+    conversationId: string,
+    userId: string,
+    displayName: string,
+    active: boolean
+  ) {
+    const key = this.memberKey(conversationId, userId);
+    if (!this.members.has(key)) return null;
+    if (!active) {
+      this.typing.delete(key);
+      return null;
+    }
+    const typing: ChatTypingState = {
+      conversationId,
+      userId,
+      displayName,
+      expiresAt: new Date(Date.now() + 6000).toISOString()
+    };
+    this.typing.set(key, typing);
+    return clone(typing);
+  }
+
+  async listTyping(conversationId: string) {
+    const now = Date.now();
+    for (const [key, typing] of this.typing) {
+      if (Date.parse(typing.expiresAt) <= now) this.typing.delete(key);
+    }
+    return Array.from(this.typing.values())
+      .filter((typing) => typing.conversationId === conversationId)
+      .map(clone);
+  }
+
   async searchMessages(organizationId: string, userId: string, query: string) {
     const needle = query.toLowerCase();
     const accessible = new Map(
@@ -455,6 +829,7 @@ class PostgresChatStore implements ChatStore {
         role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'moderator', 'member')),
         joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         muted BOOLEAN NOT NULL DEFAULT FALSE,
+        pinned BOOLEAN NOT NULL DEFAULT FALSE,
         last_read_message_id TEXT,
         last_read_at TIMESTAMPTZ,
         PRIMARY KEY (conversation_id, user_id)
@@ -463,6 +838,10 @@ class PostgresChatStore implements ChatStore {
     await this.sql`
       CREATE INDEX IF NOT EXISTS workspace_chat_members_user_idx
       ON workspace_chat_members (user_id, conversation_id)
+    `;
+    await this.sql`
+      ALTER TABLE workspace_chat_members
+      ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT FALSE
     `;
     await this.sql`
       CREATE TABLE IF NOT EXISTS workspace_chat_messages (
@@ -496,6 +875,76 @@ class PostgresChatStore implements ChatStore {
         PRIMARY KEY (message_id, user_id, emoji)
       )
     `;
+    await this.sql`
+      CREATE TABLE IF NOT EXISTS workspace_chat_files (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL REFERENCES workspace_chat_conversations(id) ON DELETE CASCADE,
+        uploader_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        size BIGINT NOT NULL,
+        bytes BYTEA NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
+    await this.sql`
+      CREATE INDEX IF NOT EXISTS workspace_chat_files_conversation_idx
+      ON workspace_chat_files (conversation_id, created_at DESC)
+    `;
+    await this.sql`
+      CREATE TABLE IF NOT EXISTS workspace_chat_events (
+        id BIGSERIAL PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        conversation_id TEXT REFERENCES workspace_chat_conversations(id) ON DELETE CASCADE,
+        actor_id TEXT,
+        target_user_id TEXT,
+        type TEXT NOT NULL,
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
+    await this.sql`
+      CREATE INDEX IF NOT EXISTS workspace_chat_events_org_cursor_idx
+      ON workspace_chat_events (organization_id, id)
+    `;
+    await this.sql`
+      CREATE TABLE IF NOT EXISTS workspace_chat_notifications (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL REFERENCES workspace_chat_conversations(id) ON DELETE CASCADE,
+        message_id TEXT NOT NULL REFERENCES workspace_chat_messages(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('mention', 'direct', 'thread')),
+        title TEXT NOT NULL,
+        body_preview TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        read_at TIMESTAMPTZ
+      )
+    `;
+    await this.sql`
+      CREATE INDEX IF NOT EXISTS workspace_chat_notifications_user_idx
+      ON workspace_chat_notifications (organization_id, user_id, read_at, created_at DESC)
+    `;
+    await this.sql`
+      CREATE TABLE IF NOT EXISTS workspace_chat_presence (
+        organization_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (organization_id, user_id)
+      )
+    `;
+    await this.sql`
+      CREATE TABLE IF NOT EXISTS workspace_chat_typing (
+        conversation_id TEXT NOT NULL REFERENCES workspace_chat_conversations(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (conversation_id, user_id)
+      )
+    `;
     this.initialized = true;
   }
 
@@ -527,6 +976,7 @@ class PostgresChatStore implements ChatStore {
         c.created_at,
         c.updated_at,
         cm.muted,
+        cm.pinned,
         cm.last_read_at,
         (SELECT COUNT(*) FROM workspace_chat_members x WHERE x.conversation_id = c.id) AS member_count,
         (
@@ -542,7 +992,7 @@ class PostgresChatStore implements ChatStore {
         ON cm.conversation_id = c.id
        AND cm.user_id = ${userId}
       WHERE c.organization_id = ${organizationId}
-      ORDER BY c.updated_at DESC
+      ORDER BY cm.pinned DESC, c.updated_at DESC
     `;
     return rows.map((row) => toConversation(row as Record<string, unknown>));
   }
@@ -560,6 +1010,7 @@ class PostgresChatStore implements ChatStore {
         c.created_at,
         c.updated_at,
         cm.muted,
+        cm.pinned,
         cm.last_read_at,
         (SELECT COUNT(*) FROM workspace_chat_members x WHERE x.conversation_id = c.id) AS member_count,
         (
@@ -616,7 +1067,7 @@ class PostgresChatStore implements ChatStore {
   async listMembers(conversationId: string) {
     await this.ready();
     const rows = await this.sql`
-      SELECT conversation_id, user_id, role, joined_at, muted, last_read_message_id, last_read_at
+      SELECT conversation_id, user_id, role, joined_at, muted, pinned, last_read_message_id, last_read_at
       FROM workspace_chat_members
       WHERE conversation_id = ${conversationId}
       ORDER BY joined_at ASC
@@ -631,7 +1082,7 @@ class PostgresChatStore implements ChatStore {
       VALUES (${conversationId}, ${userId}, ${role})
       ON CONFLICT (conversation_id, user_id)
       DO UPDATE SET role = EXCLUDED.role
-      RETURNING conversation_id, user_id, role, joined_at, muted, last_read_message_id, last_read_at
+      RETURNING conversation_id, user_id, role, joined_at, muted, pinned, last_read_message_id, last_read_at
     `;
     return toMember(rows[0] as Record<string, unknown>);
   }
@@ -812,7 +1263,7 @@ class PostgresChatStore implements ChatStore {
         last_read_at = NOW()
       WHERE conversation_id = ${conversationId}
         AND user_id = ${userId}
-      RETURNING conversation_id, user_id, role, joined_at, muted, last_read_message_id, last_read_at
+      RETURNING conversation_id, user_id, role, joined_at, muted, pinned, last_read_message_id, last_read_at
     `;
     const row = rows[0] as Record<string, unknown> | undefined;
     return row ? toMember(row) : null;
@@ -847,6 +1298,335 @@ class PostgresChatStore implements ChatStore {
       RETURNING message_id
     `;
     return rows.length > 0;
+  }
+
+  async updateMemberSettings(
+    conversationId: string,
+    userId: string,
+    settings: { muted?: boolean; pinned?: boolean }
+  ) {
+    await this.ready();
+    const rows = await this.sql`
+      UPDATE workspace_chat_members
+      SET
+        muted = COALESCE(${typeof settings.muted === "boolean" ? settings.muted : null}, muted),
+        pinned = COALESCE(${typeof settings.pinned === "boolean" ? settings.pinned : null}, pinned)
+      WHERE conversation_id = ${conversationId}
+        AND user_id = ${userId}
+      RETURNING conversation_id, user_id, role, joined_at, muted, pinned,
+                last_read_message_id, last_read_at
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    return row ? toMember(row) : null;
+  }
+
+  async createFile(input: {
+    organizationId: string;
+    conversationId: string;
+    uploaderId: string;
+    name: string;
+    mimeType: string;
+    bytes: Buffer;
+  }) {
+    await this.ready();
+    const id = randomUUID();
+    const base64 = input.bytes.toString("base64");
+    const rows = await this.sql`
+      INSERT INTO workspace_chat_files (
+        id, organization_id, conversation_id, uploader_id, name, mime_type, size, bytes
+      )
+      SELECT
+        ${id},
+        ${input.organizationId},
+        ${input.conversationId},
+        ${input.uploaderId},
+        ${input.name},
+        ${input.mimeType},
+        ${input.bytes.byteLength},
+        decode(${base64}, 'base64')
+      WHERE EXISTS (
+        SELECT 1
+        FROM workspace_chat_members cm
+        JOIN workspace_chat_conversations c ON c.id = cm.conversation_id
+        WHERE cm.conversation_id = ${input.conversationId}
+          AND cm.user_id = ${input.uploaderId}
+          AND c.organization_id = ${input.organizationId}
+      )
+      RETURNING id, name, mime_type, size
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) {
+      throw Object.assign(new Error("conversation_not_found"), { status: 404 });
+    }
+    return {
+      id: String(row.id),
+      fileId: String(row.id),
+      name: String(row.name),
+      mimeType: String(row.mime_type),
+      size: Number(row.size)
+    } satisfies ChatAttachment;
+  }
+
+  async validateFiles(conversationId: string, fileIds: string[]) {
+    await this.ready();
+    for (const fileId of fileIds) {
+      const rows = await this.sql`
+        SELECT id
+        FROM workspace_chat_files
+        WHERE id = ${fileId}
+          AND conversation_id = ${conversationId}
+        LIMIT 1
+      `;
+      if (!rows.length) return false;
+    }
+    return true;
+  }
+
+  async getFileForUser(fileId: string, userId: string) {
+    await this.ready();
+    const rows = await this.sql`
+      SELECT
+        f.id,
+        f.organization_id,
+        f.conversation_id,
+        f.uploader_id,
+        f.name,
+        f.mime_type,
+        f.size,
+        f.created_at,
+        encode(f.bytes, 'base64') AS bytes_base64
+      FROM workspace_chat_files f
+      JOIN workspace_chat_members cm
+        ON cm.conversation_id = f.conversation_id
+       AND cm.user_id = ${userId}
+      WHERE f.id = ${fileId}
+      LIMIT 1
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      conversationId: String(row.conversation_id),
+      uploaderId: String(row.uploader_id),
+      name: String(row.name),
+      mimeType: String(row.mime_type),
+      size: Number(row.size),
+      bytes: Buffer.from(String(row.bytes_base64 ?? ""), "base64"),
+      createdAt: iso(row.created_at) ?? nowIso()
+    } satisfies StoredChatFile;
+  }
+
+  async appendEvent(input: AppendEventInput) {
+    await this.ready();
+    const rows = await this.sql`
+      INSERT INTO workspace_chat_events (
+        organization_id, conversation_id, actor_id, target_user_id, type, payload
+      )
+      VALUES (
+        ${input.organizationId},
+        ${input.conversationId ?? null},
+        ${input.actorId ?? null},
+        ${input.targetUserId ?? null},
+        ${input.type},
+        ${JSON.stringify(input.payload ?? {})}::jsonb
+      )
+      RETURNING id, organization_id, conversation_id, actor_id, target_user_id,
+                type, payload, created_at
+    `;
+    return toEvent(rows[0] as Record<string, unknown>);
+  }
+
+  async listEvents(
+    organizationId: string,
+    userId: string,
+    afterId: string,
+    limit = 100
+  ) {
+    await this.ready();
+    const cursor = /^\d+$/.test(afterId) ? afterId : "0";
+    const safeLimit = Math.max(1, Math.min(250, limit));
+    const rows = await this.sql`
+      SELECT
+        e.id,
+        e.organization_id,
+        e.conversation_id,
+        e.actor_id,
+        e.target_user_id,
+        e.type,
+        e.payload,
+        e.created_at
+      FROM workspace_chat_events e
+      WHERE e.organization_id = ${organizationId}
+        AND e.id > ${cursor}::bigint
+        AND (e.target_user_id IS NULL OR e.target_user_id = ${userId})
+        AND (
+          e.conversation_id IS NULL OR EXISTS (
+            SELECT 1
+            FROM workspace_chat_members cm
+            WHERE cm.conversation_id = e.conversation_id
+              AND cm.user_id = ${userId}
+          )
+        )
+      ORDER BY e.id ASC
+      LIMIT ${safeLimit}
+    `;
+    return rows.map((row) => toEvent(row as Record<string, unknown>));
+  }
+
+  async createNotification(input: CreateNotificationInput) {
+    await this.ready();
+    const id = randomUUID();
+    const rows = await this.sql`
+      INSERT INTO workspace_chat_notifications (
+        id, organization_id, user_id, conversation_id, message_id,
+        kind, title, body_preview
+      )
+      VALUES (
+        ${id},
+        ${input.organizationId},
+        ${input.userId},
+        ${input.conversationId},
+        ${input.messageId},
+        ${input.kind},
+        ${input.title},
+        ${input.bodyPreview}
+      )
+      RETURNING id, organization_id, user_id, conversation_id, message_id,
+                kind, title, body_preview, created_at, read_at
+    `;
+    return toNotification(rows[0] as Record<string, unknown>);
+  }
+
+  async listNotifications(organizationId: string, userId: string, limit = 50) {
+    await this.ready();
+    const safeLimit = Math.max(1, Math.min(100, limit));
+    const rows = await this.sql`
+      SELECT id, organization_id, user_id, conversation_id, message_id,
+             kind, title, body_preview, created_at, read_at
+      FROM workspace_chat_notifications
+      WHERE organization_id = ${organizationId}
+        AND user_id = ${userId}
+      ORDER BY (read_at IS NULL) DESC, created_at DESC
+      LIMIT ${safeLimit}
+    `;
+    return rows.map((row) => toNotification(row as Record<string, unknown>));
+  }
+
+  async markNotificationRead(notificationId: string, userId: string) {
+    await this.ready();
+    const rows = await this.sql`
+      UPDATE workspace_chat_notifications
+      SET read_at = COALESCE(read_at, NOW())
+      WHERE id = ${notificationId}
+        AND user_id = ${userId}
+      RETURNING id
+    `;
+    return rows.length > 0;
+  }
+
+  async markAllNotificationsRead(organizationId: string, userId: string) {
+    await this.ready();
+    const rows = await this.sql`
+      UPDATE workspace_chat_notifications
+      SET read_at = NOW()
+      WHERE organization_id = ${organizationId}
+        AND user_id = ${userId}
+        AND read_at IS NULL
+      RETURNING id
+    `;
+    return rows.length;
+  }
+
+  async heartbeatPresence(
+    organizationId: string,
+    userId: string,
+    displayName: string
+  ) {
+    await this.ready();
+    const rows = await this.sql`
+      INSERT INTO workspace_chat_presence (
+        organization_id, user_id, display_name, last_seen_at
+      )
+      VALUES (${organizationId}, ${userId}, ${displayName}, NOW())
+      ON CONFLICT (organization_id, user_id)
+      DO UPDATE SET
+        display_name = EXCLUDED.display_name,
+        last_seen_at = NOW()
+      RETURNING organization_id, user_id, display_name, last_seen_at
+    `;
+    return toPresence(rows[0] as Record<string, unknown>);
+  }
+
+  async listPresence(organizationId: string) {
+    await this.ready();
+    const rows = await this.sql`
+      SELECT organization_id, user_id, display_name, last_seen_at
+      FROM workspace_chat_presence
+      WHERE organization_id = ${organizationId}
+      ORDER BY last_seen_at DESC
+      LIMIT 500
+    `;
+    return rows.map((row) => toPresence(row as Record<string, unknown>));
+  }
+
+  async setTyping(
+    conversationId: string,
+    userId: string,
+    displayName: string,
+    active: boolean
+  ) {
+    await this.ready();
+    if (!active) {
+      await this.sql`
+        DELETE FROM workspace_chat_typing
+        WHERE conversation_id = ${conversationId}
+          AND user_id = ${userId}
+      `;
+      return null;
+    }
+    const rows = await this.sql`
+      INSERT INTO workspace_chat_typing (
+        conversation_id, user_id, display_name, expires_at, updated_at
+      )
+      SELECT
+        ${conversationId},
+        ${userId},
+        ${displayName},
+        NOW() + INTERVAL '6 seconds',
+        NOW()
+      WHERE EXISTS (
+        SELECT 1
+        FROM workspace_chat_members
+        WHERE conversation_id = ${conversationId}
+          AND user_id = ${userId}
+      )
+      ON CONFLICT (conversation_id, user_id)
+      DO UPDATE SET
+        display_name = EXCLUDED.display_name,
+        expires_at = EXCLUDED.expires_at,
+        updated_at = NOW()
+      RETURNING conversation_id, user_id, display_name, expires_at
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    return row ? toTyping(row) : null;
+  }
+
+  async listTyping(conversationId: string) {
+    await this.ready();
+    await this.sql`
+      DELETE FROM workspace_chat_typing
+      WHERE conversation_id = ${conversationId}
+        AND expires_at <= NOW()
+    `;
+    const rows = await this.sql`
+      SELECT conversation_id, user_id, display_name, expires_at
+      FROM workspace_chat_typing
+      WHERE conversation_id = ${conversationId}
+        AND expires_at > NOW()
+      ORDER BY updated_at DESC
+    `;
+    return rows.map((row) => toTyping(row as Record<string, unknown>));
   }
 
   async searchMessages(organizationId: string, userId: string, query: string) {
