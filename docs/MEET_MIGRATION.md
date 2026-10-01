@@ -1,106 +1,74 @@
-# Tamishra Meet migration into Workspace
+# Tamishra Meet — standalone Workspace implementation
 
-## Source of truth
+## Product boundary
 
-The meeting product already exists in the private `deppppppakk-byte/Tamishra` repository.
+Tamishra Meet is part of Tamishra Workspace and must run independently of the original Tamishra website.
 
-The dedicated meeting product was introduced by commit:
+The original product may be used only as a behavioral reference during migration. Production Workspace clients must not redirect to, fetch tokens from, or depend on `tamishra.in` meeting routes.
 
-- `95851b6f72416c9c986fcaf20a3ceed2e1f543b3` — **Add Tamishra Meet meeting product**
-
-The current implementation was then hardened by later Tamishra Live commits for screen sharing, identity, waiting-room behavior, token issuance, recording mutations and rate limiting.
-
-## Existing product files
-
-The dedicated Meet layer in Tamishra currently includes:
-
-- `app/(site)/meet/MeetHomeClient.tsx`
-- `app/(site)/meet/page.tsx`
-- `app/(site)/meet/meet.css`
-- `app/api/meetings/route.ts`
-- `app/meet/[roomName]/page.tsx`
-- `app/meet/[roomName]/MeetRoomClient.tsx`
-
-The meeting room reuses the existing Live runtime, including:
-
-- LiveKit room connection and pre-join device checks
-- join context and admission status
-- host/co-host/participant roles
-- microphone and camera publishing
-- presenter screen sharing
-- persistent meeting chat and reactions
-- hand raise / engagement
-- participant moderation
-- attendance tracking
-- meeting lifecycle controls
-- recording infrastructure
-- mobile screen-share support
-
-## Existing server behavior
-
-The Tamishra meeting API creates `generic_meeting` sessions in the established live-session schema.
-
-Meeting creation currently provides:
-
-- random 10-character private join code
-- instant or scheduled mode
-- host membership
-- waiting-room policy
-- participant screen-share policy
-- capacity enforcement
-- signed-in access
-- moderation state
-- secure mutation-origin checks
-- request body limits
-- sensitive-action rate limiting
-
-The dedicated room then obtains a LiveKit token from the hardened Tamishra Live token service.
-
-## Workspace integration strategy
-
-### Phase 1 — active bridge
-
-Workspace uses `@tamishra/meet-core` as the product boundary.
-
-The web application opens the existing Tamishra Meet runtime through a configurable origin:
-
-`NEXT_PUBLIC_TAMISHRA_MEET_ORIGIN`
-
-If the environment variable is not defined, the current default is:
-
-`https://www.tamishra.in`
-
-This avoids creating a second meeting engine while the Workspace monorepo is still using a static-export web shell.
-
-### Phase 2 — migrate the same runtime
-
-Move the existing Tamishra Meet implementation into Workspace without changing meeting behavior or stored data semantics.
-
-Recommended target structure:
+## Workspace-owned target
 
 ```text
 apps/
+  web/
+  gateway/
   meet-service/
+  desktop/
+  mobile/
+
 packages/
   meet-core/
   meet-livekit/
-  meet-server/
+  identity/
+  permissions/
+  notifications/
 ```
 
-The static `apps/web`, desktop shell and mobile shell should consume the same `meet-core` contract.
+## Required meeting behavior
 
-### Phase 3 — retire the bridge
+The standalone Workspace meeting stack should provide:
 
-When the Workspace-hosted meeting service reaches feature parity and production verification:
+- instant and scheduled meetings
+- private joining codes
+- authenticated host ownership
+- waiting-room admission
+- host/co-host/participant roles
+- microphone and camera publishing
+- screen sharing
+- in-meeting chat
+- reactions
+- hand raise
+- participant moderation
+- attendance
+- meeting lifecycle controls
+- recording integration
+- browser/mobile support
+- meeting notes integration
+- rate limiting and abuse controls
 
-1. switch `@tamishra/meet-core` to the Workspace-native gateway;
-2. preserve existing private-code and room identifiers where possible;
-3. keep database migrations additive;
-4. run parallel compatibility tests against the original Tamishra runtime;
-5. remove the bridge only after real host/participant end-to-end verification.
+## Media boundary
 
-## Important rule
+`@tamishra/meet-core` remains provider-neutral.
 
-Do not build a second independent meeting feature set in Workspace.
+A LiveKit adapter is acceptable, but:
 
-The older Tamishra Meet implementation is the behavioral reference. New Workspace work should either reuse it or migrate it behind `@tamishra/meet-core`.
+- LiveKit credentials belong to Workspace infrastructure
+- token issuance belongs to Workspace backend services
+- room metadata belongs to Workspace storage
+- clients never receive service secrets
+- provider-specific SDK details stay outside the core domain model
+
+## Migration rule
+
+Features may be ported or reimplemented from the earlier Tamishra meeting experience, but code and data dependencies must be brought into this repository or into Workspace-owned infrastructure before they are considered production-ready.
+
+## Completion criteria
+
+Meet is considered standalone only when:
+
+1. the original Tamishra website can be unavailable without affecting meetings;
+2. Workspace creates rooms itself;
+3. Workspace issues media tokens itself;
+4. Workspace stores meeting membership and attendance itself;
+5. host and participant flows work from Workspace web/desktop/mobile;
+6. no runtime configuration points to the old website.
