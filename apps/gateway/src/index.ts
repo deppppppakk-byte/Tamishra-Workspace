@@ -1,4 +1,4 @@
-import { nativeAuthCapabilities } from "@tamishra/identity";
+import type { AuthCapabilities } from "@tamishra/identity";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { handleMeetingRequest } from "./meetings.js";
 
