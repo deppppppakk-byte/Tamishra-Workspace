@@ -47,6 +47,22 @@
     "fileAssociations": [
       {
         "ext": [
+          "tmdoc"
+        ],
+        "name": "Tamishra Document",
+        "description": "Tamishra Docs native document",
+        "mimeType": "application/vnd.tamishra.document",
+        "role": "Editor",
+        "rank": "Owner",
+        "exportedType": {
+          "identifier": "in.tamishra.docs.tmdoc",
+          "conformsTo": [
+            "public.data"
+          ]
+        }
+      },
+      {
+        "ext": [
           "tmsl"
         ],
         "name": "Tamishra Slides Presentation",
