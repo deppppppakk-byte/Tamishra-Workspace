@@ -70,6 +70,35 @@ export function upsertNote(snapshot: NotesSnapshot, note: TamishraNote): NotesSn
   };
 }
 
+export function mergeNotesSnapshots(
+  local: NotesSnapshot,
+  remote: NotesSnapshot
+): NotesSnapshot {
+  const byId = new Map<string, TamishraNote>();
+
+  for (const note of [...remote.notes, ...local.notes]) {
+    const current = byId.get(note.id);
+    if (!current || note.updatedAt.localeCompare(current.updatedAt) >= 0) {
+      byId.set(note.id, note);
+    }
+  }
+
+  return {
+    version: 1,
+    notebooks: Array.from(
+      new Set([
+        "Notes",
+        ...remote.notebooks,
+        ...local.notebooks,
+        ...Array.from(byId.values()).map((note) => note.notebook)
+      ])
+    ).sort(),
+    notes: Array.from(byId.values()).sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt)
+    )
+  };
+}
+
 export function searchNotes(snapshot: NotesSnapshot, query: string) {
   const normalized = query.trim().toLowerCase();
   const active = snapshot.notes.filter((note) => !note.trashedAt);
