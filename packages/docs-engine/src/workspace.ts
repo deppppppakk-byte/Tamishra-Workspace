@@ -365,3 +365,29 @@ export interface DocsCloudGateway {
   listShareGrants(documentId: string): Promise<DocsShareGrant[]>;
   saveShareGrant(grant: DocsShareGrant): Promise<DocsShareGrant>;
 }
+
+export function addDocsSuggestion(
+  snapshot: DocsWorkspaceSnapshot,
+  input: Omit<DocsSuggestion, "id" | "createdAt" | "status">
+) {
+  const next = clone(snapshot);
+  const suggestion: DocsSuggestion = {
+    ...input,
+    id: id("suggestion"),
+    createdAt: new Date().toISOString(),
+    status: "pending"
+  };
+  next.suggestions.unshift(suggestion);
+  return { snapshot: next, suggestion };
+}
+
+export function updateDocsSuggestion(
+  snapshot: DocsWorkspaceSnapshot,
+  suggestionId: string,
+  status: "accepted" | "rejected"
+) {
+  const next = clone(snapshot);
+  const suggestion = next.suggestions.find((item) => item.id === suggestionId);
+  if (suggestion) suggestion.status = status;
+  return next;
+}
