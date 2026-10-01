@@ -412,12 +412,14 @@ export default function DocsEditor() {
     focusEditor();
     applyCommand(name, value);
     updateCounts();
+    scheduleReflow();
   };
 
   const formatBlock = (tag: "p" | "h1" | "h2" | "h3" | "blockquote") => {
     focusEditor();
     applyCommand("formatBlock", tag);
     updateCounts();
+    scheduleReflow();
   };
 
   const insertLink = () => {
@@ -427,6 +429,7 @@ export default function DocsEditor() {
     focusEditor();
     applyCommand("createLink", url);
     updateCounts();
+    scheduleReflow();
   };
 
   const clearFormatting = () => {
@@ -533,6 +536,7 @@ export default function DocsEditor() {
       );
       ensureBlockIds();
       updateCounts();
+      scheduleReflow();
 
       requestAnimationFrame(() => {
         const image = queryDocument<HTMLImageElement>(
@@ -581,6 +585,7 @@ export default function DocsEditor() {
     image.style.height = "auto";
     setSelectedImageWidth(safeWidth);
     updateCounts();
+    scheduleReflow();
   };
 
   const updateSelectedImageAlt = (alt: string) => {
@@ -616,6 +621,7 @@ export default function DocsEditor() {
     image.classList.add(className[layout] ?? "docsImageInline");
     setSelectedImageLayout(layout);
     updateCounts();
+    scheduleReflow();
   };
 
   const deleteSelectedImage = () => {
@@ -625,6 +631,98 @@ export default function DocsEditor() {
     image.remove();
     setSelectedImageId(null);
     updateCounts();
+    scheduleReflow();
+  };
+
+  const selectionAtBoundary = (editor: HTMLDivElement, edge: "start" | "end") => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return false;
+
+    const range = selection.getRangeAt(0);
+    if (!editor.contains(range.startContainer)) return false;
+
+    const probe = document.createRange();
+    probe.selectNodeContents(editor);
+
+    if (edge === "start") {
+      probe.setEnd(range.startContainer, range.startOffset);
+      return probe.toString().length === 0;
+    }
+
+    probe.setStart(range.endContainer, range.endOffset);
+    return probe.toString().length === 0;
+  };
+
+  const placeCaret = (editor: HTMLDivElement, edge: "start" | "end") => {
+    editor.focus();
+    const selection = window.getSelection();
+    if (!selection) return;
+
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(edge === "start");
+    selection.removeAllRanges();
+    selection.addRange(range);
+  };
+
+  const activatePageEditor = (index: number, editor: HTMLDivElement) => {
+    activePageRef.current = index;
+    editorRef.current = editor;
+    setActivePage(index + 1);
+  };
+
+  const handlePageKeyDown = (
+    index: number,
+    event: React.KeyboardEvent<HTMLDivElement>
+  ) => {
+    const currentEditor = pageEditorsRef.current[index];
+    if (!currentEditor) return;
+
+    if (event.key === "Backspace" && index > 0 && selectionAtBoundary(currentEditor, "start")) {
+      const previous = pageEditorsRef.current[index - 1];
+      if (!previous) return;
+
+      event.preventDefault();
+      const manualBreak = previous.lastElementChild as HTMLElement | null;
+
+      if (manualBreak?.dataset.pageBreak === "true") {
+        manualBreak.remove();
+      }
+
+      activatePageEditor(index - 1, previous);
+      placeCaret(previous, "end");
+
+      if (!manualBreak || manualBreak.dataset.pageBreak !== "true") {
+        applyCommand("delete");
+      }
+
+      updateCounts();
+      scheduleReflow();
+      return;
+    }
+
+    if (event.key === "ArrowUp" && index > 0 && selectionAtBoundary(currentEditor, "start")) {
+      const previous = pageEditorsRef.current[index - 1];
+      if (!previous) return;
+
+      event.preventDefault();
+      activatePageEditor(index - 1, previous);
+      placeCaret(previous, "end");
+      return;
+    }
+
+    if (
+      event.key === "ArrowDown" &&
+      index < pageCount - 1 &&
+      selectionAtBoundary(currentEditor, "end")
+    ) {
+      const next = pageEditorsRef.current[index + 1];
+      if (!next) return;
+
+      event.preventDefault();
+      activatePageEditor(index + 1, next);
+      placeCaret(next, "start");
+    }
   };
 
   const findInDocument = (backwards = false) => {
@@ -787,7 +885,7 @@ td,th{border:1px solid #d0d5dd;padding:8px}
   const pageStyle = useMemo(
     () => ({
       width: mmToCssPx(page.widthMm),
-      minHeight: mmToCssPx(page.heightMm),
+      height: mmToCssPx(page.heightMm),
       transform: `scale(${zoom / 100})`,
       transformOrigin: "top center"
     }),
@@ -796,7 +894,10 @@ td,th{border:1px solid #d0d5dd;padding:8px}
 
   const editorStyle = useMemo(
     () => ({
-      minHeight: mmToCssPx(page.heightMm),
+      width: "100%",
+      height: "100%",
+      boxSizing: "border-box" as const,
+      overflow: "hidden",
       paddingTop: mmToCssPx(page.margins.topMm),
       paddingRight: mmToCssPx(page.margins.rightMm),
       paddingBottom: mmToCssPx(page.margins.bottomMm),
@@ -1018,32 +1119,45 @@ td,th{border:1px solid #d0d5dd;padding:8px}
           </div>
 
           <div className="docsPageStage">
-            <article className="docsPage" style={pageStyle}>
-              <div
-                ref={editorRef}
-                className="docsEditor"
-                style={editorStyle}
-                contentEditable
-                suppressContentEditableWarning
-                onInput={updateCounts}
-                onBlur={saveDocument}
-                onPaste={handleEditorPaste}
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={handleEditorDrop}
-                onClick={(event) => {
-                  const target = event.target;
-                  selectImageElement(target instanceof HTMLImageElement ? target : null);
-                }}
-                spellCheck
-                aria-label="Document editor"
+            {Array.from({ length: pageCount }, (_, index) => (
+              <article
+                key={index}
+                className={`docsPage ${activePage === index + 1 ? "active" : ""}`}
+                style={pageStyle}
+                data-page-index={index}
               >
-                <h1>Untitled document</h1>
-                <p>
-                  Start writing here. Tamishra Docs now has a functional editing foundation with
-                  formatting, local autosave, document statistics and print/PDF output.
-                </p>
-              </div>
-            </article>
+                <div
+                  ref={(element) => setActiveEditor(index, element)}
+                  className="docsEditor docsPageEditor"
+                  style={editorStyle}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onFocus={(event) => activatePageEditor(index, event.currentTarget)}
+                  onInput={() => {
+                    const editor = pageEditorsRef.current[index];
+                    if (editor) activatePageEditor(index, editor);
+                    updateCounts();
+                    scheduleReflow();
+                  }}
+                  onKeyDown={(event) => handlePageKeyDown(index, event)}
+                  onBlur={saveDocument}
+                  onPaste={handleEditorPaste}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={handleEditorDrop}
+                  onClick={(event) => {
+                    const editor = pageEditorsRef.current[index];
+                    if (editor) activatePageEditor(index, editor);
+                    const target = event.target;
+                    selectImageElement(target instanceof HTMLImageElement ? target : null);
+                  }}
+                  spellCheck
+                  aria-label={`Document page ${index + 1}`}
+                />
+                <div className="docsPageNumber" contentEditable={false}>
+                  {index + 1}
+                </div>
+              </article>
+            ))}
           </div>
         </section>
 
@@ -1122,7 +1236,7 @@ td,th{border:1px solid #d0d5dd;padding:8px}
       </div>
 
       <footer className="docsStatusBar">
-        <span>Page 1 of {pageCount}</span>
+        <span>Page {activePage} of {pageCount}</span>
         <span>{wordCount} words</span>
         <span>{page.size} · {page.orientation}</span>
         <span>English</span>
