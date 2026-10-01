@@ -596,17 +596,28 @@ function normalizePages(
   }
 
   const pageIds = new Set(pages.map((page) => page.id));
+  const pagePositions = new Map(pages.map((page, index) => [page.id, index]));
   for (const page of pages) {
+    const pagePosition = pagePositions.get(page.id) ?? -1;
+    const defaultPosition = page.defaultNextPageId
+      ? pagePositions.get(page.defaultNextPageId)
+      : undefined;
     page.defaultNextPageId =
-      page.defaultNextPageId && pageIds.has(page.defaultNextPageId)
+      page.defaultNextPageId &&
+      pageIds.has(page.defaultNextPageId) &&
+      typeof defaultPosition === "number" &&
+      defaultPosition > pagePosition
         ? page.defaultNextPageId
         : null;
-    page.branchRules = page.branchRules.filter(
-      (rule) =>
+    page.branchRules = page.branchRules.filter((rule) => {
+      const targetPosition = pagePositions.get(rule.targetPageId);
+      return (
         validFieldIds.has(rule.sourceFieldId) &&
         pageIds.has(rule.targetPageId) &&
-        rule.targetPageId !== page.id
-    );
+        typeof targetPosition === "number" &&
+        targetPosition > pagePosition
+      );
+    });
   }
 
   return pages;
