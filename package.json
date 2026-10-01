@@ -13,9 +13,9 @@
     "dev:gateway": "npm run dev --workspace @tamishra/gateway",
     "build": "npm run build:web",
     "build:web": "node scripts/run-web.mjs build hosted",
-    "build:gateway": "npm run build --workspace @tamishra/gateway",
+    "build:gateway": "npm run build:runtime-packages && npm run build --workspace @tamishra/gateway",
     "check:web": "npm run check --workspace @tamishra/web",
-    "check:gateway": "npm run check --workspace @tamishra/gateway",
+    "check:gateway": "npm run check:runtime-packages && npm run check --workspace @tamishra/gateway",
     "check:meet": "npm run check:gateway && npm run check:web",
     "desktop:dev": "npm run tauri:dev --workspace @tamishra/desktop",
     "desktop:build": "npm run tauri:build --workspace @tamishra/desktop",
@@ -30,7 +30,10 @@
     "start:patra-mailer": "npm run start --workspace @tamishra/patra-mailer",
     "check:patra-mailer": "npm run check --workspace @tamishra/patra-mailer",
     "dev:web:patra": "node scripts/run-web.mjs dev patra",
-    "build:web:patra": "node scripts/run-web.mjs build patra"
+    "build:web:patra": "node scripts/run-web.mjs build patra",
+    "build:runtime-packages": "npm run build --workspace @tamishra/identity && npm run build --workspace @tamishra/permissions",
+    "check:runtime-packages": "npm run check --workspace @tamishra/identity && npm run check --workspace @tamishra/permissions",
+    "production:check": "npm run check && npm audit --omit=dev --audit-level=high"
   },
   "engines": {
     "node": ">=22"

@@ -4,6 +4,41 @@ import { handleIdentityRequest } from "./identity.js";
 import { handlePatraRequest } from "./patra.js";
 
 const port = Number(process.env.WORKSPACE_GATEWAY_PORT ?? process.env.PORT ?? 4100);
+const isProduction = process.env.NODE_ENV === "production";
+
+function requireProductionValue(name: string, minimumLength = 1) {
+  const value = process.env[name]?.trim();
+  if (!value || value.length < minimumLength || /^change-me/i.test(value)) {
+    throw new Error(`Production configuration requires a secure ${name} value.`);
+  }
+  return value;
+}
+
+function validateProductionConfiguration() {
+  if (!isProduction) return;
+
+  requireProductionValue("WORKSPACE_DATABASE_URL", 12);
+  requireProductionValue("WORKSPACE_IP_HASH_SECRET", 32);
+  requireProductionValue("LIVEKIT_URL", 8);
+  requireProductionValue("LIVEKIT_API_KEY", 6);
+  requireProductionValue("LIVEKIT_API_SECRET", 24);
+
+  if (process.env.WORKSPACE_SESSION_COOKIE_SECURE === "false") {
+    throw new Error("WORKSPACE_SESSION_COOKIE_SECURE must not be false in production.");
+  }
+
+  const allowed = process.env.WORKSPACE_ALLOWED_ORIGINS?.trim();
+  if (!allowed) {
+    throw new Error("WORKSPACE_ALLOWED_ORIGINS is required in production.");
+  }
+
+  const liveKitUrl = process.env.LIVEKIT_URL ?? "";
+  if (!/^wss:\/\//i.test(liveKitUrl)) {
+    throw new Error("LIVEKIT_URL must use wss:// in production.");
+  }
+}
+
+validateProductionConfiguration();
 
 const allowedOrigins = new Set(
   (
@@ -29,6 +64,17 @@ type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
+function applySecurityHeaders(response: ServerResponse) {
+  response.setHeader("x-content-type-options", "nosniff");
+  response.setHeader("referrer-policy", "no-referrer");
+  response.setHeader("x-frame-options", "DENY");
+  response.setHeader("cross-origin-resource-policy", "same-site");
+  response.setHeader(
+    "permissions-policy",
+    "geolocation=(), payment=(), usb=(), serial=(), interest-cohort=()"
+  );
+}
+
 function applyCors(response: ServerResponse, origin?: string) {
   if (origin && allowedOrigins.has(origin)) {
     response.setHeader("access-control-allow-origin", origin);
@@ -46,6 +92,7 @@ function json(
   response.statusCode = status;
   response.setHeader("content-type", "application/json; charset=utf-8");
   response.setHeader("cache-control", "no-store");
+  applySecurityHeaders(response);
   applyCors(response, origin);
   response.end(JSON.stringify(body));
 }
@@ -55,6 +102,8 @@ function notFound(response: ServerResponse, origin?: string) {
 }
 
 async function handle(request: IncomingMessage, response: ServerResponse) {
+  applySecurityHeaders(response);
+
   const origin = request.headers.origin;
   const url = new URL(request.url ?? "/", "http://workspace.local");
 
@@ -84,7 +133,21 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       {
         service: "tamishra-workspace-gateway",
         status: "ok",
-        version: "0.8.0"
+        version: process.env.WORKSPACE_RELEASE_VERSION ?? "0.8.0"
+      },
+      origin
+    );
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/ready") {
+    json(
+      response,
+      200,
+      {
+        service: "tamishra-workspace-gateway",
+        status: "ready",
+        production: isProduction
       },
       origin
     );
@@ -155,7 +218,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   notFound(response, origin);
 }
 
-createServer((request, response) => {
+const server = createServer((request, response) => {
   void handle(request, response).catch((error) => {
     console.error("Workspace gateway request failed", error);
     if (!response.headersSent) {
@@ -164,6 +227,31 @@ createServer((request, response) => {
       response.end();
     }
   });
-}).listen(port, () => {
+});
+
+server.requestTimeout = 30_000;
+server.headersTimeout = 15_000;
+server.keepAliveTimeout = 5_000;
+server.maxRequestsPerSocket = 1_000;
+
+function shutdown(signal: string) {
+  console.log(`Tamishra Workspace gateway received ${signal}; shutting down.`);
+  server.close((error) => {
+    if (error) {
+      console.error("Gateway shutdown failed", error);
+      process.exitCode = 1;
+    }
+  });
+
+  setTimeout(() => {
+    console.error("Gateway shutdown timed out.");
+    process.exit(1);
+  }, 10_000).unref();
+}
+
+process.once("SIGTERM", () => shutdown("SIGTERM"));
+process.once("SIGINT", () => shutdown("SIGINT"));
+
+server.listen(port, () => {
   console.log(`Tamishra Workspace gateway listening on :${port}`);
 });

@@ -12,8 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  gateway:
-    name: Workspace Gateway
+  quality:
+    name: Production Quality Gate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -27,14 +27,37 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Typecheck gateway
-        run: npm run check:gateway
+      - name: Typecheck workspace
+        run: npm run check
 
-      - name: Build gateway
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=critical
+
+  gateway:
+    name: Workspace Gateway
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build gateway runtime
         run: npm run build:gateway
+
+      - name: Smoke-test compiled gateway imports
+        run: node --input-type=module -e "await import('./packages/identity/dist/index.js'); await import('./packages/permissions/dist/index.js');"
 
   web:
     name: Website
+    needs: quality
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -49,6 +72,8 @@ jobs:
         run: npm install
 
       - name: Build website
+        env:
+          NODE_ENV: production
         run: npm run build:web
 
       - name: Upload website bundle
@@ -60,6 +85,7 @@ jobs:
 
   windows:
     name: Windows EXE and MSI
+    needs: quality
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -94,6 +120,7 @@ jobs:
 
   android:
     name: Android APK
+    needs: quality
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -114,7 +141,9 @@ jobs:
         run: npm install
 
       - name: Build shared frontend
-        run: npm run build:web
+        env:
+          NODE_ENV: production
+        run: npm run build:web:native
 
       - name: Create Android native project
         working-directory: apps/mobile
@@ -131,6 +160,6 @@ jobs:
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: tamishra-workspace-android
+          name: tamishra-workspace-android-debug
           path: apps/mobile/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error

@@ -1,0 +1,335 @@
+name: Tamishra Workspace Production Release
+
+on:
+  push:
+    tags:
+      - "workspace-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (for example 1.0.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tamishra-workspace-production-release
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+  JAVA_VERSION: "21"
+
+jobs:
+  resolve:
+    name: Resolve release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - id: version
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#workspace-v}"
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: $VERSION"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  quality:
+    name: Production release gate
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck all production surfaces
+        run: npm run check
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Build hosted production surfaces
+        env:
+          NODE_ENV: production
+        run: npm run build:hosted
+
+  web:
+    name: Production web bundle
+    needs: [resolve, quality]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: npm install
+      - name: Build hosted web
+        env:
+          NODE_ENV: production
+          WORKSPACE_BASE_PATH: /workspace
+          NEXT_PUBLIC_WORKSPACE_API_BASE: /api/workspace
+        run: npm run build:web
+      - name: Create checksums
+        run: |
+          find apps/web/out -type f -print0 | sort -z | xargs -0 sha256sum > tamishra-workspace-web-${{ needs.resolve.outputs.version }}.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tamishra-workspace-web-${{ needs.resolve.outputs.version }}
+          path: |
+            apps/web/out
+            tamishra-workspace-web-${{ needs.resolve.outputs.version }}.sha256
+          if-no-files-found: error
+
+  gateway:
+    name: Production gateway bundle
+    needs: [resolve, quality]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: npm install
+      - name: Build gateway and runtime packages
+        run: npm run build:gateway
+      - name: Assemble deployable gateway bundle
+        shell: bash
+        run: |
+          VERSION="${{ needs.resolve.outputs.version }}"
+          mkdir -p release-gateway/apps/gateway
+          mkdir -p release-gateway/node_modules/@tamishra/identity
+          mkdir -p release-gateway/node_modules/@tamishra/permissions
+          cp -R apps/gateway/dist release-gateway/apps/gateway/dist
+          cp -R packages/identity/dist release-gateway/node_modules/@tamishra/identity/dist
+          cp packages/identity/package.json release-gateway/node_modules/@tamishra/identity/package.json
+          cp -R packages/permissions/dist release-gateway/node_modules/@tamishra/permissions/dist
+          cp packages/permissions/package.json release-gateway/node_modules/@tamishra/permissions/package.json
+          node -e "const p=require('./apps/gateway/package.json'); const keep={name:'tamishra-workspace-gateway-release',version:process.argv[1],private:true,type:'module',scripts:{start:'node apps/gateway/dist/index.js'},dependencies:Object.fromEntries(Object.entries(p.dependencies).filter(([k])=>!k.startsWith('@tamishra/')))}; require('fs').writeFileSync('release-gateway/package.json',JSON.stringify(keep,null,2)+'\n')" "$VERSION"
+          npm install --prefix release-gateway --omit=dev --ignore-scripts
+          tar -czf "tamishra-workspace-gateway-$VERSION.tar.gz" -C release-gateway .
+          sha256sum "tamishra-workspace-gateway-$VERSION.tar.gz" > "tamishra-workspace-gateway-$VERSION.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tamishra-workspace-gateway-${{ needs.resolve.outputs.version }}
+          path: |
+            tamishra-workspace-gateway-${{ needs.resolve.outputs.version }}.tar.gz
+            tamishra-workspace-gateway-${{ needs.resolve.outputs.version }}.sha256
+          if-no-files-found: error
+
+  windows:
+    name: Signed Windows release
+    needs: [resolve, quality]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Setup Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable
+          rustup default stable
+      - run: npm install
+      - name: Require Windows signing secrets
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_PFX_BASE64)) { throw "WINDOWS_CERT_PFX_BASE64 is required for production releases." }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_PASSWORD)) { throw "WINDOWS_CERT_PASSWORD is required for production releases." }
+      - name: Install Authenticode certificate
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP "tamishra-workspace.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+          $password = ConvertTo-SecureString $env:WINDOWS_CERT_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          if (-not $cert) { throw "Unable to import Windows signing certificate." }
+          "TAURI_SIGNING_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+      - name: Configure Tauri Authenticode signing
+        shell: pwsh
+        run: |
+          $path = "apps/desktop/src-tauri/tauri.conf.json"
+          $json = Get-Content $path -Raw | ConvertFrom-Json
+          if (-not $json.bundle.windows) {
+            $json.bundle | Add-Member -NotePropertyName windows -NotePropertyValue ([pscustomobject]@{})
+          }
+          $json.bundle.windows | Add-Member -Force -NotePropertyName certificateThumbprint -NotePropertyValue $env:TAURI_SIGNING_THUMBPRINT
+          $json.bundle.windows | Add-Member -Force -NotePropertyName digestAlgorithm -NotePropertyValue "sha256"
+          $json.bundle.windows | Add-Member -Force -NotePropertyName timestampUrl -NotePropertyValue "http://timestamp.digicert.com"
+          $json | ConvertTo-Json -Depth 20 | Set-Content $path
+      - name: Build signed Windows packages
+        env:
+          NODE_ENV: production
+        run: npm run desktop:build
+      - name: Verify Authenticode signatures
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem "apps/desktop/src-tauri/target/release" -Recurse -File | Where-Object { $_.Extension -in ".exe", ".msi" }
+          if (-not $files) { throw "No Windows release files found." }
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature $file.FullName
+            if ($signature.Status -ne "Valid") {
+              throw "Invalid Authenticode signature: $($file.FullName) [$($signature.Status)]"
+            }
+          }
+      - name: Create Windows checksums
+        shell: pwsh
+        run: |
+          $version = "${{ needs.resolve.outputs.version }}"
+          Get-ChildItem "apps/desktop/src-tauri/target/release" -Recurse -File |
+            Where-Object { $_.Extension -in ".exe", ".msi" } |
+            ForEach-Object {
+              $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+              "$hash  $($_.Name)"
+            } | Set-Content "tamishra-workspace-windows-$version.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tamishra-workspace-windows-${{ needs.resolve.outputs.version }}
+          path: |
+            apps/desktop/src-tauri/target/release/*.exe
+            apps/desktop/src-tauri/target/release/bundle/**/*.exe
+            apps/desktop/src-tauri/target/release/bundle/**/*.msi
+            tamishra-workspace-windows-${{ needs.resolve.outputs.version }}.sha256
+          if-no-files-found: error
+
+  android:
+    name: Signed Android release
+    needs: [resolve, quality]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+      - run: npm install
+      - name: Require Android signing secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64" || { echo "ANDROID_KEYSTORE_BASE64 is required."; exit 1; }
+          test -n "$ANDROID_KEYSTORE_PASSWORD" || { echo "ANDROID_KEYSTORE_PASSWORD is required."; exit 1; }
+          test -n "$ANDROID_KEY_ALIAS" || { echo "ANDROID_KEY_ALIAS is required."; exit 1; }
+          test -n "$ANDROID_KEY_PASSWORD" || { echo "ANDROID_KEY_PASSWORD is required."; exit 1; }
+      - name: Build native web surface
+        env:
+          NODE_ENV: production
+        run: npm run build:web:native
+      - name: Create and sync Android project
+        working-directory: apps/mobile
+        run: |
+          npx cap add android
+          npx cap sync android
+      - name: Configure Android release signing
+        working-directory: apps/mobile
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          RELEASE_VERSION: ${{ needs.resolve.outputs.version }}
+        shell: bash
+        run: |
+          KEYSTORE="$RUNNER_TEMP/tamishra-workspace-release.jks"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          export TAMISHRA_KEYSTORE_PATH="$KEYSTORE"
+          VERSION_CODE="$(echo "$RELEASE_VERSION" | awk -F. '{printf "%d%03d%03d", $1, $2, $3}')"
+          cat >> android/app/build.gradle <<'GRADLE'
+
+          android {
+              signingConfigs {
+                  production {
+                      storeFile file(System.getenv("TAMISHRA_KEYSTORE_PATH"))
+                      storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                      keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                      keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+                      enableV1Signing true
+                      enableV2Signing true
+                      enableV3Signing true
+                      enableV4Signing true
+                  }
+              }
+              defaultConfig {
+                  versionName System.getenv("RELEASE_VERSION")
+                  versionCode Integer.parseInt(System.getenv("VERSION_CODE"))
+              }
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.production
+                      debuggable false
+                  }
+              }
+          }
+          GRADLE
+          echo "TAMISHRA_KEYSTORE_PATH=$KEYSTORE" >> "$GITHUB_ENV"
+          echo "RELEASE_VERSION=$RELEASE_VERSION" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+      - name: Build signed APK and AAB
+        working-directory: apps/mobile/android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease bundleRelease
+      - name: Verify APK signature
+        shell: bash
+        run: |
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          "$APKSIGNER" verify --verbose --print-certs apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+      - name: Create Android checksums
+        shell: bash
+        run: |
+          sha256sum             apps/mobile/android/app/build/outputs/apk/release/app-release.apk             apps/mobile/android/app/build/outputs/bundle/release/app-release.aab             > "tamishra-workspace-android-${{ needs.resolve.outputs.version }}.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tamishra-workspace-android-${{ needs.resolve.outputs.version }}
+          path: |
+            apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+            apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
+            tamishra-workspace-android-${{ needs.resolve.outputs.version }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/workspace-v')
+    needs: [resolve, web, gateway, windows, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+      - name: Publish signed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME"             --repo "$GITHUB_REPOSITORY"             --verify-tag             --generate-notes             --title "Tamishra Workspace ${{ needs.resolve.outputs.version }}"             release-assets/**/*
