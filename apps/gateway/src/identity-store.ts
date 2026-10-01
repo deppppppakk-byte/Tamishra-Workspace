@@ -52,6 +52,26 @@ export type StoredMembership = {
   disabled: boolean;
 };
 
+export type IdentityTokenPurpose = "verify-email" | "reset-password";
+
+export type StoredIdentityToken = {
+  id: string;
+  userId: string;
+  purpose: IdentityTokenPurpose;
+  tokenHash: string;
+  createdAt: string;
+  expiresAt: string;
+  consumedAt: string | null;
+};
+
+export type StoredRecoveryCode = {
+  id: string;
+  userId: string;
+  codeHash: string;
+  createdAt: string;
+  usedAt: string | null;
+};
+
 export type NewUserBundle = {
   user: StoredIdentityUser;
   credential: Omit<StoredPasswordCredential, "userId" | "createdAt" | "updatedAt">;
@@ -66,7 +86,20 @@ export interface IdentityStore {
   findUserByEmail(email: string): Promise<StoredIdentityUser | null>;
   getUser(userId: string): Promise<StoredIdentityUser | null>;
   updateDisplayName(userId: string, displayName: string): Promise<StoredIdentityUser | null>;
+  markEmailVerified(userId: string): Promise<StoredIdentityUser | null>;
   getPasswordCredential(userId: string): Promise<StoredPasswordCredential | null>;
+  replacePasswordCredential(
+    userId: string,
+    credential: Omit<StoredPasswordCredential, "userId" | "createdAt" | "updatedAt">
+  ): Promise<void>;
+  createIdentityToken(token: StoredIdentityToken): Promise<void>;
+  consumeIdentityToken(
+    tokenHash: string,
+    purpose: IdentityTokenPurpose
+  ): Promise<StoredIdentityToken | null>;
+  replaceRecoveryCodes(userId: string, codes: StoredRecoveryCode[]): Promise<void>;
+  consumeRecoveryCode(userId: string, codeHash: string): Promise<boolean>;
+  countUnusedRecoveryCodes(userId: string): Promise<number>;
   createSession(session: StoredIdentitySession): Promise<void>;
   findSessionByTokenHash(tokenHash: string): Promise<StoredIdentitySession | null>;
   touchSession(sessionId: string): Promise<void>;
@@ -153,6 +186,8 @@ class MemoryIdentityStore implements IdentityStore {
   private readonly sessions = new Map<string, StoredIdentitySession>();
   private readonly organizations = new Map<string, StoredOrganization>();
   private readonly memberships = new Map<string, StoredMembership>();
+  private readonly identityTokens = new Map<string, StoredIdentityToken>();
+  private readonly recoveryCodes = new Map<string, StoredRecoveryCode>();
 
   async ready() {}
 
@@ -189,8 +224,87 @@ class MemoryIdentityStore implements IdentityStore {
     return structuredClone(user);
   }
 
+  async markEmailVerified(userId: string) {
+    const user = this.users.get(userId);
+    if (!user) return null;
+    user.emailVerified = true;
+    user.updatedAt = new Date().toISOString();
+    return structuredClone(user);
+  }
+
   async getPasswordCredential(userId: string) {
     return this.credentials.get(userId) ?? null;
+  }
+
+  async replacePasswordCredential(
+    userId: string,
+    credential: Omit<StoredPasswordCredential, "userId" | "createdAt" | "updatedAt">
+  ) {
+    const existing = this.credentials.get(userId);
+    const now = new Date().toISOString();
+    this.credentials.set(userId, {
+      ...structuredClone(credential),
+      userId,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now
+    });
+  }
+
+  async createIdentityToken(token: StoredIdentityToken) {
+    for (const existing of this.identityTokens.values()) {
+      if (
+        existing.userId === token.userId &&
+        existing.purpose === token.purpose &&
+        !existing.consumedAt
+      ) {
+        existing.consumedAt = token.createdAt;
+      }
+    }
+    this.identityTokens.set(token.id, structuredClone(token));
+  }
+
+  async consumeIdentityToken(
+    tokenHashValue: string,
+    purpose: IdentityTokenPurpose
+  ) {
+    const now = Date.now();
+    const token = Array.from(this.identityTokens.values()).find(
+      (item) =>
+        item.tokenHash === tokenHashValue &&
+        item.purpose === purpose &&
+        !item.consumedAt &&
+        new Date(item.expiresAt).getTime() > now
+    );
+    if (!token) return null;
+    token.consumedAt = new Date().toISOString();
+    return structuredClone(token);
+  }
+
+  async replaceRecoveryCodes(userId: string, codes: StoredRecoveryCode[]) {
+    for (const [id, code] of this.recoveryCodes) {
+      if (code.userId === userId) this.recoveryCodes.delete(id);
+    }
+    for (const code of codes) {
+      this.recoveryCodes.set(code.id, structuredClone(code));
+    }
+  }
+
+  async consumeRecoveryCode(userId: string, codeHashValue: string) {
+    const code = Array.from(this.recoveryCodes.values()).find(
+      (item) =>
+        item.userId === userId &&
+        item.codeHash === codeHashValue &&
+        !item.usedAt
+    );
+    if (!code) return false;
+    code.usedAt = new Date().toISOString();
+    return true;
+  }
+
+  async countUnusedRecoveryCodes(userId: string) {
+    return Array.from(this.recoveryCodes.values()).filter(
+      (item) => item.userId === userId && !item.usedAt
+    ).length;
   }
 
   async createSession(session: StoredIdentitySession) {
@@ -326,6 +440,29 @@ class PostgresIdentityStore implements IdentityStore {
     `;
 
     await this.sql`
+      create table if not exists workspace_identity_tokens (
+        id text primary key,
+        user_id text not null references workspace_users(id) on delete cascade,
+        purpose text not null,
+        token_hash text not null unique,
+        created_at timestamptz not null default now(),
+        expires_at timestamptz not null,
+        consumed_at timestamptz
+      )
+    `;
+
+    await this.sql`
+      create table if not exists workspace_recovery_codes (
+        id text primary key,
+        user_id text not null references workspace_users(id) on delete cascade,
+        code_hash text not null,
+        created_at timestamptz not null default now(),
+        used_at timestamptz,
+        unique(user_id, code_hash)
+      )
+    `;
+
+    await this.sql`
       create index if not exists workspace_sessions_user_idx
       on workspace_sessions(user_id, last_seen_at desc)
     `;
@@ -338,6 +475,16 @@ class PostgresIdentityStore implements IdentityStore {
     await this.sql`
       create index if not exists workspace_memberships_user_idx
       on workspace_memberships(user_id, joined_at)
+    `;
+
+    await this.sql`
+      create index if not exists workspace_identity_tokens_lookup_idx
+      on workspace_identity_tokens(token_hash, purpose, expires_at)
+    `;
+
+    await this.sql`
+      create index if not exists workspace_recovery_codes_user_idx
+      on workspace_recovery_codes(user_id, used_at)
     `;
   }
 
@@ -425,6 +572,17 @@ class PostgresIdentityStore implements IdentityStore {
     return rows[0] ? toUser(rows[0] as Record<string, unknown>) : null;
   }
 
+  async markEmailVerified(userId: string) {
+    await this.ready();
+    const rows = await this.sql`
+      update workspace_users
+      set email_verified=true, updated_at=now()
+      where id=${userId}
+      returning *
+    `;
+    return rows[0] ? toUser(rows[0] as Record<string, unknown>) : null;
+  }
+
   async getPasswordCredential(userId: string) {
     await this.ready();
     const rows = await this.sql`
@@ -433,6 +591,130 @@ class PostgresIdentityStore implements IdentityStore {
       limit 1
     `;
     return rows[0] ? toCredential(rows[0] as Record<string, unknown>) : null;
+  }
+
+  async replacePasswordCredential(
+    userId: string,
+    credential: Omit<StoredPasswordCredential, "userId" | "createdAt" | "updatedAt">
+  ) {
+    await this.ready();
+    await this.sql`
+      insert into workspace_password_credentials(
+        user_id, password_hash, password_salt,
+        scrypt_n, scrypt_r, scrypt_p, key_length,
+        created_at, updated_at
+      ) values (
+        ${userId}, ${credential.passwordHash}, ${credential.passwordSalt},
+        ${credential.scryptN}, ${credential.scryptR},
+        ${credential.scryptP}, ${credential.keyLength},
+        now(), now()
+      )
+      on conflict(user_id) do update set
+        password_hash=excluded.password_hash,
+        password_salt=excluded.password_salt,
+        scrypt_n=excluded.scrypt_n,
+        scrypt_r=excluded.scrypt_r,
+        scrypt_p=excluded.scrypt_p,
+        key_length=excluded.key_length,
+        updated_at=now()
+    `;
+  }
+
+  async createIdentityToken(token: StoredIdentityToken) {
+    await this.ready();
+    await this.sql`
+      update workspace_identity_tokens
+      set consumed_at=coalesce(consumed_at, now())
+      where user_id=${token.userId}
+        and purpose=${token.purpose}
+        and consumed_at is null
+    `;
+    await this.sql`
+      insert into workspace_identity_tokens(
+        id, user_id, purpose, token_hash, created_at, expires_at, consumed_at
+      ) values (
+        ${token.id}, ${token.userId}, ${token.purpose}, ${token.tokenHash},
+        ${token.createdAt}, ${token.expiresAt}, ${token.consumedAt}
+      )
+    `;
+  }
+
+  async consumeIdentityToken(
+    tokenHashValue: string,
+    purpose: IdentityTokenPurpose
+  ) {
+    await this.ready();
+    const rows = await this.sql`
+      update workspace_identity_tokens
+      set consumed_at=now()
+      where id=(
+        select id
+        from workspace_identity_tokens
+        where token_hash=${tokenHashValue}
+          and purpose=${purpose}
+          and consumed_at is null
+          and expires_at > now()
+        limit 1
+      )
+      returning *
+    `;
+    if (!rows[0]) return null;
+    const row = rows[0] as Record<string, unknown>;
+    return {
+      id: String(row.id),
+      userId: String(row.user_id),
+      purpose: String(row.purpose) as IdentityTokenPurpose,
+      tokenHash: String(row.token_hash),
+      createdAt: iso(row.created_at) ?? new Date().toISOString(),
+      expiresAt: iso(row.expires_at) ?? new Date(0).toISOString(),
+      consumedAt: iso(row.consumed_at)
+    };
+  }
+
+  async replaceRecoveryCodes(userId: string, codes: StoredRecoveryCode[]) {
+    await this.ready();
+    await this.sql`
+      delete from workspace_recovery_codes
+      where user_id=${userId}
+    `;
+    for (const code of codes) {
+      await this.sql`
+        insert into workspace_recovery_codes(
+          id, user_id, code_hash, created_at, used_at
+        ) values (
+          ${code.id}, ${code.userId}, ${code.codeHash},
+          ${code.createdAt}, ${code.usedAt}
+        )
+      `;
+    }
+  }
+
+  async consumeRecoveryCode(userId: string, codeHashValue: string) {
+    await this.ready();
+    const rows = await this.sql`
+      update workspace_recovery_codes
+      set used_at=now()
+      where id=(
+        select id
+        from workspace_recovery_codes
+        where user_id=${userId}
+          and code_hash=${codeHashValue}
+          and used_at is null
+        limit 1
+      )
+      returning id
+    `;
+    return Boolean(rows[0]);
+  }
+
+  async countUnusedRecoveryCodes(userId: string) {
+    await this.ready();
+    const rows = await this.sql`
+      select count(*)::int as count
+      from workspace_recovery_codes
+      where user_id=${userId} and used_at is null
+    `;
+    return Number((rows[0] as Record<string, unknown> | undefined)?.count ?? 0);
   }
 
   async createSession(session: StoredIdentitySession) {
