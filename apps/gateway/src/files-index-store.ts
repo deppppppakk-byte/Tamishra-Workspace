@@ -1,4 +1,4 @@
-import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
+import postgres from "postgres";
 
 export type StoredFileIndex = {
   userId: string;
@@ -62,7 +62,7 @@ class PostgresFileIndexStore implements FileIndexStore {
   readonly kind = "postgres" as const;
   private initialized = false;
 
-  constructor(private readonly sql: NeonQueryFunction<false, false>) {}
+  constructor(private readonly sql: ReturnType<typeof postgres>) {}
 
   async ready() {
     if (this.initialized) return;
@@ -153,6 +153,6 @@ class PostgresFileIndexStore implements FileIndexStore {
 export function createFileIndexStore(): FileIndexStore {
   const databaseUrl = process.env.WORKSPACE_DATABASE_URL?.trim();
   return databaseUrl
-    ? new PostgresFileIndexStore(neon(databaseUrl))
+    ? new PostgresFileIndexStore(postgres(databaseUrl, { max: 5, prepare: false }))
     : new MemoryFileIndexStore();
 }
