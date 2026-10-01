@@ -15,7 +15,7 @@ if (!databaseUrl) {
 
 const sql = neon(databaseUrl);
 const publicDomain =
-  process.env.PATRA_MAIL_DOMAIN?.trim().toLowerCase() || "patra.in";
+  process.env.PATRA_MAIL_DOMAIN?.trim().toLowerCase() || "patra.tamishra.in";
 const companyDomain =
   process.env.PATRA_COMPANY_MAIL_DOMAIN?.trim().toLowerCase() || "tamishra.in";
 const acceptedDomains = new Set([publicDomain, companyDomain]);
@@ -469,7 +469,7 @@ function smtpServer() {
   if (!key || !cert) disabledCommands.push("STARTTLS");
 
   return new SMTPServer({
-    name: process.env.PATRA_SMTP_HOSTNAME?.trim() || "mx.patra.in",
+    name: process.env.PATRA_SMTP_HOSTNAME?.trim() || "mx.patra.tamishra.in",
     secure: false,
     key: key ?? undefined,
     cert: cert ?? undefined,
