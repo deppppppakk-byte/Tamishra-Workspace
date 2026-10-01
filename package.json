@@ -45,6 +45,7 @@
   "overrides": {
     "pptxgenjs": {
       "image-size": "2.0.4"
-    }
+    },
+    "baseline-browser-mapping": "2.11.26"
   }
 }
