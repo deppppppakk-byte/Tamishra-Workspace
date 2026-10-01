@@ -9,10 +9,10 @@
     "check": "node --check src/index.mjs"
   },
   "dependencies": {
-    "@neondatabase/serverless": "0.10.4",
     "nodemailer": "^10.0.13",
     "postal-mime": "^4.0.0",
-    "smtp-server": "^3.19.16"
+    "smtp-server": "^3.19.16",
+    "postgres": "3.4.9"
   },
   "engines": {
     "node": ">=22"
