@@ -183,3 +183,41 @@ Major meeting events are persisted in `workspace_meeting_audit`, including:
 - `apps/gateway/db/002_meet_collaboration.sql` — controls, chat, signals and audit
 
 The runtime still uses the same `@tamishra/meet-core` client contract across browser, Tauri desktop and Capacitor mobile clients.
+
+
+## Co-host and media moderation
+
+Workspace Meet now supports a distinct moderator layer without giving every moderator owner authority.
+
+### Roles
+
+- **Host** — meeting owner; can end the meeting, change room policy, promote/demote co-hosts, and use all moderation controls.
+- **Co-host** — can manage the waiting room, view attendance/activity, clear raised hands, mute participant microphones, stop participant cameras, and remove ordinary participants.
+- **Participant** — standard admitted attendee.
+
+Only admitted participants can be promoted to co-host.
+
+### Server-enforced media controls
+
+LiveKit moderation is performed by the Workspace gateway, not by trusting client UI state.
+
+- mute an individual participant microphone
+- stop an individual participant camera
+- mute all ordinary participant microphones
+- stop all ordinary participant cameras
+- owner policy can disable participant microphone publishing
+- owner policy can disable participant camera publishing
+
+When a publish policy changes, connected ordinary participants receive updated LiveKit permissions. Existing microphone/camera tracks are muted or stopped when the policy is disabled. Offline participants receive the policy on their next token issue.
+
+The gateway does not remotely unmute a participant when a policy is re-enabled; it restores permission and the participant chooses whether to publish again.
+
+### Live media state
+
+The People panel reports current server-observed microphone, camera, and screen-share state from LiveKit participant tracks.
+
+### Database migration
+
+- `apps/gateway/db/003_meet_cohost_media.sql` — participant media policy columns and role lookup index
+
+The runtime also auto-upgrades existing `workspace_meeting_controls` tables with the new policy columns using `ADD COLUMN IF NOT EXISTS`.

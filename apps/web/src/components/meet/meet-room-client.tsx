@@ -37,6 +37,8 @@ const initialControls: MeetingControls = {
   chatEnabled: true,
   reactionsEnabled: true,
   handRaiseEnabled: true,
+  participantMicrophoneEnabled: true,
+  participantCameraEnabled: true,
   updatedAt: ""
 };
 
@@ -52,7 +54,13 @@ function auditLabel(event: MeetingAuditEvent) {
     participant_denied: "Participant denied",
     participant_removed: "Participant removed",
     controls_updated: "Meeting controls updated",
-    hand_raise_cleared: "Hand raise cleared"
+    hand_raise_cleared: "Hand raise cleared",
+    cohost_promoted: "Co-host promoted",
+    cohost_demoted: "Co-host removed",
+    participant_microphone_muted: "Participant microphone muted",
+    participant_camera_stopped: "Participant camera stopped",
+    mute_all_mics: "All participant microphones muted",
+    stop_all_cameras: "All participant cameras stopped"
   };
   return labels[event.eventType] ?? event.eventType.replaceAll("_", " ");
 }
@@ -89,6 +97,8 @@ export function MeetRoomClient() {
   const [connected, setConnected] = useState(false);
 
   const isHost = context?.role === "host";
+  const isModerator =
+    context?.role === "host" || context?.role === "cohost";
 
   useEffect(() => {
     if (window.matchMedia("(max-width: 720px)").matches) {
@@ -166,7 +176,7 @@ export function MeetRoomClient() {
 
     void loadContext(room, access.accessKey)
       .then((result) => {
-        if (result.role === "host") {
+        if (result.role === "host" || result.role === "cohost") {
           setSidebarTab("people");
           return Promise.all([
             loadParticipants(room, access.accessKey).catch(() => undefined),
@@ -208,7 +218,7 @@ export function MeetRoomClient() {
   ]);
 
   useEffect(() => {
-    if (!roomName || !accessKey || !isHost) return;
+    if (!roomName || !accessKey || !isModerator) return;
 
     const refresh = () => {
       void loadParticipants(roomName, accessKey).catch(() => undefined);
@@ -222,7 +232,7 @@ export function MeetRoomClient() {
   }, [
     roomName,
     accessKey,
-    isHost,
+    isModerator,
     loadParticipants,
     loadAttendance,
     loadAudit
@@ -254,6 +264,17 @@ export function MeetRoomClient() {
     context?.admissionStatus,
     loadCollaboration
   ]);
+
+  useEffect(() => {
+    if (!roomName || !accessKey || !connected) return;
+
+    const refresh = () => {
+      void loadContext(roomName, accessKey).catch(() => undefined);
+    };
+
+    const timer = window.setInterval(refresh, 4000);
+    return () => window.clearInterval(timer);
+  }, [roomName, accessKey, connected, loadContext]);
 
   useEffect(() => {
     if (!roomName || !accessKey || !connected) return;
@@ -382,7 +403,12 @@ export function MeetRoomClient() {
   async function updateHostControls(
     patch: Partial<Pick<
       MeetingControls,
-      "locked" | "chatEnabled" | "reactionsEnabled" | "handRaiseEnabled"
+      | "locked"
+      | "chatEnabled"
+      | "reactionsEnabled"
+      | "handRaiseEnabled"
+      | "participantMicrophoneEnabled"
+      | "participantCameraEnabled"
     >>
   ) {
     if (!roomName || !accessKey || !isHost || collaborationBusy) return;
@@ -404,7 +430,7 @@ export function MeetRoomClient() {
     participantId: string,
     action: "remove" | "clear-hand"
   ) {
-    if (!roomName || !accessKey || !isHost || collaborationBusy) return;
+    if (!roomName || !accessKey || !isModerator || collaborationBusy) return;
     setCollaborationBusy(true);
     try {
       await gateway.moderate(roomName, accessKey, participantId, action);
@@ -423,17 +449,94 @@ export function MeetRoomClient() {
     }
   }
 
+  async function updateParticipantRole(
+    participantId: string,
+    role: "cohost" | "participant"
+  ) {
+    if (!roomName || !accessKey || !isHost || collaborationBusy) return;
+    setCollaborationBusy(true);
+    try {
+      await gateway.setRole(roomName, accessKey, participantId, role);
+      await Promise.all([
+        loadParticipants(roomName, accessKey),
+        loadAudit(roomName, accessKey)
+      ]);
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error ? reason.message : "Unable to update meeting role."
+      );
+    } finally {
+      setCollaborationBusy(false);
+    }
+  }
+
+  async function controlParticipantMedia(
+    participantId: string,
+    action: "mute-mic" | "stop-camera"
+  ) {
+    if (!roomName || !accessKey || !isModerator || collaborationBusy) return;
+    setCollaborationBusy(true);
+    try {
+      await gateway.controlMedia(
+        roomName,
+        accessKey,
+        action,
+        participantId
+      );
+      await Promise.all([
+        loadParticipants(roomName, accessKey),
+        loadAudit(roomName, accessKey)
+      ]);
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error ? reason.message : "Unable to control participant media."
+      );
+    } finally {
+      setCollaborationBusy(false);
+    }
+  }
+
+  async function controlAllMedia(
+    action: "mute-all-mics" | "stop-all-cameras"
+  ) {
+    if (!roomName || !accessKey || !isModerator || collaborationBusy) return;
+    setCollaborationBusy(true);
+    try {
+      await gateway.controlMedia(roomName, accessKey, action);
+      await Promise.all([
+        loadParticipants(roomName, accessKey),
+        loadAudit(roomName, accessKey)
+      ]);
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error ? reason.message : "Unable to control room media."
+      );
+    } finally {
+      setCollaborationBusy(false);
+    }
+  }
+
   async function connect(values: JoinChoices) {
     if (!roomName || !accessKey || joining) return;
     setJoining(true);
     setError("");
-    setChoices(values);
     try {
       const result = await gateway.issueToken(
         roomName,
         accessKey,
         values.username?.trim() || displayName
       );
+      setChoices({
+        ...values,
+        audioEnabled:
+          values.audioEnabled &&
+          (result.role !== "participant" ||
+            result.participantMicrophoneEnabled),
+        videoEnabled:
+          values.videoEnabled &&
+          (result.role !== "participant" ||
+            result.participantCameraEnabled)
+      });
       setToken(result.token);
       setServerUrl(result.url);
     } catch (reason) {
@@ -598,7 +701,11 @@ export function MeetRoomClient() {
               </button>
             )}
             <span className={styles.roleBadge}>
-              {isHost ? "Host" : "Participant"}
+              {context.role === "host"
+                ? "Host"
+                : context.role === "cohost"
+                  ? "Co-host"
+                  : "Participant"}
             </span>
           </div>
         </header>
@@ -638,7 +745,13 @@ export function MeetRoomClient() {
   );
   const admittedParticipants = participants.filter(
     (participant) =>
-      participant.role !== "host" && participant.admissionStatus === "admitted"
+      participant.role !== "host" &&
+      participant.admissionStatus === "admitted"
+  );
+  const manageableParticipants = admittedParticipants.filter(
+    (participant) =>
+      participant.id !== context.participantId &&
+      (isHost || participant.role === "participant")
   );
   const raisedSignals = signals.filter((signal) => signal.handRaised);
   const reactionSignals = signals.filter((signal) => signal.reaction);
@@ -763,7 +876,7 @@ export function MeetRoomClient() {
               Chat {messages.length > 0 ? "· " + messages.length : ""}
             </button>
 
-            {isHost && (
+            {isModerator && (
               <button
                 className={styles.toolbarButton}
                 onClick={() => {
@@ -815,9 +928,9 @@ export function MeetRoomClient() {
               className={sidebarTab === "people" ? styles.sidebarTabActive : ""}
               onClick={() => setSidebarTab("people")}
             >
-              {isHost ? "People" : "Signals"}
+              {isModerator ? "People" : "Signals"}
             </button>
-            {isHost && (
+            {isModerator && (
               <button
                 className={sidebarTab === "activity" ? styles.sidebarTabActive : ""}
                 onClick={() => setSidebarTab("activity")}
@@ -964,6 +1077,40 @@ export function MeetRoomClient() {
                       <small>Allow persistent hand-raise signals.</small>
                     </span>
                   </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={controls.participantMicrophoneEnabled}
+                      onChange={(event) =>
+                        void updateHostControls({
+                          participantMicrophoneEnabled: event.target.checked
+                        })
+                      }
+                    />
+                    <span>
+                      <strong>Participant microphones</strong>
+                      <small>
+                        Allow participants to publish microphone audio.
+                      </small>
+                    </span>
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={controls.participantCameraEnabled}
+                      onChange={(event) =>
+                        void updateHostControls({
+                          participantCameraEnabled: event.target.checked
+                        })
+                      }
+                    />
+                    <span>
+                      <strong>Participant cameras</strong>
+                      <small>
+                        Allow participants to publish camera video.
+                      </small>
+                    </span>
+                  </label>
                 </div>
               )}
 
@@ -978,7 +1125,7 @@ export function MeetRoomClient() {
                         <strong>✋ {signal.displayName}</strong>
                         <small>Waiting to speak</small>
                       </div>
-                      {isHost &&
+                      {isModerator &&
                         signal.participantId !== context.participantId && (
                           <div>
                             <button
@@ -999,7 +1146,7 @@ export function MeetRoomClient() {
                 </div>
               )}
 
-              {isHost && waitingParticipants.length > 0 && (
+              {isModerator && waitingParticipants.length > 0 && (
                 <div className={styles.waitingGroup}>
                   <span className={styles.groupLabel}>
                     WAITING · {waitingParticipants.length}
@@ -1033,12 +1180,29 @@ export function MeetRoomClient() {
                 </div>
               )}
 
-              {isHost && (
+              {isModerator && (
                 <div className={styles.allParticipants}>
-                  <span className={styles.groupLabel}>
-                    IN ROOM · {admittedParticipants.length}
-                  </span>
-                  {admittedParticipants.map((participant) => (
+                  <div className={styles.participantSectionHeader}>
+                    <span className={styles.groupLabel}>
+                      IN ROOM · {admittedParticipants.length}
+                    </span>
+                    <div>
+                      <button
+                        disabled={collaborationBusy}
+                        onClick={() => void controlAllMedia("mute-all-mics")}
+                      >
+                        Mute all
+                      </button>
+                      <button
+                        disabled={collaborationBusy}
+                        onClick={() => void controlAllMedia("stop-all-cameras")}
+                      >
+                        Stop cameras
+                      </button>
+                    </div>
+                  </div>
+
+                  {manageableParticipants.map((participant) => (
                     <div className={styles.participantControlRow} key={participant.id}>
                       <span className={styles.participantAvatar}>
                         {participant.displayName
@@ -1048,25 +1212,80 @@ export function MeetRoomClient() {
                           .join("")
                           .toUpperCase()}
                       </span>
-                      <div>
-                        <strong>{participant.displayName}</strong>
-                        <small>Participant · admitted</small>
+                      <div className={styles.participantIdentity}>
+                        <strong>
+                          {participant.displayName}
+                          {participant.role === "cohost" && (
+                            <span className={styles.cohostBadge}>Co-host</span>
+                          )}
+                        </strong>
+                        <small>
+                          {participant.microphoneActive ? "Mic on" : "Mic off"}
+                          {" · "}
+                          {participant.cameraActive ? "Camera on" : "Camera off"}
+                          {participant.screenShareActive ? " · Sharing" : ""}
+                        </small>
                       </div>
-                      <button
-                        className={styles.removeButton}
-                        disabled={collaborationBusy}
-                        onClick={() =>
-                          void moderateParticipant(participant.id, "remove")
-                        }
-                      >
-                        Remove
-                      </button>
+                      <div className={styles.participantActions}>
+                        {participant.microphoneActive && (
+                          <button
+                            disabled={collaborationBusy}
+                            onClick={() =>
+                              void controlParticipantMedia(
+                                participant.id,
+                                "mute-mic"
+                              )
+                            }
+                          >
+                            Mute
+                          </button>
+                        )}
+                        {participant.cameraActive && (
+                          <button
+                            disabled={collaborationBusy}
+                            onClick={() =>
+                              void controlParticipantMedia(
+                                participant.id,
+                                "stop-camera"
+                              )
+                            }
+                          >
+                            Stop camera
+                          </button>
+                        )}
+                        {isHost && (
+                          <button
+                            disabled={collaborationBusy}
+                            onClick={() =>
+                              void updateParticipantRole(
+                                participant.id,
+                                participant.role === "cohost"
+                                  ? "participant"
+                                  : "cohost"
+                              )
+                            }
+                          >
+                            {participant.role === "cohost"
+                              ? "Remove co-host"
+                              : "Make co-host"}
+                          </button>
+                        )}
+                        <button
+                          className={styles.removeButton}
+                          disabled={collaborationBusy}
+                          onClick={() =>
+                            void moderateParticipant(participant.id, "remove")
+                          }
+                        >
+                          Remove
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
               )}
 
-              {isHost && (
+              {isModerator && (
                 <div className={styles.attendanceGroup}>
                   <span className={styles.groupLabel}>
                     ATTENDANCE · {attendance.length}
@@ -1095,7 +1314,7 @@ export function MeetRoomClient() {
                 </div>
               )}
 
-              {!isHost && raisedSignals.length === 0 && (
+              {!isModerator && raisedSignals.length === 0 && (
                 <p className={styles.emptyState}>
                   No active hand raises right now.
                 </p>
@@ -1103,7 +1322,7 @@ export function MeetRoomClient() {
             </div>
           )}
 
-          {isHost && sidebarTab === "activity" && (
+          {isModerator && sidebarTab === "activity" && (
             <div className={styles.activityPanel}>
               <div className={styles.hostPanelHeading}>
                 <span>SECURITY & ACTIVITY</span>

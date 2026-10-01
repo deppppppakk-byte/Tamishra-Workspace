@@ -7,16 +7,19 @@ import {
 export type MeetingParticipant = {
   id: string;
   displayName: string;
-  role: "host" | "participant";
+  role: "host" | "cohost" | "participant";
   admissionStatus: "waiting" | "admitted" | "denied";
   createdAt: string;
   lastSeenAt: string;
+  microphoneActive: boolean;
+  cameraActive: boolean;
+  screenShareActive: boolean;
 };
 
 export type MeetingAccess = {
   roomName: string;
   accessKey: string;
-  role: "host" | "participant";
+  role: "host" | "cohost" | "participant";
   displayName: string;
   joinCode?: string;
 };
@@ -34,6 +37,8 @@ export type MeetingControls = {
   chatEnabled: boolean;
   reactionsEnabled: boolean;
   handRaiseEnabled: boolean;
+  participantMicrophoneEnabled: boolean;
+  participantCameraEnabled: boolean;
   updatedAt: string;
 };
 
@@ -202,7 +207,12 @@ export class WorkspaceMeetingGateway {
     accessKey: string,
     patch: Partial<Pick<
       MeetingControls,
-      "locked" | "chatEnabled" | "reactionsEnabled" | "handRaiseEnabled"
+      | "locked"
+      | "chatEnabled"
+      | "reactionsEnabled"
+      | "handRaiseEnabled"
+      | "participantMicrophoneEnabled"
+      | "participantCameraEnabled"
     >>
   ) {
     const response = await fetch(
@@ -214,6 +224,53 @@ export class WorkspaceMeetingGateway {
       }
     );
     return parseResponse<{ controls: MeetingControls }>(response);
+  }
+
+  async setRole(
+    roomName: string,
+    accessKey: string,
+    participantId: string,
+    role: "cohost" | "participant"
+  ) {
+    const response = await fetch(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/role"),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accessKey, participantId, role })
+      }
+    );
+    return parseResponse<{
+      participant: Pick<
+        MeetingParticipant,
+        "id" | "displayName" | "role" | "admissionStatus"
+      >;
+    }>(response);
+  }
+
+  async controlMedia(
+    roomName: string,
+    accessKey: string,
+    action:
+      | "mute-mic"
+      | "stop-camera"
+      | "mute-all-mics"
+      | "stop-all-cameras",
+    participantId?: string
+  ) {
+    const response = await fetch(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/media"),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accessKey, participantId, action })
+      }
+    );
+    return parseResponse<{
+      ok: true;
+      participantId?: string;
+      affectedTracks: number;
+    }>(response);
   }
 
   async moderate(
@@ -335,8 +392,10 @@ export class WorkspaceMeetingGateway {
     return parseResponse<{
       token: string;
       url: string;
-      role: "host" | "participant";
+      role: "host" | "cohost" | "participant";
       allowParticipantScreenShare: boolean;
+      participantMicrophoneEnabled: boolean;
+      participantCameraEnabled: boolean;
     }>(response);
   }
 }

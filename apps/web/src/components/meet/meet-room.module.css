@@ -658,6 +658,74 @@
   line-height: 1.4;
 }
 
+.participantSectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.participantSectionHeader > div {
+  display: flex;
+  gap: 5px;
+}
+
+.participantSectionHeader button,
+.participantActions button {
+  min-height: 28px;
+  border: 1px solid rgba(23, 32, 51, 0.08);
+  border-radius: 9px;
+  padding: 0 8px;
+  color: #526078;
+  background: #f7f9fc;
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.participantSectionHeader button:hover,
+.participantActions button:hover {
+  border-color: rgba(49, 92, 244, 0.18);
+  color: #315cf4;
+  background: #eef3ff;
+}
+
+.participantSectionHeader button:disabled,
+.participantActions button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.participantIdentity {
+  min-width: 0;
+}
+
+.participantIdentity strong {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.cohostBadge {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border-radius: 999px;
+  color: #315cf4;
+  background: #edf2ff;
+  font-size: 6px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.participantActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
 .participantControlRow {
   margin-top: 8px;
   padding: 8px;
@@ -940,8 +1008,18 @@
 
 @media (max-width: 900px) {
   .hostPanel {
-    width: 320px;
-    min-width: 280px;
+    width: 360px;
+    min-width: 300px;
+  }
+
+  .participantControlRow {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .participantActions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    padding-left: 41px;
   }
 }
 
@@ -1036,5 +1114,22 @@
   .toolbarButton,
   .toolbarButtonActive {
     padding: 0 8px;
+  }
+
+  .participantSectionHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .participantSectionHeader > div {
+    width: 100%;
+  }
+
+  .participantSectionHeader button {
+    flex: 1;
+  }
+
+  .participantActions {
+    padding-left: 0;
   }
 }
