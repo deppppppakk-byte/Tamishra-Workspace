@@ -1,12 +1,12 @@
-# Tamishra Mail backend boundary
+# Tamishra Patra backend boundary
 
-Tamishra Mail is a first-party Workspace service with an optional open-standards mail-server bridge.
+Tamishra Patra is a first-party Workspace service with an optional open-standards mail-server bridge.
 
 ## Product rule
 
-Tamishra Mail must not depend on Google Mail, Microsoft Outlook, Microsoft Graph, Google APIs, Microsoft APIs or vendor OAuth services.
+Tamishra Patra must not depend on Google Mail, Microsoft Outlook, Microsoft Graph, Google APIs, Microsoft APIs or vendor OAuth services.
 
-The primary mailbox is **Tamishra Mail**.
+The primary mailbox is **Tamishra Patra**.
 
 Optional interoperability is limited to standards-based mail protocols such as IMAP and SMTP for independently operated mail servers.
 
@@ -41,7 +41,7 @@ The Workspace gateway must:
 
 Initial adapters:
 
-- Tamishra Mail — primary first-party mailbox
+- Tamishra Patra — primary first-party mailbox
 - standards-based IMAP + SMTP — optional custom-server bridge
 - LocalMailProvider — offline/demo development
 
@@ -52,10 +52,10 @@ The UI must not import external mail-provider SDKs directly.
 ## Tamishra-native mailbox flow
 
 1. User signs in to Tamishra Workspace.
-2. The Workspace gateway resolves the user's Tamishra Mail account.
+2. The Workspace gateway resolves the user's Tamishra Patra account.
 3. The mail client requests folders/messages through the authenticated gateway.
-4. Drafts and outgoing messages are submitted to Tamishra Mail.
-5. Tamishra Mail performs delivery and synchronization.
+4. Drafts and outgoing messages are submitted to Tamishra Patra.
+5. Tamishra Patra performs delivery and synchronization.
 6. Clients receive only mailbox data and sanitized account metadata.
 
 ## Custom IMAP/SMTP flow
