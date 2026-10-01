@@ -8,7 +8,8 @@ const nextConfig: NextConfig = {
   transpilePackages: [
     "@tamishra/workspace-core",
     "@tamishra/mail-core",
-    "@tamishra/sheets-engine"
+    "@tamishra/sheets-engine",
+    "@tamishra/meet-core"
   ]
 };
 
