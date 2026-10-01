@@ -22,6 +22,23 @@ export type FormVisibilityRule = {
   value?: string;
 };
 
+export type FormPageBranchRule = {
+  id: string;
+  sourceFieldId: string;
+  operator: FormLogicOperator;
+  value?: string;
+  targetPageId: string;
+};
+
+export type FormPage = {
+  id: string;
+  title: string;
+  description: string;
+  fieldIds: string[];
+  branchRules: FormPageBranchRule[];
+  defaultNextPageId: string | null;
+};
+
 export type FormFieldValidation = {
   minLength?: number;
   maxLength?: number;
@@ -61,6 +78,7 @@ export type TamishraForm = {
   title: string;
   description: string;
   fields: FormField[];
+  pages: FormPage[];
   status: FormStatus;
   theme: FormTheme;
   settings: FormSettings;
@@ -120,11 +138,15 @@ export function createFormsSnapshot(): FormsSnapshot {
 export function normalizeForm(input: Partial<TamishraForm>): TamishraForm {
   const now = new Date().toISOString();
   const fields = Array.isArray(input.fields) ? input.fields.map(normalizeField) : [];
+  const normalizedFields = fields.length ? fields : [createField("short-text", "Question")];
+  const incomingPages = Array.isArray(input.pages) ? input.pages : [];
+  const pages = normalizePages(incomingPages, normalizedFields);
   return {
     id: input.id || createId("form"),
     title: input.title ?? "Untitled form",
     description: input.description ?? "",
-    fields: fields.length ? fields : [createField("short-text", "Question")],
+    fields: normalizedFields,
+    pages,
     status: input.status ?? "draft",
     theme: {
       ...defaultTheme,
@@ -144,17 +166,31 @@ export function normalizeForm(input: Partial<TamishraForm>): TamishraForm {
 
 export function createForm(title = "Untitled form"): TamishraForm {
   const now = new Date().toISOString();
+  const firstField = createField("short-text", "Question");
+  const firstPage = createFormPage("Page 1", [firstField.id]);
   return normalizeForm({
     id: createId("form"),
     title,
     description: "",
-    fields: [createField("short-text", "Question")],
+    fields: [firstField],
+    pages: [firstPage],
     createdAt: now,
     updatedAt: now,
     publishedAt: null,
     closedAt: null,
     trashedAt: null
   });
+}
+
+export function createFormPage(title = "Page", fieldIds: string[] = []): FormPage {
+  return {
+    id: createId("page"),
+    title,
+    description: "",
+    fieldIds: [...fieldIds],
+    branchRules: [],
+    defaultNextPageId: null
+  };
 }
 
 export function createField(type: FormFieldType, label = "Question"): FormField {
@@ -256,6 +292,50 @@ export function createTemplateForm(
         ? "Capture field observations with a structured Tamishra form."
         : ""
   };
+}
+
+export function getFieldsForPage(form: TamishraForm, pageId: string) {
+  const page = form.pages.find((item) => item.id === pageId);
+  if (!page) return [];
+  const ids = new Set(page.fieldIds);
+  return form.fields.filter((field) => ids.has(field.id));
+}
+
+export function getNextPageId(
+  form: TamishraForm,
+  currentPageId: string,
+  answers: Record<string, string | string[]>
+) {
+  const pageIndex = form.pages.findIndex((page) => page.id === currentPageId);
+  if (pageIndex < 0) return null;
+  const page = form.pages[pageIndex];
+
+  for (const rule of page.branchRules) {
+    const source = form.fields.find((field) => field.id === rule.sourceFieldId);
+    if (!source) continue;
+    const probe: FormField = {
+      ...source,
+      visibility: {
+        fieldId: rule.sourceFieldId,
+        operator: rule.operator,
+        value: rule.value
+      }
+    };
+    if (isFieldVisible(probe, answers)) {
+      return form.pages.some((candidate) => candidate.id === rule.targetPageId)
+        ? rule.targetPageId
+        : null;
+    }
+  }
+
+  if (
+    page.defaultNextPageId &&
+    form.pages.some((candidate) => candidate.id === page.defaultNextPageId)
+  ) {
+    return page.defaultNextPageId;
+  }
+
+  return form.pages[pageIndex + 1]?.id ?? null;
 }
 
 export function setFormStatus(form: TamishraForm, status: FormStatus): TamishraForm {
@@ -467,6 +547,66 @@ export function tamishraFormFilename(title: string) {
       .replace(/^-+|-+$/g, "")
       .slice(0, 120) || "form";
   return safe + TMFORM_EXTENSION;
+}
+
+function normalizePages(
+  input: Array<Partial<FormPage>>,
+  fields: FormField[]
+): FormPage[] {
+  const validFieldIds = new Set(fields.map((field) => field.id));
+  const seenFieldIds = new Set<string>();
+  const pages = input
+    .filter((page) => page && typeof page === "object")
+    .map((page, index) => {
+      const fieldIds = Array.isArray(page.fieldIds)
+        ? page.fieldIds.filter((id) => validFieldIds.has(String(id))).map(String)
+        : [];
+      fieldIds.forEach((id) => seenFieldIds.add(id));
+      return {
+        id: page.id || createId("page"),
+        title: page.title ?? "Page " + (index + 1),
+        description: page.description ?? "",
+        fieldIds,
+        branchRules: Array.isArray(page.branchRules)
+          ? page.branchRules
+              .filter((rule) => rule && typeof rule === "object")
+              .map((rule) => ({
+                id: rule.id || createId("branch"),
+                sourceFieldId: String(rule.sourceFieldId ?? ""),
+                operator: rule.operator ?? "equals",
+                value: rule.value,
+                targetPageId: String(rule.targetPageId ?? "")
+              }))
+          : [],
+        defaultNextPageId: page.defaultNextPageId ?? null
+      } satisfies FormPage;
+    });
+
+  const unassigned = fields
+    .map((field) => field.id)
+    .filter((fieldId) => !seenFieldIds.has(fieldId));
+
+  if (!pages.length) {
+    pages.push(createFormPage("Page 1", fields.map((field) => field.id)));
+  } else if (unassigned.length) {
+    pages[0].fieldIds.push(...unassigned);
+  }
+
+  const pageIds = new Set(pages.map((page) => page.id));
+  for (const page of pages) {
+    page.defaultNextPageId =
+      page.defaultNextPageId && pageIds.has(page.defaultNextPageId)
+        ? page.defaultNextPageId
+        : null;
+    page.branchRules = page.branchRules.filter(
+      (rule) =>
+        validFieldIds.has(rule.sourceFieldId) &&
+        pageIds.has(rule.targetPageId) &&
+        rule.targetPageId !== page.id
+    );
+  }
+
+  return pages;
 }
 
 function createId(prefix: string) {
