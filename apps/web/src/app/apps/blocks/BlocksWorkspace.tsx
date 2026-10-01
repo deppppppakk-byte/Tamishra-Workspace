@@ -18,7 +18,7 @@ import {
   mutateWorkspaceBlockShelf,
   queueBlockHandoff,
   subscribeWorkspaceBlocks
-} from "../../lib/workspace-blocks";
+} from "../../../lib/workspace-blocks";
 import styles from "./blocks.module.css";
 
 const kindLabels: Record<TamishraBlockKind, string> = {
