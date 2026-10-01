@@ -76,6 +76,22 @@
             "public.data"
           ]
         }
+      },
+      {
+        "ext": [
+          "tmsh"
+        ],
+        "name": "Tamishra Sheet",
+        "description": "Tamishra Sheets native spreadsheet",
+        "mimeType": "application/vnd.tamishra.spreadsheet",
+        "role": "Editor",
+        "rank": "Owner",
+        "exportedType": {
+          "identifier": "in.tamishra.sheets.tmsh",
+          "conformsTo": [
+            "public.data"
+          ]
+        }
       }
     ]
   }
