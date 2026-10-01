@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { handleMeetingRequest } from "./meetings.js";
 import { handleIdentityRequest } from "./identity.js";
 import { handlePatraRequest } from "./patra.js";
+import { handleDocsRequest } from "./docs.js";
 
 const port = Number(process.env.WORKSPACE_GATEWAY_PORT ?? process.env.PORT ?? 4100);
 const isProduction = process.env.NODE_ENV === "production";
@@ -176,6 +177,18 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       },
       origin
     );
+    return;
+  }
+
+  if (
+    await handleDocsRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
     return;
   }
 
