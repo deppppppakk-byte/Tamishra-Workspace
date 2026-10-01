@@ -1,4 +1,4 @@
-import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
+import postgres from "postgres";
 
 export type StoredDocsWorkspace = {
   userId: string;
@@ -61,7 +61,7 @@ class PostgresDocsWorkspaceStore implements DocsWorkspaceStore {
   readonly kind = "postgres" as const;
   private initialized = false;
 
-  constructor(private readonly sql: NeonQueryFunction<false, false>) {}
+  constructor(private readonly sql: ReturnType<typeof postgres>) {}
 
   async ready() {
     if (this.initialized) return;
@@ -153,5 +153,5 @@ export function createDocsWorkspaceStore(): DocsWorkspaceStore {
     return new MemoryDocsWorkspaceStore();
   }
 
-  return new PostgresDocsWorkspaceStore(neon(databaseUrl));
+  return new PostgresDocsWorkspaceStore(postgres(databaseUrl, { max: 5, prepare: false }));
 }
