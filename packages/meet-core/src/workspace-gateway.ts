@@ -29,6 +29,42 @@ export type MeetingAttendance = {
   leftAt: string | null;
 };
 
+export type MeetingControls = {
+  locked: boolean;
+  chatEnabled: boolean;
+  reactionsEnabled: boolean;
+  handRaiseEnabled: boolean;
+  updatedAt: string;
+};
+
+export type MeetingMessage = {
+  id: string;
+  roomName: string;
+  participantId: string;
+  displayName: string;
+  body: string;
+  createdAt: string;
+};
+
+export type MeetingSignal = {
+  participantId: string;
+  displayName: string;
+  handRaised: boolean;
+  reaction: string | null;
+  updatedAt: string;
+};
+
+export type MeetingAuditEvent = {
+  id: string;
+  roomName: string;
+  actorParticipantId: string | null;
+  actorDisplayName: string;
+  eventType: string;
+  targetParticipantId: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
 function normalizedOrigin(value: string) {
   return value.trim().replace(/\/$/, "");
 }
@@ -118,6 +154,93 @@ export class WorkspaceMeetingGateway {
     const response = await fetch(url, { cache: "no-store" });
     const body = await parseResponse<{ participants: MeetingParticipant[] }>(response);
     return body.participants;
+  }
+
+  async getCollaboration(roomName: string, accessKey: string) {
+    const url = new URL(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/collaboration")
+    );
+    url.searchParams.set("accessKey", accessKey);
+    const response = await fetch(url, { cache: "no-store" });
+    return parseResponse<{
+      controls: MeetingControls;
+      messages: MeetingMessage[];
+      signals: MeetingSignal[];
+    }>(response);
+  }
+
+  async sendMessage(roomName: string, accessKey: string, message: string) {
+    const response = await fetch(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/chat"),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accessKey, message })
+      }
+    );
+    return parseResponse<{ message: MeetingMessage }>(response);
+  }
+
+  async setSignal(
+    roomName: string,
+    accessKey: string,
+    input: { handRaised: boolean; reaction?: string | null }
+  ) {
+    const response = await fetch(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/signal"),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accessKey, ...input })
+      }
+    );
+    return parseResponse<{ signal: MeetingSignal }>(response);
+  }
+
+  async updateControls(
+    roomName: string,
+    accessKey: string,
+    patch: Partial<Pick<
+      MeetingControls,
+      "locked" | "chatEnabled" | "reactionsEnabled" | "handRaiseEnabled"
+    >>
+  ) {
+    const response = await fetch(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/controls"),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accessKey, ...patch })
+      }
+    );
+    return parseResponse<{ controls: MeetingControls }>(response);
+  }
+
+  async moderate(
+    roomName: string,
+    accessKey: string,
+    participantId: string,
+    action: "remove" | "clear-hand"
+  ) {
+    const response = await fetch(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/moderate"),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accessKey, participantId, action })
+      }
+    );
+    return parseResponse<{ ok: true; participantId?: string }>(response);
+  }
+
+  async listAudit(roomName: string, accessKey: string) {
+    const url = new URL(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/audit")
+    );
+    url.searchParams.set("accessKey", accessKey);
+    const response = await fetch(url, { cache: "no-store" });
+    const body = await parseResponse<{ audit: MeetingAuditEvent[] }>(response);
+    return body.audit;
   }
 
   async listAttendance(roomName: string, accessKey: string) {

@@ -25,6 +25,7 @@ export type MeetingCreateInput = {
 
 export type MeetingJoinContext = {
   roomName: string;
+  participantId?: string;
   title: string;
   role: MeetingRole;
   status: MeetingStatus;

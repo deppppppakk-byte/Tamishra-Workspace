@@ -10,7 +10,11 @@ import type { MeetingJoinContext } from "@tamishra/meet-core";
 import {
   loadMeetingAccess,
   type MeetingAttendance,
+  type MeetingAuditEvent,
+  type MeetingControls,
+  type MeetingMessage,
   type MeetingParticipant,
+  type MeetingSignal,
   WorkspaceMeetingGateway
 } from "@tamishra/meet-core/workspace-gateway";
 import styles from "./meet-room.module.css";
@@ -26,6 +30,33 @@ type JoinChoices = {
   videoDeviceId?: string;
 };
 
+type SidebarTab = "chat" | "people" | "activity";
+
+const initialControls: MeetingControls = {
+  locked: false,
+  chatEnabled: true,
+  reactionsEnabled: true,
+  handRaiseEnabled: true,
+  updatedAt: ""
+};
+
+const reactionOptions = ["👍", "👏", "🎉", "❤️"];
+
+function auditLabel(event: MeetingAuditEvent) {
+  const labels: Record<string, string> = {
+    meeting_created: "Meeting created",
+    meeting_started: "Meeting started",
+    meeting_ended: "Meeting ended",
+    join_requested: "Join requested",
+    participant_admitted: "Participant admitted",
+    participant_denied: "Participant denied",
+    participant_removed: "Participant removed",
+    controls_updated: "Meeting controls updated",
+    hand_raise_cleared: "Hand raise cleared"
+  };
+  return labels[event.eventType] ?? event.eventType.replaceAll("_", " ");
+}
+
 export function MeetRoomClient() {
   const gateway = useMemo(
     () => new WorkspaceMeetingGateway(GATEWAY_ORIGIN),
@@ -39,6 +70,14 @@ export function MeetRoomClient() {
   const [context, setContext] = useState<MeetingJoinContext | null>(null);
   const [participants, setParticipants] = useState<MeetingParticipant[]>([]);
   const [attendance, setAttendance] = useState<MeetingAttendance[]>([]);
+  const [controls, setControls] = useState<MeetingControls>(initialControls);
+  const [messages, setMessages] = useState<MeetingMessage[]>([]);
+  const [signals, setSignals] = useState<MeetingSignal[]>([]);
+  const [audit, setAudit] = useState<MeetingAuditEvent[]>([]);
+  const [chatDraft, setChatDraft] = useState("");
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chat");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [collaborationBusy, setCollaborationBusy] = useState(false);
   const [choices, setChoices] = useState<JoinChoices | null>(null);
   const [token, setToken] = useState("");
   const [serverUrl, setServerUrl] = useState("");
@@ -50,6 +89,12 @@ export function MeetRoomClient() {
   const [connected, setConnected] = useState(false);
 
   const isHost = context?.role === "host";
+
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 720px)").matches) {
+      setSidebarOpen(false);
+    }
+  }, []);
 
   const loadContext = useCallback(
     async (room: string, key: string) => {
@@ -73,6 +118,25 @@ export function MeetRoomClient() {
     async (room: string, key: string) => {
       const result = await gateway.listAttendance(room, key);
       setAttendance(result);
+    },
+    [gateway]
+  );
+
+  const loadCollaboration = useCallback(
+    async (room: string, key: string) => {
+      const result = await gateway.getCollaboration(room, key);
+      setControls(result.controls);
+      setMessages(result.messages);
+      setSignals(result.signals);
+      return result;
+    },
+    [gateway]
+  );
+
+  const loadAudit = useCallback(
+    async (room: string, key: string) => {
+      const result = await gateway.listAudit(room, key);
+      setAudit(result);
     },
     [gateway]
   );
@@ -103,6 +167,7 @@ export function MeetRoomClient() {
     void loadContext(room, access.accessKey)
       .then((result) => {
         if (result.role === "host") {
+          setSidebarTab("people");
           return Promise.all([
             loadParticipants(room, access.accessKey).catch(() => undefined),
             loadAttendance(room, access.accessKey).catch(() => undefined)
@@ -148,6 +213,7 @@ export function MeetRoomClient() {
     const refresh = () => {
       void loadParticipants(roomName, accessKey).catch(() => undefined);
       void loadAttendance(roomName, accessKey).catch(() => undefined);
+      void loadAudit(roomName, accessKey).catch(() => undefined);
     };
 
     refresh();
@@ -158,7 +224,35 @@ export function MeetRoomClient() {
     accessKey,
     isHost,
     loadParticipants,
-    loadAttendance
+    loadAttendance,
+    loadAudit
+  ]);
+
+  useEffect(() => {
+    if (
+      !roomName ||
+      !accessKey ||
+      !context ||
+      context.status !== "live" ||
+      context.admissionStatus !== "admitted"
+    ) {
+      return;
+    }
+
+    const refresh = () => {
+      void loadCollaboration(roomName, accessKey).catch(() => undefined);
+    };
+
+    refresh();
+    const timer = window.setInterval(refresh, 2000);
+    return () => window.clearInterval(timer);
+  }, [
+    roomName,
+    accessKey,
+    context,
+    context?.status,
+    context?.admissionStatus,
+    loadCollaboration
   ]);
 
   useEffect(() => {
@@ -222,6 +316,110 @@ export function MeetRoomClient() {
           ? reason.message
           : "Unable to update participant admission."
       );
+    }
+  }
+
+  async function sendChat() {
+    const message = chatDraft.trim();
+    if (!roomName || !accessKey || !message || collaborationBusy) return;
+    setCollaborationBusy(true);
+    try {
+      const result = await gateway.sendMessage(roomName, accessKey, message);
+      setMessages((current) => [...current, result.message]);
+      setChatDraft("");
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error ? reason.message : "Unable to send message."
+      );
+    } finally {
+      setCollaborationBusy(false);
+    }
+  }
+
+  async function toggleHandRaise() {
+    if (!roomName || !accessKey || collaborationBusy) return;
+    const ownSignal = signals.find(
+      (signal) => signal.participantId === context?.participantId
+    );
+    const nextRaised = !ownSignal?.handRaised;
+    setCollaborationBusy(true);
+    try {
+      await gateway.setSignal(roomName, accessKey, {
+        handRaised: nextRaised,
+        reaction: null
+      });
+      await loadCollaboration(roomName, accessKey);
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error ? reason.message : "Unable to update hand raise."
+      );
+    } finally {
+      setCollaborationBusy(false);
+    }
+  }
+
+  async function sendReaction(reaction: string) {
+    if (!roomName || !accessKey || collaborationBusy) return;
+    const ownSignal = signals.find(
+      (signal) => signal.participantId === context?.participantId
+    );
+    setCollaborationBusy(true);
+    try {
+      await gateway.setSignal(roomName, accessKey, {
+        handRaised: Boolean(ownSignal?.handRaised),
+        reaction
+      });
+      await loadCollaboration(roomName, accessKey);
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error ? reason.message : "Unable to send reaction."
+      );
+    } finally {
+      setCollaborationBusy(false);
+    }
+  }
+
+  async function updateHostControls(
+    patch: Partial<Pick<
+      MeetingControls,
+      "locked" | "chatEnabled" | "reactionsEnabled" | "handRaiseEnabled"
+    >>
+  ) {
+    if (!roomName || !accessKey || !isHost || collaborationBusy) return;
+    setCollaborationBusy(true);
+    try {
+      const result = await gateway.updateControls(roomName, accessKey, patch);
+      setControls(result.controls);
+      await loadAudit(roomName, accessKey);
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error ? reason.message : "Unable to update controls."
+      );
+    } finally {
+      setCollaborationBusy(false);
+    }
+  }
+
+  async function moderateParticipant(
+    participantId: string,
+    action: "remove" | "clear-hand"
+  ) {
+    if (!roomName || !accessKey || !isHost || collaborationBusy) return;
+    setCollaborationBusy(true);
+    try {
+      await gateway.moderate(roomName, accessKey, participantId, action);
+      await Promise.all([
+        loadParticipants(roomName, accessKey),
+        loadAttendance(roomName, accessKey),
+        loadCollaboration(roomName, accessKey),
+        loadAudit(roomName, accessKey)
+      ]);
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error ? reason.message : "Unable to moderate participant."
+      );
+    } finally {
+      setCollaborationBusy(false);
     }
   }
 
@@ -438,6 +636,15 @@ export function MeetRoomClient() {
     (participant) =>
       participant.role !== "host" && participant.admissionStatus === "waiting"
   );
+  const admittedParticipants = participants.filter(
+    (participant) =>
+      participant.role !== "host" && participant.admissionStatus === "admitted"
+  );
+  const raisedSignals = signals.filter((signal) => signal.handRaised);
+  const reactionSignals = signals.filter((signal) => signal.reaction);
+  const ownSignal = signals.find(
+    (signal) => signal.participantId === context.participantId
+  );
 
   return (
     <LiveKitRoom
@@ -466,7 +673,15 @@ export function MeetRoomClient() {
       }}
       onDisconnected={() => {
         setConnected(false);
-        setRoomError("Meeting connection ended.");
+        void loadContext(roomName, accessKey)
+          .then((next) => {
+            setRoomError(
+              next.admissionStatus === "denied"
+                ? "You were removed from this meeting by the host."
+                : "Meeting connection ended."
+            );
+          })
+          .catch(() => setRoomError("Meeting connection ended."));
       }}
       onError={(reason) => setRoomError(reason.message)}
       onMediaDeviceFailure={(failure, kind) =>
@@ -503,106 +718,418 @@ export function MeetRoomClient() {
         </div>
       </header>
 
-      {roomError && <div className={styles.roomError}>{roomError}</div>}
+      <div
+        className={roomError ? styles.roomError : styles.roomErrorPlaceholder}
+        role="status"
+      >
+        {roomError}
+      </div>
 
       <div className={styles.liveLayout}>
         <section className={styles.conference}>
-          <VideoConference />
-        </section>
+          <div className={styles.collaborationToolbar}>
+            <button
+              className={
+                ownSignal?.handRaised
+                  ? styles.toolbarButtonActive
+                  : styles.toolbarButton
+              }
+              disabled={!controls.handRaiseEnabled || collaborationBusy}
+              onClick={() => void toggleHandRaise()}
+            >
+              ✋ {ownSignal?.handRaised ? "Lower hand" : "Raise hand"}
+            </button>
 
-        {isHost && (
-          <aside className={styles.hostPanel}>
-            <div className={styles.hostPanelHeading}>
-              <span>HOST CONTROL</span>
-              <strong>Participants</strong>
+            <div className={styles.reactionButtons}>
+              {reactionOptions.map((reaction) => (
+                <button
+                  key={reaction}
+                  disabled={!controls.reactionsEnabled || collaborationBusy}
+                  onClick={() => void sendReaction(reaction)}
+                  title={"React " + reaction}
+                >
+                  {reaction}
+                </button>
+              ))}
             </div>
 
-            {waitingParticipants.length > 0 && (
-              <div className={styles.waitingGroup}>
-                <span className={styles.groupLabel}>
-                  Waiting · {waitingParticipants.length}
-                </span>
-                {waitingParticipants.map((participant) => (
-                  <article className={styles.participantCard} key={participant.id}>
-                    <div>
-                      <strong>{participant.displayName}</strong>
-                      <small>Waiting for admission</small>
-                    </div>
-                    <div>
-                      <button
-                        className={styles.admitButton}
-                        onClick={() =>
-                          void updateAdmission(participant.id, "admitted")
-                        }
-                      >
-                        Admit
-                      </button>
-                      <button
-                        className={styles.denyButton}
-                        onClick={() =>
-                          void updateAdmission(participant.id, "denied")
-                        }
-                      >
-                        Deny
-                      </button>
-                    </div>
-                  </article>
+            <button
+              className={styles.toolbarButton}
+              onClick={() => {
+                setSidebarTab("chat");
+                setSidebarOpen(true);
+              }}
+            >
+              Chat {messages.length > 0 ? "· " + messages.length : ""}
+            </button>
+
+            {isHost && (
+              <button
+                className={styles.toolbarButton}
+                onClick={() => {
+                  setSidebarTab("people");
+                  setSidebarOpen(true);
+                }}
+              >
+                People · {participants.length}
+              </button>
+            )}
+
+            {raisedSignals.length > 0 && (
+              <span className={styles.raiseSummary}>
+                ✋ {raisedSignals.length} raised
+              </span>
+            )}
+          </div>
+
+          <div className={styles.conferenceStage}>
+            <VideoConference />
+            {reactionSignals.length > 0 && (
+              <div className={styles.reactionOverlay} aria-live="polite">
+                {reactionSignals.slice(0, 5).map((signal) => (
+                  <span key={signal.participantId + signal.updatedAt}>
+                    <strong>{signal.reaction}</strong>
+                    <small>{signal.displayName}</small>
+                  </span>
                 ))}
               </div>
             )}
+          </div>
+        </section>
 
-            <div className={styles.attendanceGroup}>
-              <span className={styles.groupLabel}>
-                Attendance · {attendance.length}
-              </span>
-              {attendance.map((entry) => (
-                <div className={styles.attendanceRow} key={entry.participantId}>
-                  <span
+        <aside
+          className={
+            sidebarOpen
+              ? styles.hostPanel
+              : styles.hostPanelHidden
+          }
+        >
+          <div className={styles.sidebarTabs}>
+            <button
+              className={sidebarTab === "chat" ? styles.sidebarTabActive : ""}
+              onClick={() => setSidebarTab("chat")}
+            >
+              Chat
+            </button>
+            <button
+              className={sidebarTab === "people" ? styles.sidebarTabActive : ""}
+              onClick={() => setSidebarTab("people")}
+            >
+              {isHost ? "People" : "Signals"}
+            </button>
+            {isHost && (
+              <button
+                className={sidebarTab === "activity" ? styles.sidebarTabActive : ""}
+                onClick={() => setSidebarTab("activity")}
+              >
+                Activity
+              </button>
+            )}
+            <button
+              className={styles.sidebarClose}
+              aria-label="Close meeting sidebar"
+              onClick={() => setSidebarOpen(false)}
+            >
+              ×
+            </button>
+          </div>
+
+          {sidebarTab === "chat" && (
+            <div className={styles.chatPanel}>
+              <div className={styles.hostPanelHeading}>
+                <span>MEETING CHAT</span>
+                <strong>
+                  {controls.chatEnabled ? "Conversation" : "Chat paused by host"}
+                </strong>
+              </div>
+
+              <div className={styles.messageList}>
+                {messages.length === 0 && (
+                  <p className={styles.emptyState}>No messages yet.</p>
+                )}
+                {messages.map((message) => (
+                  <article
                     className={
-                      entry.leftAt
-                        ? styles.attendanceDotAway
-                        : styles.attendanceDot
+                      message.participantId === context.participantId
+                        ? styles.ownMessage
+                        : styles.message
                     }
-                  />
+                    key={message.id}
+                  >
+                    <div>
+                      <strong>{message.displayName}</strong>
+                      <time>
+                        {new Intl.DateTimeFormat(undefined, {
+                          hour: "numeric",
+                          minute: "2-digit"
+                        }).format(new Date(message.createdAt))}
+                      </time>
+                    </div>
+                    <p>{message.body}</p>
+                  </article>
+                ))}
+              </div>
+
+              <form
+                className={styles.chatComposer}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void sendChat();
+                }}
+              >
+                <input
+                  value={chatDraft}
+                  onChange={(event) => setChatDraft(event.target.value)}
+                  placeholder={
+                    controls.chatEnabled
+                      ? "Message everyone"
+                      : "Chat is disabled"
+                  }
+                  disabled={!controls.chatEnabled}
+                  maxLength={2000}
+                />
+                <button
+                  disabled={
+                    !controls.chatEnabled ||
+                    !chatDraft.trim() ||
+                    collaborationBusy
+                  }
+                >
+                  Send
+                </button>
+              </form>
+            </div>
+          )}
+
+          {sidebarTab === "people" && (
+            <div className={styles.peoplePanel}>
+              {isHost && (
+                <div className={styles.policyPanel}>
+                  <span className={styles.groupLabel}>ROOM POLICIES</span>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={controls.locked}
+                      onChange={(event) =>
+                        void updateHostControls({ locked: event.target.checked })
+                      }
+                    />
+                    <span>
+                      <strong>Lock new joins</strong>
+                      <small>Blocks new code-based join attempts.</small>
+                    </span>
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={controls.chatEnabled}
+                      onChange={(event) =>
+                        void updateHostControls({
+                          chatEnabled: event.target.checked
+                        })
+                      }
+                    />
+                    <span>
+                      <strong>Meeting chat</strong>
+                      <small>Allow participants to send persistent messages.</small>
+                    </span>
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={controls.reactionsEnabled}
+                      onChange={(event) =>
+                        void updateHostControls({
+                          reactionsEnabled: event.target.checked
+                        })
+                      }
+                    />
+                    <span>
+                      <strong>Reactions</strong>
+                      <small>Allow transient live reactions.</small>
+                    </span>
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={controls.handRaiseEnabled}
+                      onChange={(event) =>
+                        void updateHostControls({
+                          handRaiseEnabled: event.target.checked
+                        })
+                      }
+                    />
+                    <span>
+                      <strong>Hand raise</strong>
+                      <small>Allow persistent hand-raise signals.</small>
+                    </span>
+                  </label>
+                </div>
+              )}
+
+              {raisedSignals.length > 0 && (
+                <div className={styles.waitingGroup}>
+                  <span className={styles.groupLabel}>
+                    RAISED HANDS · {raisedSignals.length}
+                  </span>
+                  {raisedSignals.map((signal) => (
+                    <article className={styles.participantCard} key={signal.participantId}>
+                      <div>
+                        <strong>✋ {signal.displayName}</strong>
+                        <small>Waiting to speak</small>
+                      </div>
+                      {isHost &&
+                        signal.participantId !== context.participantId && (
+                          <div>
+                            <button
+                              className={styles.denyButton}
+                              onClick={() =>
+                                void moderateParticipant(
+                                  signal.participantId,
+                                  "clear-hand"
+                                )
+                              }
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        )}
+                    </article>
+                  ))}
+                </div>
+              )}
+
+              {isHost && waitingParticipants.length > 0 && (
+                <div className={styles.waitingGroup}>
+                  <span className={styles.groupLabel}>
+                    WAITING · {waitingParticipants.length}
+                  </span>
+                  {waitingParticipants.map((participant) => (
+                    <article className={styles.participantCard} key={participant.id}>
+                      <div>
+                        <strong>{participant.displayName}</strong>
+                        <small>Waiting for admission</small>
+                      </div>
+                      <div>
+                        <button
+                          className={styles.admitButton}
+                          onClick={() =>
+                            void updateAdmission(participant.id, "admitted")
+                          }
+                        >
+                          Admit
+                        </button>
+                        <button
+                          className={styles.denyButton}
+                          onClick={() =>
+                            void updateAdmission(participant.id, "denied")
+                          }
+                        >
+                          Deny
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+
+              {isHost && (
+                <div className={styles.allParticipants}>
+                  <span className={styles.groupLabel}>
+                    IN ROOM · {admittedParticipants.length}
+                  </span>
+                  {admittedParticipants.map((participant) => (
+                    <div className={styles.participantControlRow} key={participant.id}>
+                      <span className={styles.participantAvatar}>
+                        {participant.displayName
+                          .split(" ")
+                          .slice(0, 2)
+                          .map((part) => part[0])
+                          .join("")
+                          .toUpperCase()}
+                      </span>
+                      <div>
+                        <strong>{participant.displayName}</strong>
+                        <small>Participant · admitted</small>
+                      </div>
+                      <button
+                        className={styles.removeButton}
+                        disabled={collaborationBusy}
+                        onClick={() =>
+                          void moderateParticipant(participant.id, "remove")
+                        }
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {isHost && (
+                <div className={styles.attendanceGroup}>
+                  <span className={styles.groupLabel}>
+                    ATTENDANCE · {attendance.length}
+                  </span>
+                  {attendance.map((entry) => (
+                    <div className={styles.attendanceRow} key={entry.participantId}>
+                      <span
+                        className={
+                          entry.leftAt
+                            ? styles.attendanceDotAway
+                            : styles.attendanceDot
+                        }
+                      />
+                      <div>
+                        <strong>{entry.displayName}</strong>
+                        <small>
+                          {entry.leftAt ? "Left" : "Connected"} · joined{" "}
+                          {new Intl.DateTimeFormat(undefined, {
+                            hour: "numeric",
+                            minute: "2-digit"
+                          }).format(new Date(entry.joinedAt))}
+                        </small>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {!isHost && raisedSignals.length === 0 && (
+                <p className={styles.emptyState}>
+                  No active hand raises right now.
+                </p>
+              )}
+            </div>
+          )}
+
+          {isHost && sidebarTab === "activity" && (
+            <div className={styles.activityPanel}>
+              <div className={styles.hostPanelHeading}>
+                <span>SECURITY & ACTIVITY</span>
+                <strong>Meeting audit</strong>
+              </div>
+              {audit.length === 0 && (
+                <p className={styles.emptyState}>No activity recorded yet.</p>
+              )}
+              {audit.map((event) => (
+                <article className={styles.auditRow} key={event.id}>
+                  <span />
                   <div>
-                    <strong>{entry.displayName}</strong>
+                    <strong>{auditLabel(event)}</strong>
                     <small>
-                      {entry.leftAt ? "Left" : "Connected"} · joined{" "}
+                      {event.actorDisplayName} ·{" "}
                       {new Intl.DateTimeFormat(undefined, {
                         hour: "numeric",
                         minute: "2-digit"
-                      }).format(new Date(entry.joinedAt))}
+                      }).format(new Date(event.createdAt))}
                     </small>
                   </div>
-                </div>
+                </article>
               ))}
             </div>
-
-            <div className={styles.allParticipants}>
-              <span className={styles.groupLabel}>
-                Room · {participants.length}
-              </span>
-              {participants.map((participant) => (
-                <div className={styles.participantRow} key={participant.id}>
-                  <span className={styles.participantAvatar}>
-                    {participant.displayName
-                      .split(" ")
-                      .slice(0, 2)
-                      .map((part) => part[0])
-                      .join("")
-                      .toUpperCase()}
-                  </span>
-                  <div>
-                    <strong>{participant.displayName}</strong>
-                    <small>
-                      {participant.role} · {participant.admissionStatus}
-                    </small>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </aside>
-        )}
+          )}
+        </aside>
       </div>
     </LiveKitRoom>
   );

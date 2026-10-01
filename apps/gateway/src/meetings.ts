@@ -1,18 +1,21 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { AccessToken, TrackSource } from "livekit-server-sdk";
+import { AccessToken, RoomServiceClient, TrackSource } from "livekit-server-sdk";
 import {
   createMeetingStore,
   type StoredMeeting,
   type StoredParticipant
 } from "./meeting-store.js";
+import { createMeetingCollaborationStore } from "./meeting-collaboration-store.js";
 
 type JsonObject = Record<string, unknown>;
 
 const store = createMeetingStore();
+const collaboration = createMeetingCollaborationStore();
 const MAX_BODY_BYTES = 32_768;
 const MAX_PARTICIPANTS = 100;
 const joinAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const allowedReactions = new Set(["👍", "👏", "🎉", "❤️", "😂", "✅"]);
 
 function sendJson(
   response: ServerResponse,
@@ -79,6 +82,15 @@ function cleanTitle(value: unknown) {
   return String(value ?? "Tamishra Meeting").trim().slice(0, 160) || "Tamishra Meeting";
 }
 
+function cleanMessage(value: unknown) {
+  return String(value ?? "").trim().slice(0, 2000);
+}
+
+function normalizeReaction(value: unknown) {
+  const reaction = String(value ?? "").trim();
+  return allowedReactions.has(reaction) ? reaction : null;
+}
+
 async function readJson(request: IncomingMessage): Promise<JsonObject> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -118,6 +130,7 @@ function publicContext(
 ) {
   return {
     roomName: meeting.roomName,
+    participantId: participant.id,
     title: meeting.title,
     status: meeting.status,
     role: participant.role,
@@ -140,7 +153,36 @@ function liveKitConfig() {
   const apiKey = process.env.LIVEKIT_API_KEY?.trim();
   const apiSecret = process.env.LIVEKIT_API_SECRET?.trim();
   if (!url || !apiKey || !apiSecret) return null;
-  return { url, apiKey, apiSecret };
+  const apiUrl = url
+    .replace(/^wss:/i, "https:")
+    .replace(/^ws:/i, "http:");
+  return { url, apiUrl, apiKey, apiSecret };
+}
+
+async function removeFromLiveKit(roomNameValue: string, identity: string) {
+  const livekit = liveKitConfig();
+  if (!livekit) return false;
+  const rooms = new RoomServiceClient(
+    livekit.apiUrl,
+    livekit.apiKey,
+    livekit.apiSecret
+  );
+  await rooms.removeParticipant(roomNameValue, identity, {
+    revokeTokenTs: BigInt(Date.now())
+  });
+  return true;
+}
+
+async function closeLiveKitRoom(roomNameValue: string) {
+  const livekit = liveKitConfig();
+  if (!livekit) return false;
+  const rooms = new RoomServiceClient(
+    livekit.apiUrl,
+    livekit.apiKey,
+    livekit.apiSecret
+  );
+  await rooms.deleteRoom(roomNameValue);
+  return true;
 }
 
 function meetingFromPath(pathname: string) {
@@ -173,6 +215,7 @@ export async function handleMeetingRequest(
 
   try {
     await store.ready();
+    await collaboration.ready();
   } catch (error) {
     console.error("Workspace meeting store initialization failed", error);
     sendJson(
@@ -205,7 +248,13 @@ export async function handleMeetingRequest(
           participantControls: true,
           scheduledMeetings: true,
           hostLifecycle: true,
-          durableMeetings: store.kind === "postgres"
+          durableMeetings: store.kind === "postgres",
+          persistentChat: true,
+          reactions: true,
+          handRaise: true,
+          roomLock: true,
+          participantRemoval: true,
+          auditLog: true
         }
       },
       origin,
@@ -265,6 +314,19 @@ export async function handleMeetingRequest(
       };
 
       await store.createMeeting(meeting, host);
+      await collaboration.ensureRoom(meeting.roomName);
+      await collaboration.appendAudit({
+        roomName: meeting.roomName,
+        actorParticipantId: host.id,
+        actorDisplayName: host.displayName,
+        eventType: "meeting_created",
+        targetParticipantId: null,
+        metadata: {
+          mode,
+          waitingRoomEnabled: meeting.waitingRoomEnabled,
+          allowParticipantScreenShare: meeting.allowParticipantScreenShare
+        }
+      });
 
       sendJson(
         response,
@@ -335,6 +397,18 @@ export async function handleMeetingRequest(
         return true;
       }
 
+      const controls = await collaboration.getControls(meeting.roomName);
+      if (controls.locked) {
+        sendJson(
+          response,
+          423,
+          { error: "meeting_locked" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
       const currentParticipants = await store.listParticipants(
         meeting.roomName
       );
@@ -371,6 +445,16 @@ export async function handleMeetingRequest(
       };
 
       await store.addParticipant(participant);
+      await collaboration.appendAudit({
+        roomName: meeting.roomName,
+        actorParticipantId: participant.id,
+        actorDisplayName: participant.displayName,
+        eventType: "join_requested",
+        targetParticipantId: null,
+        metadata: {
+          admissionStatus: participant.admissionStatus
+        }
+      });
 
       sendJson(
         response,
@@ -480,6 +564,431 @@ export async function handleMeetingRequest(
           lastSeenAt: participant.lastSeenAt
         }))
       },
+      origin,
+      allowedOrigins
+    );
+    return true;
+  }
+
+  if (request.method === "GET" && parsed.action === "collaboration") {
+    const participant = await findAccess(
+      meeting.roomName,
+      url.searchParams.get("accessKey")
+    );
+
+    if (!participant) {
+      sendJson(
+        response,
+        401,
+        { error: "invalid_meeting_access" },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+
+    if (
+      participant.admissionStatus !== "admitted" ||
+      meeting.status !== "live"
+    ) {
+      sendJson(
+        response,
+        403,
+        { error: "meeting_collaboration_unavailable" },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+
+    const [controls, messages, signals] = await Promise.all([
+      collaboration.getControls(meeting.roomName),
+      collaboration.listMessages(meeting.roomName, 120),
+      collaboration.listSignals(meeting.roomName)
+    ]);
+
+    sendJson(
+      response,
+      200,
+      { controls, messages, signals },
+      origin,
+      allowedOrigins
+    );
+    return true;
+  }
+
+  if (request.method === "POST" && parsed.action === "chat") {
+    try {
+      const body = await readJson(request);
+      const participant = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
+      if (
+        !participant ||
+        participant.admissionStatus !== "admitted" ||
+        meeting.status !== "live"
+      ) {
+        sendJson(
+          response,
+          403,
+          { error: "meeting_chat_unavailable" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const controls = await collaboration.getControls(meeting.roomName);
+      if (!controls.chatEnabled) {
+        sendJson(
+          response,
+          403,
+          { error: "meeting_chat_disabled" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const messageText = cleanMessage(body.message);
+      if (!messageText) {
+        sendJson(
+          response,
+          400,
+          { error: "message_required" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const message = await collaboration.addMessage(
+        meeting.roomName,
+        participant.id,
+        participant.displayName,
+        messageText
+      );
+
+      sendJson(
+        response,
+        201,
+        { message },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error ? error.message : "meeting_chat_failed"
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (request.method === "POST" && parsed.action === "signal") {
+    try {
+      const body = await readJson(request);
+      const participant = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
+      if (
+        !participant ||
+        participant.admissionStatus !== "admitted" ||
+        meeting.status !== "live"
+      ) {
+        sendJson(
+          response,
+          403,
+          { error: "meeting_signal_unavailable" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const controls = await collaboration.getControls(meeting.roomName);
+      const handRaised =
+        controls.handRaiseEnabled && body.handRaised === true;
+      const reaction = controls.reactionsEnabled
+        ? normalizeReaction(body.reaction)
+        : null;
+
+      const signal = await collaboration.setSignal(
+        meeting.roomName,
+        participant.id,
+        participant.displayName,
+        handRaised,
+        reaction
+      );
+
+      sendJson(
+        response,
+        200,
+        { signal },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error ? error.message : "meeting_signal_failed"
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (request.method === "POST" && parsed.action === "controls") {
+    try {
+      const body = await readJson(request);
+      const host = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
+      if (!host || host.role !== "host") {
+        sendJson(
+          response,
+          403,
+          { error: "host_access_required" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const patch: {
+        locked?: boolean;
+        chatEnabled?: boolean;
+        reactionsEnabled?: boolean;
+        handRaiseEnabled?: boolean;
+      } = {};
+
+      if (typeof body.locked === "boolean") patch.locked = body.locked;
+      if (typeof body.chatEnabled === "boolean") {
+        patch.chatEnabled = body.chatEnabled;
+      }
+      if (typeof body.reactionsEnabled === "boolean") {
+        patch.reactionsEnabled = body.reactionsEnabled;
+      }
+      if (typeof body.handRaiseEnabled === "boolean") {
+        patch.handRaiseEnabled = body.handRaiseEnabled;
+      }
+
+      const controls = await collaboration.updateControls(
+        meeting.roomName,
+        patch
+      );
+
+      await collaboration.appendAudit({
+        roomName: meeting.roomName,
+        actorParticipantId: host.id,
+        actorDisplayName: host.displayName,
+        eventType: "controls_updated",
+        targetParticipantId: null,
+        metadata: patch
+      });
+
+      sendJson(
+        response,
+        200,
+        { controls },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error ? error.message : "controls_update_failed"
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (request.method === "POST" && parsed.action === "moderate") {
+    try {
+      const body = await readJson(request);
+      const host = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
+      if (!host || host.role !== "host") {
+        sendJson(
+          response,
+          403,
+          { error: "host_access_required" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const targetId = String(body.participantId ?? "");
+      const participants = await store.listParticipants(meeting.roomName);
+      const target = participants.find(
+        (participant) =>
+          participant.id === targetId && participant.role !== "host"
+      );
+
+      if (!target) {
+        sendJson(
+          response,
+          404,
+          { error: "participant_not_found" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const action = String(body.action ?? "");
+
+      if (action === "clear-hand") {
+        const signal = await collaboration.setSignal(
+          meeting.roomName,
+          target.id,
+          target.displayName,
+          false,
+          null
+        );
+
+        await collaboration.appendAudit({
+          roomName: meeting.roomName,
+          actorParticipantId: host.id,
+          actorDisplayName: host.displayName,
+          eventType: "hand_raise_cleared",
+          targetParticipantId: target.id,
+          metadata: {}
+        });
+
+        sendJson(
+          response,
+          200,
+          { ok: true, signal },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      if (action !== "remove") {
+        sendJson(
+          response,
+          400,
+          { error: "invalid_moderation_action" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      await store.updateAdmission(
+        meeting.roomName,
+        target.id,
+        "denied"
+      );
+      await store.leaveAttendance(meeting.roomName, target.id);
+      await collaboration.setSignal(
+        meeting.roomName,
+        target.id,
+        target.displayName,
+        false,
+        null
+      );
+
+      let disconnected = false;
+      try {
+        disconnected = await removeFromLiveKit(
+          meeting.roomName,
+          target.id
+        );
+      } catch (error) {
+        console.warn("Unable to remove LiveKit participant", error);
+      }
+
+      await collaboration.appendAudit({
+        roomName: meeting.roomName,
+        actorParticipantId: host.id,
+        actorDisplayName: host.displayName,
+        eventType: "participant_removed",
+        targetParticipantId: target.id,
+        metadata: { disconnected }
+      });
+
+      sendJson(
+        response,
+        200,
+        {
+          ok: true,
+          participantId: target.id,
+          disconnected
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error ? error.message : "moderation_failed"
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (request.method === "GET" && parsed.action === "audit") {
+    const host = await findAccess(
+      meeting.roomName,
+      url.searchParams.get("accessKey")
+    );
+
+    if (!host || host.role !== "host") {
+      sendJson(
+        response,
+        403,
+        { error: "host_access_required" },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+
+    const audit = await collaboration.listAudit(meeting.roomName, 150);
+    sendJson(
+      response,
+      200,
+      { audit },
       origin,
       allowedOrigins
     );
@@ -691,6 +1200,18 @@ export async function handleMeetingRequest(
         return true;
       }
 
+      await collaboration.appendAudit({
+        roomName: meeting.roomName,
+        actorParticipantId: host.id,
+        actorDisplayName: host.displayName,
+        eventType:
+          target.admissionStatus === "admitted"
+            ? "participant_admitted"
+            : "participant_denied",
+        targetParticipantId: target.id,
+        metadata: {}
+      });
+
       sendJson(
         response,
         200,
@@ -764,6 +1285,25 @@ export async function handleMeetingRequest(
         );
         return true;
       }
+
+      let mediaRoomClosed = false;
+      if (action === "end") {
+        try {
+          mediaRoomClosed = await closeLiveKitRoom(meeting.roomName);
+        } catch (error) {
+          console.warn("Unable to close LiveKit room", error);
+        }
+      }
+
+      await collaboration.appendAudit({
+        roomName: meeting.roomName,
+        actorParticipantId: host.id,
+        actorDisplayName: host.displayName,
+        eventType:
+          action === "start" ? "meeting_started" : "meeting_ended",
+        targetParticipantId: null,
+        metadata: action === "end" ? { mediaRoomClosed } : {}
+      });
 
       sendJson(
         response,
