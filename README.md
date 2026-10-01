@@ -25,6 +25,8 @@ Tamishra Workspace is an independent productivity and collaboration suite.
 6. Fast startup, large-file resilience and crash recovery.
 7. Accessibility, keyboard navigation and mobile responsiveness from the start.
 8. One identity, permission and collaboration system across all modules.
+9. No Google or Microsoft runtime dependency, APIs, productivity services or branding.
+10. Tamishra-native services first; open standards only where interoperability is needed.
 
 ## Workspace shell
 
