@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { builtInMailProviders } from "@tamishra/mail-core";
 import styles from "./mail.module.css";
@@ -294,14 +295,14 @@ export function MailWorkspace() {
   return (
     <main className={styles.shell}>
       <aside className={styles.appRail} aria-label="Workspace apps">
-        <a className={styles.workspaceMark} href="/" aria-label="Tamishra Workspace home">T</a>
-        <a className={styles.railActive} href="/apps/mail" aria-label="Mail">M</a>
+        <Link className={styles.workspaceMark} href="/" aria-label="Tamishra Workspace home">T</Link>
+        <Link className={styles.railActive} href="/apps/mail" aria-label="Mail">M</Link>
         <button type="button" aria-label="Chat">C</button>
         <button type="button" aria-label="Meet">V</button>
         <button type="button" aria-label="Notes">N</button>
         <button type="button" aria-label="Forms">F</button>
         <span className={styles.railSpacer} />
-        <a href="/" aria-label="All apps">•••</a>
+        <Link href="/" aria-label="All apps">•••</Link>
       </aside>
 
       <aside className={styles.mailSidebar}>
@@ -310,7 +311,7 @@ export function MailWorkspace() {
             <span>Tamishra</span>
             <strong>Mail</strong>
           </div>
-          <a href="/" aria-label="Back to workspace">↙</a>
+          <Link href="/" aria-label="Back to workspace">↙</Link>
         </div>
 
         <button className={styles.composeButton} type="button" onClick={() => setComposeOpen(true)}>
