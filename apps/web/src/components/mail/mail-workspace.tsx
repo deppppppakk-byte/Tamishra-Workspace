@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { builtInMailProviders } from "@tamishra/mail-core";
 import styles from "./mail.module.css";
 
 type Folder = "inbox" | "sent" | "drafts" | "archive" | "spam" | "trash";
@@ -118,6 +119,8 @@ export function MailWorkspace() {
   const [selectedId, setSelectedId] = useState(seedMessages[0].id);
   const [checked, setChecked] = useState<string[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
+  const [providerPanelOpen, setProviderPanelOpen] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState("google");
   const [mobileReading, setMobileReading] = useState(false);
   const [compose, setCompose] = useState({ to: "", subject: "", body: "" });
   const [notice, setNotice] = useState("");
@@ -167,11 +170,15 @@ export function MailWorkspace() {
       if (event.key === "Escape" && composeOpen) {
         setComposeOpen(false);
       }
+
+      if (event.key === "Escape" && providerPanelOpen) {
+        setProviderPanelOpen(false);
+      }
     }
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [composeOpen]);
+  }, [composeOpen, providerPanelOpen]);
 
   function chooseFolder(nextFolder: Folder | "starred") {
     setFolder(nextFolder);
@@ -358,7 +365,7 @@ export function MailWorkspace() {
 
           <div className={styles.topActions}>
             <button type="button" aria-label="Refresh" onClick={() => setNotice("Inbox refreshed locally")}>↻</button>
-            <button type="button" aria-label="Settings">⚙</button>
+            <button type="button" aria-label="Mail settings" onClick={() => setProviderPanelOpen(true)}>⚙</button>
             <button className={styles.avatar} type="button" aria-label="Account">DK</button>
           </div>
         </header>
@@ -369,7 +376,7 @@ export function MailWorkspace() {
             <strong>Local demo mailbox</strong>
             <span>Interface is active. External send/receive will use a provider adapter.</span>
           </div>
-          <button type="button" onClick={() => setNotice("Provider connection flow is the next backend milestone")}>
+          <button type="button" onClick={() => setProviderPanelOpen(true)}>
             Connect provider
           </button>
         </div>
@@ -586,6 +593,125 @@ export function MailWorkspace() {
             <span>Local mode</span>
           </footer>
         </section>
+      )}
+
+      {providerPanelOpen && (
+        <div className={styles.providerBackdrop} role="presentation" onMouseDown={() => setProviderPanelOpen(false)}>
+          <section
+            className={styles.providerPanel}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Connect mail provider"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header>
+              <div>
+                <span>MAIL ACCOUNTS</span>
+                <h2>Connect a provider</h2>
+              </div>
+              <button type="button" aria-label="Close provider panel" onClick={() => setProviderPanelOpen(false)}>×</button>
+            </header>
+
+            <div className={styles.providerBody}>
+              <div className={styles.providerList}>
+                {builtInMailProviders.map((provider) => (
+                  <button
+                    className={selectedProvider === provider.key ? styles.providerActive : ""}
+                    key={provider.key}
+                    type="button"
+                    onClick={() => setSelectedProvider(provider.key)}
+                  >
+                    <span>{provider.name.slice(0, 1)}</span>
+                    <div>
+                      <strong>{provider.name}</strong>
+                      <small>{provider.connectionMethod === "oauth" ? "OAuth" : provider.connectionMethod === "native" ? "Native" : "Mail server"}</small>
+                    </div>
+                    {provider.recommended && <b>Recommended</b>}
+                  </button>
+                ))}
+              </div>
+
+              {(() => {
+                const provider = builtInMailProviders.find((item) => item.key === selectedProvider) ?? builtInMailProviders[0];
+
+                return (
+                  <div className={styles.providerDetail}>
+                    <div className={styles.providerTitle}>
+                      <div>{provider.name.slice(0, 1)}</div>
+                      <div>
+                        <h3>{provider.name}</h3>
+                        <p>{provider.description}</p>
+                      </div>
+                    </div>
+
+                    <div className={styles.capabilityGrid}>
+                      <span className={provider.capabilities.threads ? styles.capabilityOn : ""}>Threads</span>
+                      <span className={provider.capabilities.search ? styles.capabilityOn : ""}>Search</span>
+                      <span className={provider.capabilities.drafts ? styles.capabilityOn : ""}>Drafts</span>
+                      <span className={provider.capabilities.pushSync ? styles.capabilityOn : ""}>Push sync</span>
+                    </div>
+
+                    {provider.fields ? (
+                      <div className={styles.providerFields}>
+                        {provider.fields.map((field) => (
+                          <label key={field.key}>
+                            <span>{field.label}</span>
+                            <input
+                              type={field.type}
+                              placeholder={field.placeholder}
+                              autoComplete={field.secret ? "off" : undefined}
+                              disabled
+                            />
+                          </label>
+                        ))}
+                        <p>
+                          Server credentials are intentionally disabled in this browser build.
+                          They will be submitted only to the secure mail gateway.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className={styles.oauthNotice}>
+                        <strong>Secure connection required</strong>
+                        <p>
+                          Tamishra will start this provider’s authorization flow through a server/native gateway.
+                          OAuth tokens will never be written to browser local storage.
+                        </p>
+                      </div>
+                    )}
+
+                    <div className={styles.providerActions}>
+                      <button
+                        className={styles.providerPrimary}
+                        type="button"
+                        onClick={() => {
+                          setProviderPanelOpen(false);
+                          setNotice(
+                            provider.key === "tamishra"
+                              ? "Tamishra Mail service is reserved for the first-party mailbox backend"
+                              : `${provider.name} selected — secure gateway credentials are required to complete connection`
+                          );
+                          window.setTimeout(() => setNotice(""), 3600);
+                        }}
+                      >
+                        Continue securely
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProviderPanelOpen(false);
+                          setNotice("Local demo mailbox remains active");
+                          window.setTimeout(() => setNotice(""), 2200);
+                        }}
+                      >
+                        Keep local mailbox
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </section>
+        </div>
       )}
 
       {notice && <div className={styles.toast} role="status">{notice}</div>}
