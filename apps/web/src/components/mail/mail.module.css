@@ -652,6 +652,10 @@
   flex: 1;
 }
 
+.mobileBack {
+  display: none;
+}
+
 .readerContent {
   min-height: 0;
   padding: 26px 30px 36px;
@@ -1041,6 +1045,24 @@
 
   .readerPane {
     display: none;
+  }
+
+  .listMobileHidden {
+    display: none;
+  }
+
+  .readerMobileOpen {
+    height: 100%;
+    display: flex;
+  }
+
+  .readerMobileOpen .mobileBack {
+    display: grid;
+    place-items: center;
+  }
+
+  .readerContent {
+    padding: 20px 18px 90px;
   }
 
   .messageRow {
