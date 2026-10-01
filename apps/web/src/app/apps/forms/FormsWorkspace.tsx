@@ -891,23 +891,23 @@ export default function FormsWorkspace() {
                 </div>
               </div>
               <div className={styles.actions}>
-                <button onClick={copyWorkspaceLink}>Copy link</button>
+                <button onClick={copyWorkspaceLink}>Public link</button>
                 <button onClick={exportNative}>Export</button>
                 {selectedForm.status === "draft" && (
                   <button
                     className={styles.primaryAction}
-                    onClick={() => updateForm(selectedForm.id, setFormStatus(selectedForm, "published"))}
+                    onClick={() => void changePublishedState("published")}
                   >
                     Publish
                   </button>
                 )}
                 {selectedForm.status === "published" && (
-                  <button onClick={() => updateForm(selectedForm.id, setFormStatus(selectedForm, "closed"))}>
+                  <button onClick={() => void changePublishedState("closed")}>
                     Close
                   </button>
                 )}
                 {selectedForm.status === "closed" && (
-                  <button onClick={() => updateForm(selectedForm.id, setFormStatus(selectedForm, "published"))}>
+                  <button onClick={() => void changePublishedState("published")}>
                     Reopen
                   </button>
                 )}
@@ -927,7 +927,16 @@ export default function FormsWorkspace() {
                 <button
                   key={item}
                   className={mode === item ? styles.activeTab : ""}
-                  onClick={() => setMode(item)}
+                  onClick={() => {
+                    setMode(item);
+                    if (item === "preview") {
+                      setPreviewPageId(selectedForm.pages[0]?.id ?? null);
+                      setPreviewHistory([]);
+                      setAnswers({});
+                      setErrors({});
+                    }
+                    if (item === "responses") void loadCloudResponses();
+                  }}
                 >
                   {item === "responses" ? "Responses " + formResponses.length : item[0].toUpperCase() + item.slice(1)}
                 </button>
