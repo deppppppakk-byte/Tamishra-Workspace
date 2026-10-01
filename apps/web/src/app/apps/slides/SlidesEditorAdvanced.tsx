@@ -25,6 +25,7 @@ import { exportDeckToPptx } from "./pptxExport";
 import {
   decodeTmsl,
   downloadTmsl,
+  encodeTmsl,
   TMSL_EXTENSION,
   TMSL_MIME
 } from "./nativeFormat";
@@ -133,6 +134,12 @@ type Theme = {
 type GuideState = {
   x?: number;
   y?: number;
+};
+
+type NativeTmslFile = {
+  path: string;
+  name: string;
+  bytes: number[];
 };
 
 type MarqueeState = {
@@ -371,6 +378,8 @@ export default function SlidesEditorAdvanced() {
   const [commentDraft, setCommentDraft] = useState("");
   const [history, setHistory] = useState<VersionSnapshot[]>([]);
   const [components, setComponents] = useState<SavedComponent[]>([]);
+  const [nativePath, setNativePath] = useState<string | null>(null);
+  const [recoveryFile, setRecoveryFile] = useState<NativeTmslFile | null>(null);
 
   const imageInput = useRef<HTMLInputElement>(null);
   const importInput = useRef<HTMLInputElement>(null);
@@ -1303,6 +1312,28 @@ export default function SlidesEditorAdvanced() {
     }));
   };
 
+  const isNativeDesktop = () =>
+    typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+  const invokeNative = async <T,>(
+    command: string,
+    args?: Record<string, unknown>
+  ): Promise<T> => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke<T>(command, args);
+  };
+
+  const nativeBytesForCurrentDeck = () =>
+    encodeTmsl<Slide>({
+      schemaVersion: 4,
+      title: deckTitle,
+      slides,
+      metadata: {
+        createdAt: new Date().toISOString(),
+        appVersion: "Tamishra Slides"
+      }
+    });
+
   const exportPptx = async () => {
     try {
       setSaveState("Generating PPTX…");
@@ -1333,9 +1364,41 @@ export default function SlidesEditorAdvanced() {
     if (data.title) setDeckTitle(data.title);
   };
 
-  const exportNativeDeck = async () => {
+  const saveNativeDeck = async (saveAs = false) => {
     try {
-      setSaveState("Packing " + TMSL_EXTENSION + "…");
+      setSaveState(saveAs ? "Saving TMSL as…" : "Saving TMSL…");
+
+      if (isNativeDesktop()) {
+        const bytes = Array.from(await nativeBytesForCurrentDeck());
+        const current = saveAs
+          ? null
+          : await invokeNative<string | null>("current_tmsl_path");
+
+        let savedPath: string | null = null;
+
+        if (current) {
+          savedPath = await invokeNative<string>("save_tmsl_current", { bytes });
+        } else {
+          savedPath = await invokeNative<string | null>("save_tmsl_as", {
+            bytes,
+            suggestedName:
+              (deckTitle.trim() || "presentation").replace(/[^\w-]+/g, "-") +
+              TMSL_EXTENSION
+          });
+        }
+
+        if (!savedPath) {
+          setSaveState("Save cancelled");
+          return;
+        }
+
+        setNativePath(savedPath);
+        await invokeNative<void>("clear_tmsl_recovery").catch(() => undefined);
+        setRecoveryFile(null);
+        setSaveState("Saved to " + savedPath.split(/[\\/]/).pop());
+        return;
+      }
+
       await downloadTmsl<Slide>({
         schemaVersion: 4,
         title: deckTitle,
@@ -1345,11 +1408,13 @@ export default function SlidesEditorAdvanced() {
           appVersion: "Tamishra Slides"
         }
       });
-      setSaveState("TMSL saved");
+      setSaveState("TMSL downloaded");
     } catch {
-      setSaveState("TMSL export failed");
+      setSaveState("TMSL save failed");
     }
   };
+
+  const exportNativeDeck = () => saveNativeDeck(false);
 
   const exportLegacyJson = () => {
     const blob = new Blob(
@@ -1364,6 +1429,31 @@ export default function SlidesEditorAdvanced() {
       ".tamishra-slides.json";
     anchor.click();
     URL.revokeObjectURL(url);
+  };
+
+  const openNativeFile = async (file: NativeTmslFile) => {
+    const decoded = await decodeTmsl<Slide>(new Uint8Array(file.bytes));
+    applyImportedDeck({
+      title: decoded.document.title,
+      slides: decoded.document.slides
+    });
+    setNativePath(file.path);
+    setSaveState(file.name + " opened · integrity verified");
+  };
+
+  const recoverNativeDeck = async () => {
+    if (!recoveryFile) return;
+    try {
+      const decoded = await decodeTmsl<Slide>(new Uint8Array(recoveryFile.bytes));
+      applyImportedDeck({
+        title: decoded.document.title,
+        slides: decoded.document.slides
+      });
+      setNativePath(null);
+      setSaveState("Recovered unsaved TMSL session");
+    } catch {
+      setSaveState("Recovery file is invalid");
+    }
   };
 
   const importDeck = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1398,6 +1488,71 @@ export default function SlidesEditorAdvanced() {
       input.value = "";
     }
   };
+
+  useEffect(() => {
+    if (!isNativeDesktop()) return;
+
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    void (async () => {
+      try {
+        const pending = await invokeNative<NativeTmslFile | null>("take_pending_tmsl");
+        if (!disposed && pending) {
+          await openNativeFile(pending);
+        }
+
+        const recovery = await invokeNative<NativeTmslFile | null>("read_tmsl_recovery");
+        if (!disposed && recovery) {
+          setRecoveryFile(recovery);
+        }
+
+        const { listen } = await import("@tauri-apps/api/event");
+        unlisten = await listen<string>("tamishra://open-tmsl", async (event) => {
+          try {
+            const opened = await invokeNative<NativeTmslFile>("open_tmsl_path", {
+              path: event.payload
+            });
+            if (!disposed) await openNativeFile(opened);
+          } catch {
+            if (!disposed) setSaveState("Unable to open requested TMSL file");
+          }
+        });
+      } catch {
+        // Hosted web builds intentionally have no native bridge.
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isNativeDesktop()) return;
+
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const bytes = Array.from(await nativeBytesForCurrentDeck());
+          await invokeNative<string>("write_tmsl_recovery", { bytes });
+
+          if (nativePath) {
+            const savedPath = await invokeNative<string>("save_tmsl_current", { bytes });
+            setNativePath(savedPath);
+            await invokeNative<void>("clear_tmsl_recovery").catch(() => undefined);
+            setRecoveryFile(null);
+            setSaveState("Autosaved · " + savedPath.split(/[\\/]/).pop());
+          }
+        } catch {
+          setSaveState("Native autosave pending");
+        }
+      })();
+    }, 1200);
+
+    return () => window.clearTimeout(timer);
+  }, [deckTitle, slides, nativePath]);
 
   const shareLink = async () => {
     try {
@@ -1474,6 +1629,11 @@ export default function SlidesEditorAdvanced() {
 
       if (editing) return;
 
+      if (mod && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void saveNativeDeck(event.shiftKey);
+        return;
+      }
       if (mod && event.key.toLowerCase() === "z") {
         event.preventDefault();
         event.shiftKey ? redo() : undo();
@@ -1877,7 +2037,7 @@ export default function SlidesEditorAdvanced() {
             aria-label="Presentation title"
           />
           <span className={styles.fileMeta}>
-            {saveState} · {slides.length} slides · TMSL
+            {saveState} · {slides.length} slides · {nativePath ? nativePath.split(/[\\/]/).pop() : "TMSL"}
           </span>
         </div>
         <div className={styles.headerSpacer} />
@@ -1891,6 +2051,12 @@ export default function SlidesEditorAdvanced() {
         <button className={styles.menuItem} onClick={() => addSlide("content")}>New slide</button>
         <button className={styles.menuItem} onClick={() => importInput.current?.click()}>Open</button>
         <button className={styles.menuItem} onClick={() => void exportNativeDeck()}>Save .tmsl</button>
+        <button className={styles.menuItem} onClick={() => void saveNativeDeck(true)}>Save As</button>
+        {recoveryFile && (
+          <button className={styles.menuItem} onClick={() => void recoverNativeDeck()}>
+            Recover
+          </button>
+        )}
         <button className={styles.menuItem} onClick={() => void exportPptx()}>Export PPTX</button>
         <button className={styles.menuItem} onClick={exportLegacyJson}>Legacy JSON</button>
         <button className={styles.menuItem} onClick={() => window.print()}>Print / PDF</button>
