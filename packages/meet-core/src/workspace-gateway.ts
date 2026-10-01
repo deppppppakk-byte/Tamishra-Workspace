@@ -18,6 +18,15 @@ export type MeetingAccess = {
   accessKey: string;
   role: "host" | "participant";
   displayName: string;
+  joinCode?: string;
+};
+
+export type MeetingAttendance = {
+  participantId: string;
+  displayName: string;
+  joinedAt: string;
+  lastSeenAt: string;
+  leftAt: string | null;
 };
 
 function normalizedOrigin(value: string) {
@@ -109,6 +118,46 @@ export class WorkspaceMeetingGateway {
     const response = await fetch(url, { cache: "no-store" });
     const body = await parseResponse<{ participants: MeetingParticipant[] }>(response);
     return body.participants;
+  }
+
+  async listAttendance(roomName: string, accessKey: string) {
+    const url = new URL(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/attendance")
+    );
+    url.searchParams.set("accessKey", accessKey);
+    const response = await fetch(url, { cache: "no-store" });
+    const body = await parseResponse<{ attendance: MeetingAttendance[] }>(response);
+    return body.attendance;
+  }
+
+  async heartbeat(roomName: string, accessKey: string) {
+    const response = await fetch(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/heartbeat"),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accessKey }),
+        keepalive: true
+      }
+    );
+    return parseResponse<{ ok: true; attendance: MeetingAttendance | null }>(
+      response
+    );
+  }
+
+  async leave(roomName: string, accessKey: string) {
+    const response = await fetch(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/leave"),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accessKey }),
+        keepalive: true
+      }
+    );
+    return parseResponse<{ ok: true; attendance: MeetingAttendance | null }>(
+      response
+    );
   }
 
   async setAdmission(

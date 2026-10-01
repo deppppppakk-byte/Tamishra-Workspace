@@ -3,6 +3,8 @@ name: Build Tamishra Clients
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -10,6 +12,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  gateway:
+    name: Workspace Gateway
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck gateway
+        run: npm run check:gateway
+
+      - name: Build gateway
+        run: npm run build:gateway
+
   web:
     name: Website
     runs-on: ubuntu-latest

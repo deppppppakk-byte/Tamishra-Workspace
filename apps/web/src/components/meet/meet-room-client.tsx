@@ -9,6 +9,7 @@ import {
 import type { MeetingJoinContext } from "@tamishra/meet-core";
 import {
   loadMeetingAccess,
+  type MeetingAttendance,
   type MeetingParticipant,
   WorkspaceMeetingGateway
 } from "@tamishra/meet-core/workspace-gateway";
@@ -37,6 +38,7 @@ export function MeetRoomClient() {
   const [hostJoinCode, setHostJoinCode] = useState("");
   const [context, setContext] = useState<MeetingJoinContext | null>(null);
   const [participants, setParticipants] = useState<MeetingParticipant[]>([]);
+  const [attendance, setAttendance] = useState<MeetingAttendance[]>([]);
   const [choices, setChoices] = useState<JoinChoices | null>(null);
   const [token, setToken] = useState("");
   const [serverUrl, setServerUrl] = useState("");
@@ -45,6 +47,7 @@ export function MeetRoomClient() {
   const [error, setError] = useState("");
   const [roomError, setRoomError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [connected, setConnected] = useState(false);
 
   const isHost = context?.role === "host";
 
@@ -62,6 +65,14 @@ export function MeetRoomClient() {
     async (room: string, key: string) => {
       const result = await gateway.listParticipants(room, key);
       setParticipants(result);
+    },
+    [gateway]
+  );
+
+  const loadAttendance = useCallback(
+    async (room: string, key: string) => {
+      const result = await gateway.listAttendance(room, key);
+      setAttendance(result);
     },
     [gateway]
   );
@@ -92,7 +103,10 @@ export function MeetRoomClient() {
     void loadContext(room, access.accessKey)
       .then((result) => {
         if (result.role === "host") {
-          return loadParticipants(room, access.accessKey).catch(() => undefined);
+          return Promise.all([
+            loadParticipants(room, access.accessKey).catch(() => undefined),
+            loadAttendance(room, access.accessKey).catch(() => undefined)
+          ]);
         }
         return undefined;
       })
@@ -102,23 +116,19 @@ export function MeetRoomClient() {
         );
       })
       .finally(() => setLoading(false));
-  }, [loadContext, loadParticipants]);
+  }, [loadAttendance, loadContext, loadParticipants]);
 
   useEffect(() => {
     if (!roomName || !accessKey || !context || token) return;
 
     const shouldPoll =
       context.status === "scheduled" ||
-      context.admissionStatus === "waiting" ||
-      context.role === "host";
+      context.admissionStatus === "waiting";
 
     if (!shouldPoll) return;
 
     const timer = window.setInterval(() => {
       void loadContext(roomName, accessKey).catch(() => undefined);
-      if (context.role === "host") {
-        void loadParticipants(roomName, accessKey).catch(() => undefined);
-      }
     }, context.admissionStatus === "waiting" ? 2500 : 4000);
 
     return () => window.clearInterval(timer);
@@ -128,11 +138,49 @@ export function MeetRoomClient() {
     context,
     context?.status,
     context?.admissionStatus,
-    context?.role,
     token,
-    loadContext,
-    loadParticipants
+    loadContext
   ]);
+
+  useEffect(() => {
+    if (!roomName || !accessKey || !isHost) return;
+
+    const refresh = () => {
+      void loadParticipants(roomName, accessKey).catch(() => undefined);
+      void loadAttendance(roomName, accessKey).catch(() => undefined);
+    };
+
+    refresh();
+    const timer = window.setInterval(refresh, 3000);
+    return () => window.clearInterval(timer);
+  }, [
+    roomName,
+    accessKey,
+    isHost,
+    loadParticipants,
+    loadAttendance
+  ]);
+
+  useEffect(() => {
+    if (!roomName || !accessKey || !connected) return;
+
+    const beat = () => {
+      void gateway.heartbeat(roomName, accessKey).catch(() => undefined);
+    };
+    const leave = () => {
+      void gateway.leave(roomName, accessKey).catch(() => undefined);
+    };
+
+    beat();
+    const timer = window.setInterval(beat, 30_000);
+    window.addEventListener("pagehide", leave);
+
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("pagehide", leave);
+      leave();
+    };
+  }, [roomName, accessKey, connected, gateway]);
 
   async function startMeeting() {
     if (!roomName || !accessKey) return;
@@ -412,8 +460,14 @@ export function MeetRoomClient() {
       }
       data-lk-theme="default"
       className={styles.liveRoot}
-      onConnected={() => setRoomError("")}
-      onDisconnected={() => setRoomError("Meeting connection ended.")}
+      onConnected={() => {
+        setConnected(true);
+        setRoomError("");
+      }}
+      onDisconnected={() => {
+        setConnected(false);
+        setRoomError("Meeting connection ended.");
+      }}
       onError={(reason) => setRoomError(reason.message)}
       onMediaDeviceFailure={(failure, kind) =>
         setRoomError(
@@ -496,6 +550,33 @@ export function MeetRoomClient() {
                 ))}
               </div>
             )}
+
+            <div className={styles.attendanceGroup}>
+              <span className={styles.groupLabel}>
+                Attendance · {attendance.length}
+              </span>
+              {attendance.map((entry) => (
+                <div className={styles.attendanceRow} key={entry.participantId}>
+                  <span
+                    className={
+                      entry.leftAt
+                        ? styles.attendanceDotAway
+                        : styles.attendanceDot
+                    }
+                  />
+                  <div>
+                    <strong>{entry.displayName}</strong>
+                    <small>
+                      {entry.leftAt ? "Left" : "Connected"} · joined{" "}
+                      {new Intl.DateTimeFormat(undefined, {
+                        hour: "numeric",
+                        minute: "2-digit"
+                      }).format(new Date(entry.joinedAt))}
+                    </small>
+                  </div>
+                </div>
+              ))}
+            </div>
 
             <div className={styles.allParticipants}>
               <span className={styles.groupLabel}>
