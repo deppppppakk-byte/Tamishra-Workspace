@@ -79,6 +79,7 @@ export type StoredPatraQueueItem = {
   attempts: number;
   nextAttemptAt: string;
   lastError: string | null;
+  recipients: PatraAddress[];
   createdAt: string;
   updatedAt: string;
 };
@@ -138,7 +139,11 @@ export interface PatraStore {
       sentAt?: string | null;
     }
   ): Promise<StoredPatraMessage | null>;
-  enqueueDelivery(messageId: string, mailboxId: string): Promise<StoredPatraQueueItem>;
+  enqueueDelivery(
+    messageId: string,
+    mailboxId: string,
+    recipients: PatraAddress[]
+  ): Promise<StoredPatraQueueItem>;
   listQueuedDeliveries(limit?: number): Promise<StoredPatraQueueItem[]>;
 }
 
@@ -239,6 +244,7 @@ function toQueueItem(row: Record<string, unknown>): StoredPatraQueueItem {
     attempts: Number(row.attempts ?? 0),
     nextAttemptAt: iso(row.next_attempt_at) ?? new Date().toISOString(),
     lastError: row.last_error ? String(row.last_error) : null,
+    recipients: parseJsonArray<PatraAddress>(row.recipients_json),
     createdAt: iso(row.created_at) ?? new Date().toISOString(),
     updatedAt: iso(row.updated_at) ?? new Date().toISOString()
   };
@@ -456,7 +462,11 @@ class MemoryPatraStore implements PatraStore {
     return structuredClone(message);
   }
 
-  async enqueueDelivery(messageId: string, mailboxId: string) {
+  async enqueueDelivery(
+    messageId: string,
+    mailboxId: string,
+    recipients: PatraAddress[]
+  ) {
     const now = new Date().toISOString();
     const item: StoredPatraQueueItem = {
       id: "q_" + randomUUID(),
@@ -466,6 +476,7 @@ class MemoryPatraStore implements PatraStore {
       attempts: 0,
       nextAttemptAt: now,
       lastError: null,
+      recipients: structuredClone(recipients),
       createdAt: now,
       updatedAt: now
     };
@@ -578,9 +589,15 @@ class PostgresPatraStore implements PatraStore {
         attempts integer not null default 0,
         next_attempt_at timestamptz not null default now(),
         last_error text,
+        recipients_json jsonb not null default '[]'::jsonb,
         created_at timestamptz not null default now(),
         updated_at timestamptz not null default now()
       )
+    `;
+
+    await this.sql`
+      alter table patra_delivery_queue
+      add column if not exists recipients_json jsonb not null default '[]'::jsonb
     `;
 
     await this.sql`
@@ -834,14 +851,21 @@ class PostgresPatraStore implements PatraStore {
     return rows[0] ? toMessage(rows[0] as Record<string, unknown>) : null;
   }
 
-  async enqueueDelivery(messageId: string, mailboxId: string) {
+  async enqueueDelivery(
+    messageId: string,
+    mailboxId: string,
+    recipients: PatraAddress[]
+  ) {
     await this.ready();
     const id = "q_" + randomUUID();
+    const recipientsJson = JSON.stringify(recipients);
     const rows = await this.sql`
       insert into patra_delivery_queue(
-        id, message_id, mailbox_id, status, attempts, next_attempt_at
+        id, message_id, mailbox_id, status, attempts, next_attempt_at,
+        recipients_json
       ) values (
-        ${id}, ${messageId}, ${mailboxId}, 'queued', 0, now()
+        ${id}, ${messageId}, ${mailboxId}, 'queued', 0, now(),
+        ${recipientsJson}::jsonb
       )
       returning *
     `;
