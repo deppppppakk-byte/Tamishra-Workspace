@@ -50,7 +50,11 @@ import {
   type PersistedDocsDraft
 } from "@tamishra/docs-engine";
 import { TransactionHistory } from "@tamishra/history";
-import type { TamishraBlock } from "@tamishra/blocks-core";
+import {
+  createBlock,
+  upsertBlock,
+  type TamishraBlock
+} from "@tamishra/blocks-core";
 import {
   permanentlyDeleteWorkspaceFile,
   restoreWorkspaceFile,
@@ -70,6 +74,7 @@ import { mutateWorkspaceFileIndex } from "../../../lib/workspace-files";
 import {
   consumeBlockHandoff,
   loadWorkspaceBlockShelf,
+  mutateWorkspaceBlockShelf,
   subscribeWorkspaceBlocks
 } from "../../../lib/workspace-blocks";
 
@@ -94,6 +99,31 @@ function escapeHtml(value: string) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function sanitizeWorkspaceBlockHtml(html: string) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+  doc
+    .querySelectorAll("script,style,iframe,object,embed,link,meta")
+    .forEach((node) => node.remove());
+
+  doc.querySelectorAll("*").forEach((element) => {
+    Array.from(element.attributes).forEach((attribute) => {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim().toLowerCase();
+
+      if (
+        name.startsWith("on") ||
+        (["href", "src", "xlink:href"].includes(name) &&
+          value.startsWith("javascript:"))
+      ) {
+        element.removeAttribute(attribute.name);
+      }
+    });
+  });
+
+  return doc.body.innerHTML;
 }
 
 function chromeTextToHtml(value: string) {
@@ -275,7 +305,7 @@ export default function DocsEditor() {
       wrapper.dataset.tamishraId = createId("block");
       wrapper.innerHTML =
         typeof payload.html === "string"
-          ? payload.html
+          ? sanitizeWorkspaceBlockHtml(payload.html)
           : `<p>${escapeHtml(payload.plainText ?? "")}</p>`;
       applyCommand("insertHTML", wrapper.outerHTML + "<p><br></p>");
       updateCounts();
@@ -1424,6 +1454,39 @@ export default function DocsEditor() {
     };
   };
 
+  const publishSelectionAsWorkspaceBlock = () => {
+    const context = selectionContext();
+    if (!context || context.range.collapsed) {
+      setSavedState("Select content to publish as a Block");
+      return;
+    }
+
+    const container = document.createElement("div");
+    container.appendChild(context.range.cloneContents());
+    const html = sanitizeWorkspaceBlockHtml(container.innerHTML);
+    const plainText = context.text.trim();
+    if (!html && !plainText) {
+      setSavedState("Nothing selected to publish");
+      return;
+    }
+
+    const block = createBlock({
+      title:
+        plainText.slice(0, 70) ||
+        (title.trim() ? title.trim() + " selection" : "Document selection"),
+      kind: "rich-text",
+      sourceApp: "docs",
+      payload: {
+        html,
+        plainText
+      },
+      tags: ["docs", "selection"]
+    });
+
+    mutateWorkspaceBlockShelf((current) => upsertBlock(current, block));
+    setSavedState("Published to Tamishra Blocks");
+  };
+
   const handleAddComment = () => {
     const documentId = currentDocumentIdRef.current;
     if (!documentId) {
@@ -2553,6 +2616,7 @@ td,th{border:1px solid #d0d5dd;padding:8px}
         <div className="docsToolGroup">
           <button onClick={insertLink} title="Insert link">⌁</button>
           <button onClick={() => imageInputRef.current?.click()} title="Insert image">Img</button>
+          <button onClick={publishSelectionAsWorkspaceBlock} title="Publish selected content as Tamishra Block">Block</button>
           <button onClick={insertTable} title="Insert table">▦</button>
           <button onClick={insertDivider} title="Insert divider">—</button>
           <button onClick={insertPageBreak} title="Insert page break">PB</button>
