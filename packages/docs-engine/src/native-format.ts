@@ -49,8 +49,10 @@ function fnv1a32(value: string) {
 }
 
 function stableJson(value: unknown): string {
+  if (value === undefined) return "null";
+
   if (value === null || typeof value !== "object") {
-    return JSON.stringify(value);
+    return JSON.stringify(value) ?? "null";
   }
 
   if (Array.isArray(value)) {
