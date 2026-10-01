@@ -50,6 +50,7 @@ import {
   type PersistedDocsDraft
 } from "@tamishra/docs-engine";
 import { TransactionHistory } from "@tamishra/history";
+import { upsertWorkspaceFile } from "@tamishra/file-core";
 import HeaderFooterSettingsPanel from "./HeaderFooterSettings";
 import PageSettings from "./PageSettings";
 import DocsProductionPanel, { type DocsPanelTab } from "./DocsProductionPanel";
@@ -58,6 +59,8 @@ import {
   pullDocsCloudWorkspace,
   pushDocsCloudWorkspace
 } from "./docs-cloud";
+import { consumeNativeFileHandoff } from "../../../lib/native-file-handoff";
+import { mutateWorkspaceFileIndex } from "../../../lib/workspace-files";
 
 const STORAGE_KEY = "tamishra.docs.current.v2";
 const LEGACY_STORAGE_KEY = "tamishra.docs.current";
@@ -477,6 +480,20 @@ export default function DocsEditor() {
       selectDocumentId(result.record.id);
     }
 
+    mutateWorkspaceFileIndex((index) =>
+      upsertWorkspaceFile(index, {
+        id: `docs:${result.record.id}`,
+        title: safeTitle,
+        kind: "docs",
+        appHref: "/apps/docs",
+        nativeExtension: ".tmdoc",
+        nativeMime: TMDOC_MIME_TYPE,
+        sourceId: result.record.id,
+        sizeBytes: new Blob([JSON.stringify(nextDraft)]).size,
+        storage: cloudAuthenticatedRef.current ? "cloud" : "local"
+      })
+    );
+
     setSavedState("Saved locally");
 
     collaborationChannelRef.current?.postMessage({
@@ -580,6 +597,34 @@ export default function DocsEditor() {
 
   useEffect(() => {
     registerDocsDocxAdapter(browserDocsDocxAdapter);
+  }, []);
+
+  useEffect(() => {
+    const createRequest = sessionStorage.getItem("tamishra.workspace.create");
+    if (createRequest === "docs") {
+      sessionStorage.removeItem("tamishra.workspace.create");
+      window.setTimeout(() => handleNewDocument(), 0);
+      return;
+    }
+
+    void consumeNativeFileHandoff()
+      .then(async (handoff) => {
+        if (!handoff) return;
+        const name = handoff.name.toLowerCase();
+
+        if (name.endsWith(".tmdoc")) {
+          importNativePackage(handoff.bytes, ".tmdoc opened from Workspace");
+          return;
+        }
+
+        if (name.endsWith(".docx")) {
+          await importDocxBytes(handoff.bytes, handoff.name);
+        }
+      })
+      .catch((error) => {
+        console.error("Workspace Docs handoff failed", error);
+        setSavedState("Workspace file could not be opened");
+      });
   }, []);
 
   useEffect(() => {
@@ -1100,42 +1145,47 @@ export default function DocsEditor() {
     }
   };
 
+  const importDocxBytes = async (bytes: ArrayBuffer, fileName: string) => {
+    setSavedState("Importing DOCX…");
+    const result = await importDocsDocx(bytes);
+    const name = fileName.replace(/\.docx$/i, "") || "Imported document";
+    const draft = createDraftFromHtml(name, result.html, page, {
+      headerHtml: "",
+      footerHtml: "",
+      headerFooter
+    });
+    const recordResult = upsertDocsRecord(workspaceRef.current, {
+      title: name,
+      draft
+    });
+    commitWorkspace(recordResult.snapshot);
+    applyDraftToEditor(
+      draft,
+      recordResult.record.id,
+      result.warnings.length
+        ? `Imported with ${result.warnings.length} warning${result.warnings.length === 1 ? "" : "s"}`
+        : "DOCX imported"
+    );
+
+    const versionResult = addDocsVersion(workspaceRef.current, {
+      documentId: recordResult.record.id,
+      authorId: "local-user",
+      authorName: "You",
+      label: "DOCX import",
+      reason: "import",
+      draft
+    });
+    commitWorkspace(versionResult.snapshot);
+    saveDocument();
+  };
+
   const handleDocxInput = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
 
     try {
-      setSavedState("Importing DOCX…");
-      const result = await importDocsDocx(await file.arrayBuffer());
-      const name = file.name.replace(/\.docx$/i, "") || "Imported document";
-      const draft = createDraftFromHtml(name, result.html, page, {
-        headerHtml: "",
-        footerHtml: "",
-        headerFooter
-      });
-      const recordResult = upsertDocsRecord(workspaceRef.current, {
-        title: name,
-        draft
-      });
-      commitWorkspace(recordResult.snapshot);
-      applyDraftToEditor(
-        draft,
-        recordResult.record.id,
-        result.warnings.length
-          ? `Imported with ${result.warnings.length} warning${result.warnings.length === 1 ? "" : "s"}`
-          : "DOCX imported"
-      );
-
-      const versionResult = addDocsVersion(workspaceRef.current, {
-        documentId: recordResult.record.id,
-        authorId: "local-user",
-        authorName: "You",
-        label: "DOCX import",
-        reason: "import",
-        draft
-      });
-      commitWorkspace(versionResult.snapshot);
+      await importDocxBytes(await file.arrayBuffer(), file.name);
     } catch (error) {
       setSavedState("DOCX import failed");
       window.alert(error instanceof Error ? error.message : "Could not import DOCX.");
