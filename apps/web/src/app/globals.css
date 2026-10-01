@@ -996,6 +996,29 @@ kbd {
   border-top: 1px solid #d8dee8;
 }
 
+.docsManualPageBreak {
+  position: relative;
+  height: 28px;
+  margin: 30px -18px;
+  border-top: 1px dashed #98a2b3;
+  user-select: none;
+}
+
+.docsManualPageBreak span {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fff;
+  color: #98a2b3;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .docsEditor:focus {
   caret-color: #315cf4;
 }
@@ -1176,5 +1199,17 @@ kbd {
   .docsEditor {
     min-height: 0;
     padding: 0;
+  }
+
+  .docsManualPageBreak {
+    height: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .docsManualPageBreak span {
+    display: none !important;
   }
 }
