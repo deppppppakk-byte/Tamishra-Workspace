@@ -255,10 +255,11 @@ export function MeetRoomClient() {
     async (room: string, key: string) => {
       const result = await gateway.getNotes(room, key);
       setNotes(result);
-      setNotesDraft((current) => (notesDirty ? current : result.body));
+      setNotesDraft(result.body);
+      setNotesDirty(false);
       return result;
     },
-    [gateway, notesDirty]
+    [gateway]
   );
 
   const loadSummary = useCallback(
@@ -1301,6 +1302,7 @@ export function MeetRoomClient() {
 
   return (
     <LiveKitRoom
+      key={activeMediaRoom || roomName}
       token={token}
       serverUrl={serverUrl}
       connect
@@ -1321,11 +1323,13 @@ export function MeetRoomClient() {
       data-lk-theme="default"
       className={styles.liveRoot}
       onConnected={() => {
+        handoffRef.current = false;
         setConnected(true);
         setRoomError("");
       }}
       onDisconnected={() => {
         setConnected(false);
+        if (handoffRef.current) return;
         void loadContext(roomName, accessKey)
           .then((next) => {
             setRoomError(
