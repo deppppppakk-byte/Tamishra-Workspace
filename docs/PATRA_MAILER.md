@@ -20,7 +20,7 @@ Patra Mailer:
 
 Configured native domains:
 
-- `patra.in` — public Patra accounts
+- `patra.tamishra.in` — public Patra accounts
 - `tamishra.in` — protected Tamishra company accounts
 
 ### Outbound SMTP
@@ -78,7 +78,7 @@ The following are deployment requirements, not values that are currently live.
 Point the chosen MX hostname, for example:
 
 ```text
-mx.patra.in
+mx.patra.tamishra.in
 ```
 
 to the public mail server.
@@ -88,8 +88,8 @@ to the public mail server.
 Example:
 
 ```text
-patra.in.      MX 10 mx.patra.in.
-tamishra.in.   MX 10 mx.patra.in.
+patra.tamishra.in.   MX 10 mx.patra.tamishra.in.
+tamishra.in.   MX 10 mx.patra.tamishra.in.
 ```
 
 Only publish the `tamishra.in` MX change after confirming it will not disrupt any existing company mail service.
@@ -115,7 +115,7 @@ PATRA_DKIM_SELECTOR=patra1
 Publish the matching public key at:
 
 ```text
-patra1._domainkey.patra.in
+patra1._domainkey.patra.tamishra.in
 patra1._domainkey.tamishra.in
 ```
 
@@ -128,7 +128,7 @@ Begin with monitoring while validating SPF/DKIM alignment, then strengthen the p
 Example monitoring record:
 
 ```text
-_dmarc.patra.in TXT "v=DMARC1; p=none"
+_dmarc.patra.tamishra.in TXT "v=DMARC1; p=none"
 ```
 
 Do not move directly to a strict reject policy until legitimate send paths have been verified.
@@ -168,7 +168,7 @@ The mailer remains provider-neutral: the SMTP relay can be a self-hosted MTA dep
 
 Implemented:
 
-- public `@patra.in` mailbox provisioning
+- public `@patra.tamishra.in` mailbox provisioning
 - protected `@tamishra.in` mailbox provisioning
 - system folders
 - persistent messages
