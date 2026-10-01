@@ -697,6 +697,28 @@ export function ChatWorkspace() {
 
   return (
     <main className={styles.shell}>
+      <input
+        ref={mainFileInputRef}
+        className={styles.hiddenInput}
+        type="file"
+        multiple
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []).slice(0, MAX_ATTACHMENTS);
+          setPendingFiles((current) => [...current, ...files].slice(0, MAX_ATTACHMENTS));
+          event.currentTarget.value = "";
+        }}
+      />
+      <input
+        ref={threadFileInputRef}
+        className={styles.hiddenInput}
+        type="file"
+        multiple
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []).slice(0, MAX_ATTACHMENTS);
+          setThreadFiles((current) => [...current, ...files].slice(0, MAX_ATTACHMENTS));
+          event.currentTarget.value = "";
+        }}
+      />
       <aside className={styles.rail}>
         <Link className={styles.brand} href="/" aria-label="Tamishra Workspace home">T</Link>
         <button className={styles.railActive} aria-label="Chat">◉</button>
@@ -713,14 +735,30 @@ export function ChatWorkspace() {
           <div>
             <span className={styles.kicker}>TAMISHRA</span>
             <strong>Chat</strong>
+            <span className={styles.realtimeState} data-state={realtimeStatus}>
+              <i />
+              {realtimeStatus === "live" ? "Live" : realtimeStatus === "connecting" ? "Connecting" : "Reconnecting"}
+            </span>
           </div>
-          <button
-            className={styles.iconButton}
-            onClick={() => setCreateOpen((open) => !open)}
-            aria-label="New conversation"
-          >
-            +
-          </button>
+          <div className={styles.sidebarHeaderActions}>
+            <button
+              className={styles.notificationButton}
+              onClick={() => setNotificationsOpen((open) => !open)}
+              aria-label="Notifications"
+            >
+              ◔
+              {unreadNotificationCount > 0 && (
+                <span>{Math.min(99, unreadNotificationCount)}</span>
+              )}
+            </button>
+            <button
+              className={styles.iconButton}
+              onClick={() => setCreateOpen((open) => !open)}
+              aria-label="New conversation"
+            >
+              +
+            </button>
+          </div>
         </div>
 
         {memberships.length > 1 ? (
@@ -753,6 +791,46 @@ export function ChatWorkspace() {
             aria-label="Search messages"
           />
         </form>
+
+        {notificationsOpen && (
+          <section className={styles.notificationPanel}>
+            <header>
+              <div>
+                <strong>Notifications</strong>
+                <span>{unreadNotificationCount} unread</span>
+              </div>
+              {unreadNotificationCount > 0 && (
+                <button onClick={() => void markAllNotificationsRead()}>
+                  Mark all read
+                </button>
+              )}
+            </header>
+            <div className={styles.notificationList}>
+              {notifications.map((notification) => (
+                <button
+                  key={notification.id}
+                  className={
+                    styles.notificationItem +
+                    (!notification.readAt ? " " + styles.notificationUnread : "")
+                  }
+                  onClick={() => void openNotification(notification)}
+                >
+                  <span className={styles.notificationGlyph}>
+                    {notification.kind === "mention" ? "@" : notification.kind === "thread" ? "↳" : "•"}
+                  </span>
+                  <span>
+                    <strong>{notification.title}</strong>
+                    <p>{notification.bodyPreview}</p>
+                    <small>{formatTime(notification.createdAt)}</small>
+                  </span>
+                </button>
+              ))}
+              {notifications.length === 0 && (
+                <div className={styles.notificationEmpty}>No notifications yet.</div>
+              )}
+            </div>
+          </section>
+        )}
 
         {createOpen && (
           <form className={styles.createCard} onSubmit={createConversation}>
@@ -860,7 +938,10 @@ export function ChatWorkspace() {
                   {conversationIcon(conversation)}
                 </span>
                 <span className={styles.conversationText}>
-                  <strong>{conversationTitle(conversation)}</strong>
+                  <strong>
+                    {conversation.pinned && <span className={styles.pinGlyph}>◆</span>}
+                    {conversationTitle(conversation)}
+                  </strong>
                   <small>
                     {conversation.kind === "channel"
                       ? conversation.topic || "Channel"
@@ -907,8 +988,25 @@ export function ChatWorkspace() {
                 </div>
               </div>
               <div className={styles.headerActions}>
+                <button
+                  className={activeConversation.pinned ? styles.controlActive : styles.controlButton}
+                  onClick={() =>
+                    void updateConversationSetting("pinned", !activeConversation.pinned)
+                  }
+                  aria-label={activeConversation.pinned ? "Unpin conversation" : "Pin conversation"}
+                >
+                  ◆
+                </button>
+                <button
+                  className={activeConversation.muted ? styles.controlActive : styles.controlButton}
+                  onClick={() =>
+                    void updateConversationSetting("muted", !activeConversation.muted)
+                  }
+                  aria-label={activeConversation.muted ? "Unmute conversation" : "Mute conversation"}
+                >
+                  {activeConversation.muted ? "◒" : "◉"}
+                </button>
                 <Link href="/apps/meet" className={styles.meetButton}>⌁ Start Meet</Link>
-                <button className={styles.iconButton} aria-label="Conversation details">ⓘ</button>
               </div>
             </header>
 
@@ -947,6 +1045,29 @@ export function ChatWorkspace() {
                         {message.editedAt && <span>edited</span>}
                       </div>
                       <p>{message.deletedAt ? "Message removed" : message.body}</p>
+                      {!message.deletedAt && message.attachments.length > 0 && (
+                        <div className={styles.attachments}>
+                          {message.attachments.map((attachment) => (
+                            <a
+                              key={attachment.id}
+                              className={styles.attachmentCard}
+                              href={
+                                workspaceApiBase +
+                                "/v1/chat/files/" +
+                                encodeURIComponent(attachment.fileId ?? attachment.id)
+                              }
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              <span className={styles.attachmentIcon}>↧</span>
+                              <span>
+                                <strong>{attachment.name}</strong>
+                                <small>{formatBytes(attachment.size)}</small>
+                              </span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
                       {!message.deletedAt && (
                         <div className={styles.messageFooter}>
                           {message.reactions.map((reaction) => (
@@ -984,26 +1105,87 @@ export function ChatWorkspace() {
               })}
             </div>
 
-            <form className={styles.composer} onSubmit={(event) => void sendMessage(event)}>
-              <textarea
-                value={composer}
-                onChange={(event) => setComposer(event.target.value)}
-                placeholder={"Message " + conversationTitle(activeConversation)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    event.currentTarget.form?.requestSubmit();
-                  }
-                }}
-                rows={1}
-              />
-              <div className={styles.composerBar}>
-                <span className={styles.composerHint}>Shift + Enter for a new line</span>
-                <button type="submit" disabled={sending || !composer.trim()}>
-                  {sending ? "Sending…" : "Send"}
-                </button>
-              </div>
-            </form>
+            <div className={styles.composerZone}>
+              {typing.length > 0 && (
+                <div className={styles.typingIndicator}>
+                  <span>•••</span>
+                  {typing.map((item) => item.displayName).join(", ")}
+                  {typing.length === 1 ? " is typing" : " are typing"}
+                </div>
+              )}
+              <form className={styles.composer} onSubmit={(event) => void sendMessage(event)}>
+                {mainMentionSuggestions.length > 0 && (
+                  <div className={styles.mentionMenu}>
+                    {mainMentionSuggestions.map((member) => (
+                      <button
+                        type="button"
+                        key={member.user.id}
+                        onClick={() => insertMention(member, "main")}
+                      >
+                        <span className={styles.personAvatar}>
+                          {member.user.displayName.slice(0, 2).toUpperCase()}
+                        </span>
+                        <span>
+                          <strong>{member.user.displayName}</strong>
+                          <small>{member.user.email}</small>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {pendingFiles.length > 0 && (
+                  <div className={styles.pendingFiles}>
+                    {pendingFiles.map((file, index) => (
+                      <span key={file.name + index}>
+                        {file.name}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPendingFiles((current) =>
+                              current.filter((_, itemIndex) => itemIndex !== index)
+                            )
+                          }
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <textarea
+                  value={composer}
+                  onChange={(event) => {
+                    setComposer(event.target.value);
+                    noteTyping(event.target.value);
+                  }}
+                  placeholder={"Message " + conversationTitle(activeConversation)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  rows={1}
+                />
+                <div className={styles.composerBar}>
+                  <button
+                    type="button"
+                    className={styles.attachButton}
+                    onClick={() => mainFileInputRef.current?.click()}
+                    aria-label="Attach files"
+                  >
+                    ＋ File
+                  </button>
+                  <span className={styles.composerHint}>Use @ to mention · Shift + Enter for new line</span>
+                  <button
+                    type="submit"
+                    disabled={sending || (!composer.trim() && pendingFiles.length === 0)}
+                  >
+                    {sending ? "Sending…" : "Send"}
+                  </button>
+                </div>
+              </form>
+            </div>
           </>
         ) : (
           <div className={styles.emptyMain}>
@@ -1030,6 +1212,26 @@ export function ChatWorkspace() {
                 <strong>{threadRoot.authorDisplayName}</strong>
                 <time>{formatTime(threadRoot.createdAt)}</time>
                 <p>{threadRoot.body}</p>
+                {threadRoot.attachments.length > 0 && (
+                  <div className={styles.attachments}>
+                    {threadRoot.attachments.map((attachment) => (
+                      <a
+                        key={attachment.id}
+                        className={styles.attachmentCard}
+                        href={
+                          workspaceApiBase +
+                          "/v1/chat/files/" +
+                          encodeURIComponent(attachment.fileId ?? attachment.id)
+                        }
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <span className={styles.attachmentIcon}>↧</span>
+                        <span><strong>{attachment.name}</strong><small>{formatBytes(attachment.size)}</small></span>
+                      </a>
+                    ))}
+                  </div>
+                )}
               </article>
               {threadReplies.map((reply) => (
                 <article className={styles.threadReply} key={reply.id}>
@@ -1040,6 +1242,26 @@ export function ChatWorkspace() {
                     <strong>{reply.authorDisplayName}</strong>
                     <time>{formatTime(reply.createdAt)}</time>
                     <p>{reply.body}</p>
+                    {reply.attachments.length > 0 && (
+                      <div className={styles.attachments}>
+                        {reply.attachments.map((attachment) => (
+                          <a
+                            key={attachment.id}
+                            className={styles.attachmentCard}
+                            href={
+                              workspaceApiBase +
+                              "/v1/chat/files/" +
+                              encodeURIComponent(attachment.fileId ?? attachment.id)
+                            }
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            <span className={styles.attachmentIcon}>↧</span>
+                            <span><strong>{attachment.name}</strong><small>{formatBytes(attachment.size)}</small></span>
+                          </a>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </article>
               ))}
@@ -1048,15 +1270,63 @@ export function ChatWorkspace() {
               className={styles.threadComposer}
               onSubmit={(event) => void sendMessage(event, threadRoot.id)}
             >
+              {threadMentionSuggestions.length > 0 && (
+                <div className={styles.mentionMenu}>
+                  {threadMentionSuggestions.map((member) => (
+                    <button
+                      type="button"
+                      key={member.user.id}
+                      onClick={() => insertMention(member, "thread")}
+                    >
+                      <span className={styles.personAvatar}>
+                        {member.user.displayName.slice(0, 2).toUpperCase()}
+                      </span>
+                      <span><strong>{member.user.displayName}</strong><small>{member.user.email}</small></span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {threadFiles.length > 0 && (
+                <div className={styles.pendingFiles}>
+                  {threadFiles.map((file, index) => (
+                    <span key={file.name + index}>
+                      {file.name}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setThreadFiles((current) =>
+                            current.filter((_, itemIndex) => itemIndex !== index)
+                          )
+                        }
+                      >×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
               <textarea
                 rows={2}
                 value={threadComposer}
-                onChange={(event) => setThreadComposer(event.target.value)}
+                onChange={(event) => {
+                  setThreadComposer(event.target.value);
+                  noteTyping(event.target.value);
+                }}
                 placeholder="Reply in thread"
               />
-              <button type="submit" disabled={sending || !threadComposer.trim()}>
-                Reply
-              </button>
+              <div className={styles.threadComposerActions}>
+                <button
+                  type="button"
+                  className={styles.threadAttachButton}
+                  onClick={() => threadFileInputRef.current?.click()}
+                >
+                  ＋ File
+                </button>
+                <button
+                  type="submit"
+                  disabled={sending || (!threadComposer.trim() && threadFiles.length === 0)}
+                >
+                  Reply
+                </button>
+              </div>
             </form>
           </>
         ) : (
@@ -1067,11 +1337,32 @@ export function ChatWorkspace() {
               Open a thread to keep focused replies separate from the main conversation.
             </p>
             {activeConversation && (
-              <div className={styles.detailStats}>
-                <div><span>Type</span><strong>{activeConversation.kind}</strong></div>
-                <div><span>Members</span><strong>{activeConversation.memberCount}</strong></div>
-                <div><span>Unread</span><strong>{activeConversation.unreadCount}</strong></div>
-              </div>
+              <>
+                <div className={styles.detailStats}>
+                  <div><span>Type</span><strong>{activeConversation.kind}</strong></div>
+                  <div><span>Members</span><strong>{activeConversation.memberCount}</strong></div>
+                  <div><span>Unread</span><strong>{activeConversation.unreadCount}</strong></div>
+                  <div><span>Notifications</span><strong>{activeConversation.muted ? "Muted" : "On"}</strong></div>
+                </div>
+                <div className={styles.memberPresenceList}>
+                  {conversationMembers.map((member) => {
+                    const person = directory.find((entry) => entry.user.id === member.userId);
+                    const personPresence = presenceByUser.get(member.userId);
+                    return (
+                      <div key={member.userId}>
+                        <span
+                          className={styles.presenceDot}
+                          data-status={personPresence?.status ?? "offline"}
+                        />
+                        <span>
+                          <strong>{person?.user.displayName ?? "Workspace member"}</strong>
+                          <small>{personPresence?.status ?? "offline"} · {member.role}</small>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
             )}
           </div>
         )}
