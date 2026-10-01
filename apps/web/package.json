@@ -22,7 +22,9 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "@tamishra/slides-core": "0.1.0",
-    "pptxgenjs": "4.0.1"
+    "pptxgenjs": "4.0.1",
+    "docx": "9.5.1",
+    "mammoth": "1.10.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
