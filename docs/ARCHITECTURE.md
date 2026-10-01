@@ -64,11 +64,11 @@ Provider-agnostic mail abstraction. External accounts should connect through ada
 ### Meet
 `@tamishra/meet-core` is the provider-neutral meeting boundary.
 
-The behavioral source of truth is the existing Tamishra Meet product in the original Tamishra repository. Workspace must reuse or migrate that implementation rather than create a competing meeting engine.
+Workspace owns its meeting runtime. The meeting service must live in this repository or in infrastructure deployed exclusively for Tamishra Workspace.
 
-The first Workspace integration bridges to the existing Tamishra Meet runtime because `apps/web` is currently a static export. The existing runtime already provides LiveKit media, private joining codes, waiting-room admission, screen sharing, chat/reactions, participant controls, attendance and recording infrastructure.
+The implementation may reuse proven architectural ideas such as LiveKit-based media, private joining codes, waiting-room admission, screen sharing, chat/reactions, participant controls, attendance and recording, but it must not call the original Tamishra website at runtime.
 
-The long-term Workspace target is a dedicated meeting service behind the same `meet-core` contract so web, desktop and mobile can share one room lifecycle and one backend.
+Web, desktop and mobile consume the same `meet-core` contract and the same Workspace-owned meeting gateway.
 
 See `docs/MEET_MIGRATION.md`.
 
@@ -112,3 +112,28 @@ This lets search, sharing, recent items and notifications work across the entire
 - safe attachment handling
 - meeting access controls
 - anti-spam hooks for mail/forms/chat
+
+
+## Standalone product boundary
+
+Tamishra Workspace is independently deployable.
+
+Forbidden runtime dependencies:
+
+- the original Tamishra website routes
+- its authentication session
+- its database schema
+- its LiveKit token endpoints
+- its payment APIs
+- its training/webinar APIs
+- its static assets
+- its environment variables
+
+Allowed integration:
+
+- ordinary external links
+- optional import/migration tools
+- explicitly versioned public APIs
+- shared third-party infrastructure only when credentials, tenancy and access control are independently scoped for Workspace
+
+All production-critical services must remain operational even if the original Tamishra website is offline.
