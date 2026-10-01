@@ -106,6 +106,46 @@ export function upsertForm(snapshot: FormsSnapshot, form: TamishraForm) {
   };
 }
 
+export function normalizeFormsSnapshot(value: unknown): FormsSnapshot {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return createFormsSnapshot();
+  }
+
+  const candidate = value as Partial<FormsSnapshot>;
+  const forms = Array.isArray(candidate.forms)
+    ? candidate.forms.filter((form): form is TamishraForm =>
+        Boolean(
+          form &&
+          typeof form === "object" &&
+          typeof form.id === "string" &&
+          typeof form.title === "string" &&
+          Array.isArray(form.fields) &&
+          typeof form.updatedAt === "string"
+        )
+      )
+    : [];
+
+  const responses = Array.isArray(candidate.responses)
+    ? candidate.responses.filter((response): response is FormResponse =>
+        Boolean(
+          response &&
+          typeof response === "object" &&
+          typeof response.id === "string" &&
+          typeof response.formId === "string" &&
+          typeof response.submittedAt === "string" &&
+          response.answers &&
+          typeof response.answers === "object"
+        )
+      )
+    : [];
+
+  return {
+    version: 1,
+    forms,
+    responses
+  };
+}
+
 export function mergeFormsSnapshots(
   local: FormsSnapshot,
   remote: FormsSnapshot
