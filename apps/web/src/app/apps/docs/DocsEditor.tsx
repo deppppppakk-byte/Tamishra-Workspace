@@ -39,6 +39,7 @@ export default function DocsEditor() {
   const [zoom, setZoom] = useState(100);
   const [wordCount, setWordCount] = useState(0);
   const [charCount, setCharCount] = useState(0);
+  const [pageCount, setPageCount] = useState(1);
   const [fontSize, setFontSize] = useState("3");
   const [textColor, setTextColor] = useState("#202939");
 
@@ -123,11 +124,27 @@ export default function DocsEditor() {
   }, [title, wordCount, charCount, page]);
 
   const updateCounts = () => {
-    const text = editorRef.current?.innerText ?? "";
+    const editor = editorRef.current;
+    const text = editor?.innerText ?? "";
     const trimmed = text.trim();
 
     setCharCount(text.length);
     setWordCount(trimmed ? trimmed.split(/\s+/).length : 0);
+
+    if (editor) {
+      const printableHeight =
+        mmToCssPx(page.heightMm) -
+        mmToCssPx(page.margins.topMm) -
+        mmToCssPx(page.margins.bottomMm);
+
+      const explicitBreaks = editor.querySelectorAll('[data-page-break="true"]').length;
+      const measuredPages = printableHeight > 0
+        ? Math.max(1, Math.ceil(editor.scrollHeight / printableHeight))
+        : 1;
+
+      setPageCount(Math.max(measuredPages, explicitBreaks + 1));
+    }
+
     setSavedState("Saving…");
   };
 
@@ -197,6 +214,16 @@ export default function DocsEditor() {
 
   const insertDivider = () => {
     command("insertHorizontalRule");
+  };
+
+  const insertPageBreak = () => {
+    editorRef.current?.focus();
+    const id = createId("page-break");
+    applyCommand(
+      "insertHTML",
+      `<div data-page-break="true" data-tamishra-id="${id}" contenteditable="false" class="docsManualPageBreak"><span>Page break</span></div><p><br></p>`
+    );
+    updateCounts();
   };
 
   const handleExportText = () => {
@@ -395,6 +422,7 @@ td,th{border:1px solid #d0d5dd;padding:8px}
           <button onClick={insertLink} title="Insert link">⌁</button>
           <button onClick={insertTable} title="Insert table">▦</button>
           <button onClick={insertDivider} title="Insert divider">—</button>
+          <button onClick={insertPageBreak} title="Insert page break">PB</button>
           <button onClick={clearFormatting} title="Clear formatting">Tx</button>
         </div>
 
@@ -480,7 +508,7 @@ td,th{border:1px solid #d0d5dd;padding:8px}
       </div>
 
       <footer className="docsStatusBar">
-        <span>Page 1</span>
+        <span>Page 1 of {pageCount}</span>
         <span>{wordCount} words</span>
         <span>{page.size} · {page.orientation}</span>
         <span>English</span>
