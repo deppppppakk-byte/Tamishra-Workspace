@@ -889,6 +889,23 @@ export async function handleChatRequest(
       if (!messageBody.trim() && !messageAttachments.length) {
         throw Object.assign(new Error("message_content_required"), { status: 400 });
       }
+      if (messageAttachments.some((attachment) => !attachment.fileId)) {
+        throw Object.assign(new Error("invalid_attachment"), { status: 400 });
+      }
+      const fileIds = messageAttachments
+        .map((attachment) => attachment.fileId)
+        .filter((fileId): fileId is string => Boolean(fileId));
+      if (!(await store.validateFiles(conversationId, fileIds))) {
+        throw Object.assign(new Error("attachment_not_in_conversation"), { status: 400 });
+      }
+
+      const conversationMembers = await store.listMembers(conversationId);
+      const conversationMemberIds = new Set(
+        conversationMembers.map((member) => member.userId)
+      );
+      const mentionIds = stringArray(body.mentions, 50, 128).filter((userId) =>
+        conversationMemberIds.has(userId)
+      );
 
       const message = await store.createMessage({
         conversationId,
@@ -896,9 +913,21 @@ export async function handleChatRequest(
         authorDisplayName: authorization.user.displayName,
         body: messageBody,
         parentMessageId: cleanText(body.parentMessageId, 128) || null,
-        mentions: stringArray(body.mentions, 50, 128),
+        mentions: mentionIds,
         attachments: messageAttachments
       });
+      await emitChatEvent({
+        organizationId: conversation.organizationId,
+        conversationId,
+        actorId: authorization.user.id,
+        type: "message.created",
+        payload: { messageId: message.id, parentMessageId: message.parentMessageId }
+      });
+      await createMessageNotifications(
+        conversation,
+        message,
+        authorization.user.id
+      );
 
       sendJson(response, 201, { message }, origin, allowedOrigins);
       return true;
@@ -915,11 +944,19 @@ export async function handleChatRequest(
       );
       if (!conversation) throw Object.assign(new Error("conversation_not_found"), { status: 404 });
       const body = await readJson(request);
+      const messageId = cleanText(body.messageId, 128) || null;
       const member = await store.setRead(
         conversationId,
         authorization.user.id,
-        cleanText(body.messageId, 128) || null
+        messageId
       );
+      await emitChatEvent({
+        organizationId: conversation.organizationId,
+        conversationId,
+        actorId: authorization.user.id,
+        type: "read.changed",
+        payload: { userId: authorization.user.id, messageId }
+      });
       sendJson(response, 200, { member }, origin, allowedOrigins);
       return true;
     }
@@ -938,6 +975,19 @@ export async function handleChatRequest(
         messageBody
       );
       if (!message) throw Object.assign(new Error("message_not_editable"), { status: 404 });
+      const conversation = await store.getConversationForUser(
+        message.conversationId,
+        authorization.user.id
+      );
+      if (conversation) {
+        await emitChatEvent({
+          organizationId: conversation.organizationId,
+          conversationId: conversation.id,
+          actorId: authorization.user.id,
+          type: "message.updated",
+          payload: { messageId }
+        });
+      }
       sendJson(response, 200, { message }, origin, allowedOrigins);
       return true;
     }
@@ -959,6 +1009,15 @@ export async function handleChatRequest(
         authorization.user.id,
         allowModeration
       );
+      if (deleted) {
+        await emitChatEvent({
+          organizationId: conversation.organizationId,
+          conversationId: conversation.id,
+          actorId: authorization.user.id,
+          type: "message.deleted",
+          payload: { messageId }
+        });
+      }
       sendJson(response, deleted ? 200 : 404, { deleted }, origin, allowedOrigins);
       return true;
     }
@@ -974,6 +1033,21 @@ export async function handleChatRequest(
       const emoji = cleanText(body.emoji, 32);
       if (!emoji) throw Object.assign(new Error("emoji_required"), { status: 400 });
       const reacted = await store.addReaction(messageId, authorization.user.id, emoji);
+      if (reacted) {
+        const conversation = await store.getConversationForUser(
+          visibleMessage.conversationId,
+          authorization.user.id
+        );
+        if (conversation) {
+          await emitChatEvent({
+            organizationId: conversation.organizationId,
+            conversationId: conversation.id,
+            actorId: authorization.user.id,
+            type: "reaction.changed",
+            payload: { messageId, emoji, action: "added" }
+          });
+        }
+      }
       sendJson(response, reacted ? 200 : 404, { reacted }, origin, allowedOrigins);
       return true;
     }
@@ -984,6 +1058,21 @@ export async function handleChatRequest(
       if (!visibleMessage) throw Object.assign(new Error("message_not_found"), { status: 404 });
       const emoji = decodeSegment(reactionMatch[2]).slice(0, 32);
       const removed = await store.removeReaction(messageId, authorization.user.id, emoji);
+      if (removed) {
+        const conversation = await store.getConversationForUser(
+          visibleMessage.conversationId,
+          authorization.user.id
+        );
+        if (conversation) {
+          await emitChatEvent({
+            organizationId: conversation.organizationId,
+            conversationId: conversation.id,
+            actorId: authorization.user.id,
+            type: "reaction.changed",
+            payload: { messageId, emoji, action: "removed" }
+          });
+        }
+      }
       sendJson(response, removed ? 200 : 404, { removed }, origin, allowedOrigins);
       return true;
     }
