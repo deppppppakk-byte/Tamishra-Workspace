@@ -194,12 +194,14 @@ function errorStatus(error: unknown) {
   if (direct) return direct;
   const code = String((error as { code?: unknown }).code ?? "");
   if (code === "23505") return 409;
+  if (code === "23503") return 404;
   return 500;
 }
 
 function errorCode(error: unknown) {
   const code = String((error as { code?: unknown }).code ?? "");
   if (code === "23505") return "mailbox_address_taken";
+  if (code === "23503") return "user_not_found";
   return error instanceof Error ? error.message : "patra_error";
 }
 
@@ -347,8 +349,12 @@ export async function handlePatraRequest(
           drafts: true,
           localDelivery: true,
           externalDeliveryQueue: true,
-          smtpDeliveryConfigured: false,
-          inboundSmtpConfigured: false
+          smtpDeliveryConfigured: Boolean(
+            process.env.PATRA_SMTP_RELAY_HOST?.trim()
+          ),
+          inboundSmtpConfigured: Boolean(
+            process.env.PATRA_SMTP_HOSTNAME?.trim()
+          )
         }
       },
       origin,
