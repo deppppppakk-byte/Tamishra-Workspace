@@ -1,154 +1,242 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { builtInMailProviders } from "@tamishra/mail-core";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { workspaceApi } from "../../lib/workspace-api";
 import styles from "./mail.module.css";
 
-type Folder = "inbox" | "sent" | "drafts" | "archive" | "spam" | "trash";
+type FolderKind = "inbox" | "sent" | "drafts" | "archive" | "spam" | "trash";
 
-type MailMessage = {
+type PatraMailbox = {
   id: string;
-  folder: Folder;
-  from: string;
   address: string;
-  subject: string;
-  preview: string;
-  body: string;
-  time: string;
-  read: boolean;
-  starred: boolean;
-  labels?: string[];
-  attachment?: string;
+  localPart: string;
+  domain: string;
+  mailboxClass: "public" | "tamishra-company";
+  displayName: string;
+  status: "active" | "suspended";
+  quotaBytes: string;
+  usedBytes: string;
+  createdAt: string;
 };
 
-const seedMessages: MailMessage[] = [
-  {
-    id: "m-101",
-    folder: "inbox",
-    from: "Aarav Mehta",
-    address: "aarav@example.com",
-    subject: "Design review notes",
-    preview: "I added the decisions from today’s review and the remaining actions...",
-    body: "Hi Deepak,\n\nI added the decisions from today’s design review and the remaining action items. The updated notes are ready for your review.\n\nRegards,\nAarav",
-    time: "3:42 PM",
-    read: false,
-    starred: true,
-    labels: ["Project"]
-  },
-  {
-    id: "m-102",
-    folder: "inbox",
-    from: "Tamishra Workspace",
-    address: "updates@patra.in",
-    subject: "Your workspace foundation is ready",
-    preview: "Mail, chat, meetings, notes and forms now share one product shell...",
-    body: "Welcome to Tamishra Workspace.\n\nThis inbox is running in local demo mode. External delivery will be enabled through provider adapters, so the interface does not depend on one email service.",
-    time: "2:18 PM",
-    read: false,
-    starred: false,
-    labels: ["Workspace"]
-  },
-  {
-    id: "m-103",
-    folder: "inbox",
-    from: "Priya Nair",
-    address: "priya@example.com",
-    subject: "Meeting follow-up",
-    preview: "Sharing the summary and the two files we discussed during the call.",
-    body: "Hello,\n\nSharing the meeting summary and the two files we discussed. Please add comments directly in the workspace when convenient.\n\nThanks,\nPriya",
-    time: "12:06 PM",
-    read: true,
-    starred: false,
-    attachment: "Meeting-summary.pdf",
-    labels: ["Team"]
-  },
-  {
-    id: "m-104",
-    folder: "inbox",
-    from: "Finance Desk",
-    address: "finance@example.com",
-    subject: "September statement",
-    preview: "Your monthly statement is attached for reference.",
-    body: "Hello,\n\nYour September statement is attached for reference. No action is required if the details are correct.\n\nFinance Desk",
-    time: "Yesterday",
-    read: true,
-    starred: true,
-    attachment: "September-statement.pdf",
-    labels: ["Finance"]
-  },
-  {
-    id: "m-105",
-    folder: "sent",
-    from: "You",
-    address: "you@patra.in",
-    subject: "Re: Project schedule",
-    preview: "The updated schedule works for me. I have marked the review checkpoints...",
-    body: "The updated schedule works for me. I have marked the review checkpoints and dependencies in the shared plan.",
-    time: "Yesterday",
-    read: true,
-    starred: false
-  },
-  {
-    id: "m-106",
-    folder: "drafts",
-    from: "Draft",
-    address: "",
-    subject: "Quarterly planning",
-    preview: "Draft — agenda, owners and expected outcomes...",
-    body: "Agenda:\n- Product priorities\n- Owners\n- Expected outcomes",
-    time: "Draft",
-    read: true,
-    starred: false
-  }
-];
+type PatraFolder = {
+  id: string;
+  name: string;
+  kind: FolderKind;
+  totalCount: number;
+  unreadCount: number;
+};
 
-const folders: Array<{ id: Folder | "starred"; label: string; symbol: string }> = [
-  { id: "inbox", label: "Inbox", symbol: "⌂" },
-  { id: "starred", label: "Starred", symbol: "☆" },
-  { id: "sent", label: "Sent", symbol: "↗" },
-  { id: "drafts", label: "Drafts", symbol: "◇" },
-  { id: "archive", label: "Archive", symbol: "□" },
-  { id: "spam", label: "Spam", symbol: "!" },
-  { id: "trash", label: "Trash", symbol: "⌫" }
-];
+type PatraAddress = {
+  name?: string;
+  address: string;
+};
+
+type PatraMessage = {
+  id: string;
+  mailboxId: string;
+  folderId: string;
+  threadId: string;
+  from: PatraAddress;
+  to: PatraAddress[];
+  cc: PatraAddress[];
+  bcc: PatraAddress[];
+  subject: string;
+  textBody: string;
+  htmlBody: string | null;
+  preview: string;
+  receivedAt: string | null;
+  sentAt: string | null;
+  read: boolean;
+  starred: boolean;
+  labels: string[];
+  deliveryStatus:
+    | "draft"
+    | "queued"
+    | "delivered-local"
+    | "sent-external"
+    | "failed";
+  createdAt: string;
+  updatedAt: string;
+};
+
+type MailboxesResponse = {
+  mailboxes: PatraMailbox[];
+  persistence: "postgres" | "ephemeral-memory";
+};
+
+type FoldersResponse = {
+  mailbox: PatraMailbox;
+  folders: PatraFolder[];
+};
+
+type MessagesResponse = {
+  mailbox: PatraMailbox;
+  folder: FolderKind;
+  messages: PatraMessage[];
+};
+
+const folderSymbols: Record<FolderKind, string> = {
+  inbox: "⌂",
+  sent: "↗",
+  drafts: "◇",
+  archive: "□",
+  spam: "!",
+  trash: "⌫"
+};
+
+function formatTime(value: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const today = new Date();
+  if (date.toDateString() === today.toDateString()) {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function recipientList(value: string) {
+  return value
+    .split(/[;,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function initials(value: string) {
+  return (
+    value
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join("") || "P"
+  );
+}
 
 export function MailWorkspace() {
-  const [messages, setMessages] = useState(seedMessages);
-  const [folder, setFolder] = useState<Folder | "starred">("inbox");
+  const [mailboxes, setMailboxes] = useState<PatraMailbox[]>([]);
+  const [mailboxId, setMailboxId] = useState("");
+  const [folders, setFolders] = useState<PatraFolder[]>([]);
+  const [folder, setFolder] = useState<FolderKind>("inbox");
+  const [messages, setMessages] = useState<PatraMessage[]>([]);
+  const [selectedId, setSelectedId] = useState("");
   const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState(seedMessages[0].id);
-  const [checked, setChecked] = useState<string[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
-  const [providerPanelOpen, setProviderPanelOpen] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState("tamishra");
-  const [mobileReading, setMobileReading] = useState(false);
   const [compose, setCompose] = useState({ to: "", subject: "", body: "" });
   const [notice, setNotice] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [needsSignIn, setNeedsSignIn] = useState(false);
+  const [setupUsername, setSetupUsername] = useState("");
+  const [availability, setAvailability] = useState<null | {
+    address: string;
+    available: boolean;
+  }>(null);
+  const [setupBusy, setSetupBusy] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const visibleMessages = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
+  const mailbox = useMemo(
+    () => mailboxes.find((item) => item.id === mailboxId) ?? mailboxes[0] ?? null,
+    [mailboxId, mailboxes]
+  );
 
-    return messages.filter((message) => {
-      const folderMatch = folder === "starred" ? message.starred : message.folder === folder;
-      if (!folderMatch) return false;
-      if (!normalized) return true;
+  const activeMessage = useMemo(
+    () => messages.find((item) => item.id === selectedId) ?? messages[0] ?? null,
+    [messages, selectedId]
+  );
 
-      return [message.from, message.address, message.subject, message.preview, message.body]
-        .join(" ")
-        .toLowerCase()
-        .includes(normalized);
-    });
-  }, [folder, messages, query]);
+  const loadMailboxes = useCallback(async () => {
+    try {
+      const result = await workspaceApi<MailboxesResponse>("/v1/patra/mailboxes");
+      setMailboxes(result.mailboxes);
+      setMailboxId((current) => {
+        if (current && result.mailboxes.some((item) => item.id === current)) {
+          return current;
+        }
+        return result.mailboxes[0]?.id ?? "";
+      });
+      setNeedsSignIn(false);
+      return result.mailboxes;
+    } catch (error) {
+      const status =
+        error && typeof error === "object" && "status" in error
+          ? Number((error as { status?: unknown }).status ?? 0)
+          : 0;
+      if (status === 401) setNeedsSignIn(true);
+      throw error;
+    }
+  }, []);
 
-  const activeMessage =
-    visibleMessages.find((message) => message.id === selectedId) ??
-    messages.find((message) => message.id === selectedId) ??
-    visibleMessages[0];
+  const loadFolders = useCallback(async (id: string) => {
+    if (!id) return;
+    const result = await workspaceApi<FoldersResponse>(
+      `/v1/patra/mailboxes/${encodeURIComponent(id)}/folders`
+    );
+    setFolders(result.folders);
+  }, []);
 
-  const unreadCount = messages.filter((message) => message.folder === "inbox" && !message.read).length;
-  const draftCount = messages.filter((message) => message.folder === "drafts").length;
+  const loadMessages = useCallback(
+    async (id: string, nextFolder: FolderKind, search = "") => {
+      if (!id) return;
+      const params = new URLSearchParams({ folder: nextFolder, limit: "150" });
+      if (search.trim()) params.set("q", search.trim());
+      const result = await workspaceApi<MessagesResponse>(
+        `/v1/patra/mailboxes/${encodeURIComponent(id)}/messages?${params.toString()}`
+      );
+      setMessages(result.messages);
+      setSelectedId((current) =>
+        result.messages.some((item) => item.id === current)
+          ? current
+          : result.messages[0]?.id ?? ""
+      );
+    },
+    []
+  );
+
+  const refresh = useCallback(async () => {
+    if (!mailboxId) return;
+    await Promise.all([
+      loadFolders(mailboxId),
+      loadMessages(mailboxId, folder, query)
+    ]);
+  }, [folder, loadFolders, loadMessages, mailboxId, query]);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    loadMailboxes()
+      .catch(() => undefined)
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [loadMailboxes]);
+
+  useEffect(() => {
+    if (!mailboxId) {
+      setFolders([]);
+      setMessages([]);
+      return;
+    }
+
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      Promise.all([
+        loadFolders(mailboxId),
+        loadMessages(mailboxId, folder, query)
+      ]).catch(() => {
+        if (alive) setNotice("Unable to load Patra mailbox");
+      });
+    }, query ? 220 : 0);
+
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [folder, loadFolders, loadMessages, mailboxId, query]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -158,149 +246,311 @@ export function MailWorkspace() {
         target?.tagName === "TEXTAREA" ||
         target?.isContentEditable;
 
-      if (event.key === "/" && !editing) {
+      if (event.key === "/" && !editing && mailbox) {
         event.preventDefault();
         searchRef.current?.focus();
       }
 
-      if (event.key.toLowerCase() === "c" && !editing) {
+      if (event.key.toLowerCase() === "c" && !editing && mailbox) {
         event.preventDefault();
         setComposeOpen(true);
       }
 
-      if (event.key === "Escape" && composeOpen) {
-        setComposeOpen(false);
-      }
-
-      if (event.key === "Escape" && providerPanelOpen) {
-        setProviderPanelOpen(false);
-      }
+      if (event.key === "Escape" && composeOpen) setComposeOpen(false);
     }
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [composeOpen, providerPanelOpen]);
+  }, [composeOpen, mailbox]);
 
-  function chooseFolder(nextFolder: Folder | "starred") {
-    setFolder(nextFolder);
-    setChecked([]);
-    setSelectedId("");
-    setMobileReading(false);
+  function flash(message: string, duration = 3200) {
+    setNotice(message);
+    window.setTimeout(() => setNotice(""), duration);
   }
 
-  function openMessage(id: string) {
-    setSelectedId(id);
-    setMobileReading(true);
-    setMessages((current) =>
-      current.map((message) => (message.id === id ? { ...message, read: true } : message))
-    );
-  }
-
-  function toggleStar(id: string) {
-    setMessages((current) =>
-      current.map((message) =>
-        message.id === id ? { ...message, starred: !message.starred } : message
-      )
-    );
-  }
-
-  function toggleChecked(id: string) {
-    setChecked((current) =>
-      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
-    );
-  }
-
-  function toggleAll() {
-    const visibleIds = visibleMessages.map((message) => message.id);
-    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => checked.includes(id));
-    setChecked(allSelected ? [] : visibleIds);
-  }
-
-  function moveChecked(destination: Folder) {
-    if (!checked.length) return;
-
-    setMessages((current) =>
-      current.map((message) =>
-        checked.includes(message.id) ? { ...message, folder: destination } : message
-      )
-    );
-    setChecked([]);
-    setSelectedId("");
-    setNotice(destination === "trash" ? "Moved to Trash" : "Message updated");
-    window.setTimeout(() => setNotice(""), 2200);
-  }
-
-  function moveMessage(id: string, destination: Folder) {
-    setMessages((current) =>
-      current.map((message) =>
-        message.id === id ? { ...message, folder: destination } : message
-      )
-    );
-    setChecked((current) => current.filter((messageId) => messageId !== id));
-    setSelectedId("");
-    setNotice(destination === "trash" ? "Moved to Trash" : "Message archived");
-    window.setTimeout(() => setNotice(""), 2200);
-  }
-
-  function closeComposer() {
-    if (compose.to.trim() || compose.subject.trim() || compose.body.trim()) {
-      const draft: MailMessage = {
-        id: `draft-${Date.now()}`,
-        folder: "drafts",
-        from: "Draft",
-        address: compose.to.trim(),
-        subject: compose.subject.trim() || "(no subject)",
-        preview: compose.body.trim() || "Draft message",
-        body: compose.body,
-        time: "Draft",
-        read: true,
-        starred: false
-      };
-      setMessages((current) => [draft, ...current]);
-      setNotice("Draft saved locally");
-      window.setTimeout(() => setNotice(""), 2200);
+  async function provisionMailbox(event: FormEvent) {
+    event.preventDefault();
+    if (setupBusy) return;
+    setSetupBusy(true);
+    try {
+      const result = await workspaceApi<{ mailbox: PatraMailbox }>(
+        "/v1/patra/mailboxes",
+        {
+          method: "POST",
+          body: JSON.stringify({ username: setupUsername })
+        }
+      );
+      setMailboxes((current) => [...current, result.mailbox]);
+      setMailboxId(result.mailbox.id);
+      setAvailability(null);
+      flash(`${result.mailbox.address} is ready`);
+    } catch (error) {
+      const code =
+        error && typeof error === "object" && "code" in error
+          ? String((error as { code?: unknown }).code ?? "")
+          : "";
+      flash(
+        code === "mailbox_address_taken"
+          ? "That Patra address is already taken."
+          : code === "mailbox_username_reserved"
+            ? "That address is reserved by Patra."
+            : code === "invalid_mailbox_username"
+              ? "Use 3–64 letters, numbers, dots, underscores or hyphens."
+              : "Unable to create the Patra mailbox."
+      );
+    } finally {
+      setSetupBusy(false);
     }
-
-    setCompose({ to: "", subject: "", body: "" });
-    setComposeOpen(false);
   }
 
-  function sendMessage() {
-    if (!compose.to.trim()) {
-      setNotice("Add a recipient before sending");
-      window.setTimeout(() => setNotice(""), 2200);
+  async function checkAvailability() {
+    const username = setupUsername.trim();
+    if (!username) return;
+    try {
+      const result = await workspaceApi<{
+        address: string;
+        available: boolean;
+      }>(`/v1/patra/availability?username=${encodeURIComponent(username)}`);
+      setAvailability(result);
+    } catch {
+      setAvailability(null);
+      flash("Enter a valid Patra username.");
+    }
+  }
+
+  async function patchMessage(
+    messageId: string,
+    patch: { folder?: FolderKind; read?: boolean; starred?: boolean }
+  ) {
+    if (!mailbox) return;
+    await workspaceApi(
+      `/v1/patra/mailboxes/${encodeURIComponent(mailbox.id)}/messages/${encodeURIComponent(messageId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(patch)
+      }
+    );
+    await refresh();
+  }
+
+  async function openMessage(message: PatraMessage) {
+    setSelectedId(message.id);
+    if (!message.read) {
+      try {
+        await patchMessage(message.id, { read: true });
+      } catch {
+        flash("Unable to update read state");
+      }
+    }
+  }
+
+  async function sendMessage() {
+    if (!mailbox) return;
+    const to = recipientList(compose.to);
+    if (!to.length) {
+      flash("Add at least one recipient.");
       return;
     }
 
-    const sent: MailMessage = {
-      id: `sent-${Date.now()}`,
-      folder: "sent",
-      from: "You",
-      address: compose.to.trim(),
-      subject: compose.subject.trim() || "(no subject)",
-      preview: compose.body.trim() || "No message body",
-      body: compose.body,
-      time: "Now",
-      read: true,
-      starred: false
-    };
+    try {
+      const result = await workspaceApi<{
+        localRecipients: number;
+        externalRecipients: string[];
+        delivery: string;
+      }>(`/v1/patra/mailboxes/${encodeURIComponent(mailbox.id)}/send`, {
+        method: "POST",
+        body: JSON.stringify({
+          to,
+          subject: compose.subject,
+          textBody: compose.body,
+          threadId: activeMessage?.threadId
+        })
+      });
 
-    setMessages((current) => [sent, ...current]);
+      setCompose({ to: "", subject: "", body: "" });
+      setComposeOpen(false);
+      setFolder("sent");
+      await Promise.all([loadFolders(mailbox.id), loadMessages(mailbox.id, "sent")]);
+
+      flash(
+        result.externalRecipients.length
+          ? `Message queued: ${result.localRecipients} local, ${result.externalRecipients.length} external recipient(s).`
+          : "Message delivered inside Patra."
+      );
+    } catch {
+      flash("Unable to send this message.");
+    }
+  }
+
+  async function closeComposer() {
+    if (!mailbox) {
+      setComposeOpen(false);
+      return;
+    }
+
+    const hasContent =
+      compose.to.trim() || compose.subject.trim() || compose.body.trim();
+
+    if (hasContent) {
+      try {
+        await workspaceApi(
+          `/v1/patra/mailboxes/${encodeURIComponent(mailbox.id)}/drafts`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              to: recipientList(compose.to),
+              subject: compose.subject,
+              textBody: compose.body
+            })
+          }
+        );
+        flash("Draft saved in Patra.");
+      } catch {
+        flash("Unable to save draft.");
+      }
+    }
+
     setCompose({ to: "", subject: "", body: "" });
     setComposeOpen(false);
-    setNotice("Saved to Sent locally — Patra delivery will use your @patra.in mailbox");
-    window.setTimeout(() => setNotice(""), 3600);
+    if (folder === "drafts") {
+      await loadMessages(mailbox.id, "drafts", query).catch(() => undefined);
+    }
+    await loadFolders(mailbox.id).catch(() => undefined);
   }
+
+  function startReply(message: PatraMessage) {
+    setCompose({
+      to: message.from.address,
+      subject: message.subject.startsWith("Re:")
+        ? message.subject
+        : `Re: ${message.subject}`,
+      body: ""
+    });
+    setComposeOpen(true);
+  }
+
+  function startForward(message: PatraMessage) {
+    setCompose({
+      to: "",
+      subject: message.subject.startsWith("Fwd:")
+        ? message.subject
+        : `Fwd: ${message.subject}`,
+      body:
+        "\n\n---------- Forwarded message ----------\n" +
+        `From: ${message.from.name ?? message.from.address} <${message.from.address}>\n` +
+        `Subject: ${message.subject}\n\n${message.textBody}`
+    });
+    setComposeOpen(true);
+  }
+
+  if (loading) {
+    return (
+      <main className={styles.setupShell}>
+        <div className={styles.setupCard}>
+          <div className={styles.setupMark}>P</div>
+          <p>Opening Tamishra Patra…</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (needsSignIn) {
+    return (
+      <main className={styles.setupShell}>
+        <div className={styles.setupCard}>
+          <div className={styles.setupMark}>P</div>
+          <p className={styles.setupEyebrow}>TAMISHRA PATRA</p>
+          <h1>Sign in before opening your mailbox.</h1>
+          <p>
+            Patra uses your Tamishra Workspace identity. Your mailbox remains
+            separate from your login email.
+          </p>
+          <Link className={styles.setupPrimary} href="/sign-in">
+            Sign in to continue
+          </Link>
+        </div>
+      </main>
+    );
+  }
+
+  if (!mailbox) {
+    return (
+      <main className={styles.setupShell}>
+        <Link className={styles.setupHome} href="/">← Workspace</Link>
+        <form className={styles.setupCard} onSubmit={provisionMailbox}>
+          <div className={styles.setupMark}>P</div>
+          <p className={styles.setupEyebrow}>CREATE YOUR PATRA ADDRESS</p>
+          <h1>Choose your @patra.in mailbox.</h1>
+          <p>
+            Public Patra registration creates one personal address. Company
+            @tamishra.in addresses are provisioned separately by Tamishra.
+          </p>
+
+          <label className={styles.setupField}>
+            <span>Patra username</span>
+            <div>
+              <input
+                value={setupUsername}
+                onChange={(event) => {
+                  setSetupUsername(event.target.value.toLowerCase());
+                  setAvailability(null);
+                }}
+                placeholder="yourname"
+                maxLength={64}
+                autoComplete="username"
+                required
+              />
+              <b>@patra.in</b>
+            </div>
+          </label>
+
+          {availability && (
+            <div
+              className={
+                availability.available
+                  ? styles.setupAvailable
+                  : styles.setupUnavailable
+              }
+            >
+              {availability.address} is{" "}
+              {availability.available ? "available" : "already taken"}.
+            </div>
+          )}
+
+          <div className={styles.setupActions}>
+            <button type="button" onClick={checkAvailability}>
+              Check availability
+            </button>
+            <button
+              className={styles.setupPrimaryButton}
+              type="submit"
+              disabled={setupBusy}
+            >
+              {setupBusy ? "Creating…" : "Create mailbox"}
+            </button>
+          </div>
+        </form>
+        {notice && <div className={styles.toast} role="status">{notice}</div>}
+      </main>
+    );
+  }
+
+  const currentFolder =
+    folders.find((item) => item.kind === folder) ?? null;
 
   return (
     <main className={styles.shell}>
       <aside className={styles.appRail} aria-label="Workspace apps">
-        <Link className={styles.workspaceMark} href="/" aria-label="Tamishra Workspace home">T</Link>
-        <Link className={styles.railActive} href="/apps/mail" aria-label="Patra">P</Link>
-        <button type="button" aria-label="Chat">C</button>
-        <button type="button" aria-label="Meet">V</button>
-        <button type="button" aria-label="Notes">N</button>
-        <button type="button" aria-label="Forms">F</button>
+        <Link className={styles.workspaceMark} href="/" aria-label="Tamishra Workspace home">
+          T
+        </Link>
+        <Link className={styles.railActive} href="/apps/mail" aria-label="Patra">
+          P
+        </Link>
+        <Link href="/apps/chat" aria-label="Chat">C</Link>
+        <Link href="/apps/meet" aria-label="Meet">V</Link>
+        <Link href="/apps/notes" aria-label="Notes">N</Link>
+        <Link href="/apps/forms" aria-label="Forms">F</Link>
         <span className={styles.railSpacer} />
         <Link href="/" aria-label="All apps">•••</Link>
       </aside>
@@ -314,38 +564,61 @@ export function MailWorkspace() {
           <Link href="/" aria-label="Back to workspace">↙</Link>
         </div>
 
-        <button className={styles.composeButton} type="button" onClick={() => setComposeOpen(true)}>
+        <button
+          className={styles.composeButton}
+          type="button"
+          onClick={() => setComposeOpen(true)}
+        >
           <span>＋</span>
           Compose
         </button>
 
         <nav className={styles.folderList} aria-label="Patra folders">
-          {folders.map((item) => {
-            const count =
-              item.id === "inbox" ? unreadCount :
-              item.id === "drafts" ? draftCount :
-              0;
-
-            return (
-              <button
-                className={folder === item.id ? styles.folderActive : ""}
-                key={item.id}
-                type="button"
-                onClick={() => chooseFolder(item.id)}
-              >
-                <span className={styles.folderSymbol}>{item.symbol}</span>
-                <span>{item.label}</span>
-                {count > 0 && <b>{count}</b>}
-              </button>
-            );
-          })}
+          {folders.map((item) => (
+            <button
+              className={folder === item.kind ? styles.folderActive : ""}
+              key={item.id}
+              type="button"
+              onClick={() => {
+                setFolder(item.kind);
+                setSelectedId("");
+              }}
+            >
+              <span className={styles.folderSymbol}>{folderSymbols[item.kind]}</span>
+              <span>{item.name}</span>
+              {(item.unreadCount > 0 || item.kind === "drafts") && (
+                <b>
+                  {item.kind === "drafts"
+                    ? item.totalCount
+                    : item.unreadCount}
+                </b>
+              )}
+            </button>
+          ))}
         </nav>
 
         <div className={styles.sidebarFooter}>
-          <div className={styles.accountDot}>DK</div>
-          <div>
-            <strong>Local mailbox</strong>
-            <span>Provider not connected</span>
+          <div className={styles.accountDot}>{initials(mailbox.displayName)}</div>
+          <div className={styles.mailboxIdentity}>
+            <strong>{mailbox.displayName}</strong>
+            <span>{mailbox.address}</span>
+            {mailboxes.length > 1 && (
+              <select
+                value={mailbox.id}
+                onChange={(event) => {
+                  setMailboxId(event.target.value);
+                  setFolder("inbox");
+                  setSelectedId("");
+                }}
+                aria-label="Switch Patra mailbox"
+              >
+                {mailboxes.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.address}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
         </div>
       </aside>
@@ -365,53 +638,65 @@ export function MailWorkspace() {
           </label>
 
           <div className={styles.topActions}>
-            <button type="button" aria-label="Refresh" onClick={() => setNotice("Inbox refreshed locally")}>↻</button>
-            <button type="button" aria-label="Patra settings" onClick={() => setProviderPanelOpen(true)}>⚙</button>
-            <button className={styles.avatar} type="button" aria-label="Account">DK</button>
+            <button
+              type="button"
+              aria-label="Refresh Patra"
+              onClick={() =>
+                refresh()
+                  .then(() => flash("Patra refreshed", 1800))
+                  .catch(() => flash("Unable to refresh Patra"))
+              }
+            >
+              ↻
+            </button>
+            <button type="button" aria-label="Mailbox information">ⓘ</button>
+            <button className={styles.avatar} type="button" aria-label="Account">
+              {initials(mailbox.displayName)}
+            </button>
           </div>
         </header>
 
         <div className={styles.connectionBanner}>
-          <span className={styles.statusDot} />
+          <span className={styles.statusDotActive} />
           <div>
-            <strong>Local demo mailbox</strong>
-            <span>Interface is active. External send/receive will use a provider adapter.</span>
+            <strong>{mailbox.address}</strong>
+            <span>
+              Native Patra mailbox · {mailbox.mailboxClass === "tamishra-company" ? "Tamishra company" : "Public Patra"}
+            </span>
           </div>
-          <button type="button" onClick={() => setProviderPanelOpen(true)}>
-            Connect provider
+          <button type="button" onClick={() => flash("Mailbox is connected to the Patra backend.")}>
+            Connected
           </button>
         </div>
 
         <div className={styles.mailLayout}>
-          <section className={[styles.listPane, mobileReading ? styles.listMobileHidden : ""].join(" ")}>
+          <section className={styles.listPane}>
             <div className={styles.listHeader}>
               <div>
-                <p>{folder === "starred" ? "Starred" : folder[0].toUpperCase() + folder.slice(1)}</p>
-                <span>{visibleMessages.length} messages</span>
+                <p>{currentFolder?.name ?? "Inbox"}</p>
+                <span>{messages.length} messages</span>
               </div>
               <button type="button" aria-label="More options">•••</button>
             </div>
 
             <div className={styles.selectionToolbar}>
-              <input
-                type="checkbox"
-                aria-label="Select all visible messages"
-                checked={visibleMessages.length > 0 && visibleMessages.every((message) => checked.includes(message.id))}
-                onChange={toggleAll}
-              />
-              <button type="button" disabled={!checked.length} onClick={() => moveChecked("archive")}>Archive</button>
-              <button type="button" disabled={!checked.length} onClick={() => moveChecked("trash")}>Delete</button>
-              <span>{checked.length ? `${checked.length} selected` : "Select messages"}</span>
+              <span className={styles.listStatus}>
+                {query ? `Search: “${query}”` : mailbox.address}
+              </span>
             </div>
 
             <div className={styles.messageList}>
-              {visibleMessages.length === 0 ? (
+              {!messages.length ? (
                 <div className={styles.emptyState}>
                   <strong>No messages here</strong>
-                  <span>Try another folder or clear your search.</span>
+                  <span>
+                    {folder === "inbox"
+                      ? "Your Patra inbox is ready."
+                      : "This folder is empty."}
+                  </span>
                 </div>
               ) : (
-                visibleMessages.map((message) => (
+                messages.map((message) => (
                   <article
                     className={[
                       styles.messageRow,
@@ -419,36 +704,35 @@ export function MailWorkspace() {
                       !message.read ? styles.messageUnread : ""
                     ].join(" ")}
                     key={message.id}
-                    onClick={() => openMessage(message.id)}
+                    onClick={() => void openMessage(message)}
                   >
-                    <input
-                      type="checkbox"
-                      aria-label={`Select ${message.subject}`}
-                      checked={checked.includes(message.id)}
-                      onClick={(event) => event.stopPropagation()}
-                      onChange={() => toggleChecked(message.id)}
-                    />
+                    <span />
                     <button
                       className={message.starred ? styles.starred : styles.star}
                       type="button"
                       aria-label={message.starred ? "Unstar message" : "Star message"}
                       onClick={(event) => {
                         event.stopPropagation();
-                        toggleStar(message.id);
+                        void patchMessage(message.id, {
+                          starred: !message.starred
+                        }).catch(() => flash("Unable to update star"));
                       }}
                     >
                       {message.starred ? "★" : "☆"}
                     </button>
+
                     <div className={styles.messageCopy}>
                       <div className={styles.senderLine}>
-                        <strong>{message.from}</strong>
-                        <time>{message.time}</time>
+                        <strong>{message.from.name ?? message.from.address}</strong>
+                        <time>{formatTime(message.receivedAt ?? message.sentAt ?? message.createdAt)}</time>
                       </div>
-                      <h3>{message.subject}</h3>
-                      <p>{message.preview}</p>
+                      <h3>{message.subject || "(no subject)"}</h3>
+                      <p>{message.preview || "No message body"}</p>
                       <div className={styles.messageMeta}>
-                        {message.labels?.map((label) => <span key={label}>{label}</span>)}
-                        {message.attachment && <span>⌕ {message.attachment}</span>}
+                        <span>{message.deliveryStatus}</span>
+                        {message.labels.map((label) => (
+                          <span key={label}>{label}</span>
+                        ))}
                       </div>
                     </div>
                   </article>
@@ -457,43 +741,49 @@ export function MailWorkspace() {
             </div>
           </section>
 
-          <section className={[styles.readerPane, mobileReading ? styles.readerMobileOpen : ""].join(" ")}>
+          <section className={styles.readerPane}>
             {activeMessage ? (
               <>
                 <div className={styles.readerToolbar}>
                   <button
-                    className={styles.mobileBack}
                     type="button"
-                    onClick={() => setMobileReading(false)}
-                    aria-label="Back to message list"
+                    onClick={() =>
+                      void patchMessage(activeMessage.id, { folder: "archive" }).catch(
+                        () => flash("Unable to archive message")
+                      )
+                    }
+                    aria-label="Archive message"
                   >
-                    ←
+                    □
                   </button>
-                  <button type="button" onClick={() => moveMessage(activeMessage.id, "archive")} aria-label="Archive message">□</button>
                   <button
                     type="button"
-                    onClick={() => moveMessage(activeMessage.id, "trash")}
+                    onClick={() =>
+                      void patchMessage(activeMessage.id, { folder: "trash" }).catch(
+                        () => flash("Unable to move message to Trash")
+                      )
+                    }
                     aria-label="Delete message"
                   >
                     ⌫
                   </button>
                   <span />
-                  <button type="button" aria-label="Previous message">‹</button>
-                  <button type="button" aria-label="Next message">›</button>
                 </div>
 
                 <div className={styles.readerContent}>
                   <div className={styles.readerHeading}>
                     <div>
-                      <span className={styles.readerLabel}>
-                        {activeMessage.folder === "inbox" ? "Inbox" : activeMessage.folder}
-                      </span>
-                      <h1>{activeMessage.subject}</h1>
+                      <span className={styles.readerLabel}>{folder}</span>
+                      <h1>{activeMessage.subject || "(no subject)"}</h1>
                     </div>
                     <button
                       className={activeMessage.starred ? styles.starred : styles.star}
                       type="button"
-                      onClick={() => toggleStar(activeMessage.id)}
+                      onClick={() =>
+                        void patchMessage(activeMessage.id, {
+                          starred: !activeMessage.starred
+                        }).catch(() => flash("Unable to update star"))
+                      }
                       aria-label="Toggle starred"
                     >
                       {activeMessage.starred ? "★" : "☆"}
@@ -501,49 +791,39 @@ export function MailWorkspace() {
                   </div>
 
                   <div className={styles.senderCard}>
-                    <div className={styles.senderAvatar}>{activeMessage.from.slice(0, 1).toUpperCase()}</div>
-                    <div>
-                      <strong>{activeMessage.from}</strong>
-                      <span>{activeMessage.address || "Local draft"}</span>
+                    <div className={styles.senderAvatar}>
+                      {initials(activeMessage.from.name ?? activeMessage.from.address)}
                     </div>
-                    <time>{activeMessage.time}</time>
+                    <div>
+                      <strong>{activeMessage.from.name ?? activeMessage.from.address}</strong>
+                      <span>{activeMessage.from.address}</span>
+                    </div>
+                    <time>
+                      {formatTime(
+                        activeMessage.receivedAt ??
+                          activeMessage.sentAt ??
+                          activeMessage.createdAt
+                      )}
+                    </time>
+                  </div>
+
+                  <div className={styles.recipientLine}>
+                    To:{" "}
+                    {activeMessage.to.map((item) => item.address).join(", ") ||
+                      mailbox.address}
                   </div>
 
                   <div className={styles.messageBody}>
-                    {activeMessage.body.split("\n").map((line, index) => (
+                    {activeMessage.textBody.split("\n").map((line, index) => (
                       <p key={index}>{line || "\u00a0"}</p>
                     ))}
                   </div>
 
-                  {activeMessage.attachment && (
-                    <button className={styles.attachment} type="button">
-                      <span>PDF</span>
-                      <div>
-                        <strong>{activeMessage.attachment}</strong>
-                        <small>Attachment preview placeholder</small>
-                      </div>
-                    </button>
-                  )}
-
                   <div className={styles.replyRow}>
-                    <button type="button" onClick={() => {
-                      setCompose({
-                        to: activeMessage.address,
-                        subject: activeMessage.subject.startsWith("Re:") ? activeMessage.subject : `Re: ${activeMessage.subject}`,
-                        body: ""
-                      });
-                      setComposeOpen(true);
-                    }}>
+                    <button type="button" onClick={() => startReply(activeMessage)}>
                       ↩ Reply
                     </button>
-                    <button type="button" onClick={() => {
-                      setCompose({
-                        to: "",
-                        subject: activeMessage.subject.startsWith("Fwd:") ? activeMessage.subject : `Fwd: ${activeMessage.subject}`,
-                        body: `\n\n---------- Forwarded message ----------\nFrom: ${activeMessage.from}\nSubject: ${activeMessage.subject}\n\n${activeMessage.body}`
-                      });
-                      setComposeOpen(true);
-                    }}>
+                    <button type="button" onClick={() => startForward(activeMessage)}>
                       ↗ Forward
                     </button>
                   </div>
@@ -551,9 +831,9 @@ export function MailWorkspace() {
               </>
             ) : (
               <div className={styles.readerEmpty}>
-                <div>M</div>
+                <div>P</div>
                 <strong>Select a message</strong>
-                <span>Choose a conversation to read it here.</span>
+                <span>Choose a Patra conversation to read it here.</span>
               </div>
             )}
           </section>
@@ -561,158 +841,54 @@ export function MailWorkspace() {
       </section>
 
       {composeOpen && (
-        <section className={styles.composePanel} aria-label="Compose email">
+        <section className={styles.composePanel} aria-label="Compose Patra message">
           <header>
-            <strong>New message</strong>
-            <button type="button" aria-label="Close and save draft" onClick={closeComposer}>×</button>
+            <strong>New message · {mailbox.address}</strong>
+            <button type="button" aria-label="Close and save draft" onClick={() => void closeComposer()}>
+              ×
+            </button>
           </header>
           <label>
             <span>To</span>
             <input
               value={compose.to}
-              onChange={(event) => setCompose((current) => ({ ...current, to: event.target.value }))}
+              onChange={(event) =>
+                setCompose((current) => ({ ...current, to: event.target.value }))
+              }
               placeholder="name@patra.in"
+              autoComplete="off"
             />
           </label>
           <label>
             <span>Subject</span>
             <input
               value={compose.subject}
-              onChange={(event) => setCompose((current) => ({ ...current, subject: event.target.value }))}
+              onChange={(event) =>
+                setCompose((current) => ({
+                  ...current,
+                  subject: event.target.value
+                }))
+              }
               placeholder="Subject"
             />
           </label>
           <textarea
             value={compose.body}
-            onChange={(event) => setCompose((current) => ({ ...current, body: event.target.value }))}
+            onChange={(event) =>
+              setCompose((current) => ({ ...current, body: event.target.value }))
+            }
             placeholder="Write your message..."
             aria-label="Message body"
           />
           <footer>
-            <button className={styles.sendButton} type="button" onClick={sendMessage}>Send</button>
-            <button type="button" aria-label="Attach file">⌕ Attach</button>
-            <span>Local mode</span>
+            <button className={styles.sendButton} type="button" onClick={() => void sendMessage()}>
+              Send
+            </button>
+            <span>
+              Internal Patra delivery is active; external recipients use the delivery queue.
+            </span>
           </footer>
         </section>
-      )}
-
-      {providerPanelOpen && (
-        <div className={styles.providerBackdrop} role="presentation" onMouseDown={() => setProviderPanelOpen(false)}>
-          <section
-            className={styles.providerPanel}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Connect mail provider"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <header>
-              <div>
-                <span>PATRA ACCOUNTS</span>
-                <h2>Connect a provider</h2>
-              </div>
-              <button type="button" aria-label="Close provider panel" onClick={() => setProviderPanelOpen(false)}>×</button>
-            </header>
-
-            <div className={styles.providerBody}>
-              <div className={styles.providerList}>
-                {builtInMailProviders.map((provider) => (
-                  <button
-                    className={selectedProvider === provider.key ? styles.providerActive : ""}
-                    key={provider.key}
-                    type="button"
-                    onClick={() => setSelectedProvider(provider.key)}
-                  >
-                    <span>{provider.name.slice(0, 1)}</span>
-                    <div>
-                      <strong>{provider.name}</strong>
-                      <small>{provider.connectionMethod === "native" ? "Tamishra native" : "Mail server"}</small>
-                    </div>
-                    {provider.recommended && <b>Recommended</b>}
-                  </button>
-                ))}
-              </div>
-
-              {(() => {
-                const provider = builtInMailProviders.find((item) => item.key === selectedProvider) ?? builtInMailProviders[0]!;
-
-                return (
-                  <div className={styles.providerDetail}>
-                    <div className={styles.providerTitle}>
-                      <div>{provider.name.slice(0, 1)}</div>
-                      <div>
-                        <h3>{provider.name}</h3>
-                        <p>{provider.description}</p>
-                      </div>
-                    </div>
-
-                    <div className={styles.capabilityGrid}>
-                      <span className={provider.capabilities.threads ? styles.capabilityOn : ""}>Threads</span>
-                      <span className={provider.capabilities.search ? styles.capabilityOn : ""}>Search</span>
-                      <span className={provider.capabilities.drafts ? styles.capabilityOn : ""}>Drafts</span>
-                      <span className={provider.capabilities.pushSync ? styles.capabilityOn : ""}>Push sync</span>
-                    </div>
-
-                    {provider.fields ? (
-                      <div className={styles.providerFields}>
-                        {provider.fields.map((field) => (
-                          <label key={field.key}>
-                            <span>{field.label}</span>
-                            <input
-                              type={field.type}
-                              placeholder={field.placeholder}
-                              autoComplete={field.secret ? "off" : undefined}
-                              disabled
-                            />
-                          </label>
-                        ))}
-                        <p>
-                          Server credentials are intentionally disabled in this browser build.
-                          They will be submitted only to the secure mail gateway.
-                        </p>
-                      </div>
-                    ) : (
-                      <div className={styles.oauthNotice}>
-                        <strong>Tamishra-native account</strong>
-                        <p>
-                          This mailbox uses the Tamishra Workspace identity and secure gateway.
-                          No Google or Microsoft account is required.
-                        </p>
-                      </div>
-                    )}
-
-                    <div className={styles.providerActions}>
-                      <button
-                        className={styles.providerPrimary}
-                        type="button"
-                        onClick={() => {
-                          setProviderPanelOpen(false);
-                          setNotice(
-                            provider.key === "tamishra"
-                              ? "Tamishra Patra selected — first-party mailbox setup will use the Workspace gateway"
-                              : `${provider.name} selected — secure gateway credentials are required to complete connection`
-                          );
-                          window.setTimeout(() => setNotice(""), 3600);
-                        }}
-                      >
-                        Continue securely
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setProviderPanelOpen(false);
-                          setNotice("Local demo mailbox remains active");
-                          window.setTimeout(() => setNotice(""), 2200);
-                        }}
-                      >
-                        Keep local mailbox
-                      </button>
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-          </section>
-        </div>
       )}
 
       {notice && <div className={styles.toast} role="status">{notice}</div>}
