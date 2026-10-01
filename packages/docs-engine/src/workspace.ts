@@ -391,3 +391,60 @@ export function updateDocsSuggestion(
   if (suggestion) suggestion.status = status;
   return next;
 }
+
+export function createDocsFolder(
+  snapshot: DocsWorkspaceSnapshot,
+  name: string
+): { snapshot: DocsWorkspaceSnapshot; folder: DocsFolder } {
+  const next = clone(snapshot);
+  const now = new Date().toISOString();
+  const folder: DocsFolder = {
+    id: id("folder"),
+    name: name.trim() || "New folder",
+    createdAt: now,
+    updatedAt: now,
+    trashedAt: null
+  };
+  next.folders.push(folder);
+  return { snapshot: next, folder };
+}
+
+export function renameDocsFolder(
+  snapshot: DocsWorkspaceSnapshot,
+  folderId: string,
+  name: string
+) {
+  const next = clone(snapshot);
+  const folder = next.folders.find((item) => item.id === folderId);
+  if (folder) {
+    folder.name = name.trim() || folder.name;
+    folder.updatedAt = new Date().toISOString();
+  }
+  return next;
+}
+
+export function moveDocsRecordToFolder(
+  snapshot: DocsWorkspaceSnapshot,
+  documentId: string,
+  folderId: string | null
+) {
+  const next = clone(snapshot);
+  const record = next.records.find((item) => item.id === documentId);
+  if (record) {
+    record.folderId = folderId;
+    record.updatedAt = new Date().toISOString();
+  }
+  return next;
+}
+
+export function deleteDocsFolder(
+  snapshot: DocsWorkspaceSnapshot,
+  folderId: string
+) {
+  const next = clone(snapshot);
+  next.folders = next.folders.filter((item) => item.id !== folderId);
+  next.records = next.records.map((item) =>
+    item.folderId === folderId ? { ...item, folderId: null } : item
+  );
+  return next;
+}
