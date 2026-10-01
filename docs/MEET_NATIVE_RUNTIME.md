@@ -123,12 +123,9 @@ Room capability keys are never stored raw. The gateway stores only SHA-256 hashe
 
 When no database URL is configured, the gateway deliberately falls back to `ephemeral-memory` for local development. The capabilities endpoint reports which store is active.
 
-The next persistence block should extend the same database boundary for:
-
-- persistent meeting chat
-- reactions / hand raise
-- recording metadata
-- audit events
+The same database boundary now also persists collaboration, audit,
+recording metadata, breakout assignments, transcript segments, shared
+notes and generated summaries.
 
 ## Independence rule
 
@@ -299,3 +296,142 @@ Hosts and co-hosts can request an attendance report for a meeting. The report in
 - total attendance time
 
 The Meet home client can export this report as CSV.
+
+
+## Breakout rooms, live captions and meeting intelligence
+
+Workspace Meet now includes a self-hosted-safe breakout and meeting-intelligence layer.
+
+### Breakout rooms
+
+Breakouts do not depend on LiveKit Cloud-only participant movement.
+
+The host/co-host publishes breakout assignments through the Workspace gateway. The gateway:
+
+1. creates dedicated LiveKit rooms for each breakout group,
+2. persists each participant assignment,
+3. exposes only the current participant's assignment to ordinary participants,
+4. issues a breakout-specific LiveKit token through the existing capability-key boundary,
+5. lets the Workspace client remount the media session into that breakout room,
+6. returns the participant to the main room with a fresh main-room token when the breakout closes.
+
+This token-handoff design works with self-hosted LiveKit as well as hosted LiveKit.
+
+Breakout controls currently include:
+
+- automatic round-robin assignment
+- 1–20 rooms
+- 1–120 minute session duration
+- host/co-host room visibility
+- per-room participant roster
+- return everyone
+- automatic timeout cleanup
+- parent-meeting shutdown cleanup
+
+Hosts and co-hosts remain in the main room so moderation and meeting lifecycle control stay available.
+
+### Live captions/transcription
+
+Live captions use explicit LiveKit agent dispatch.
+
+Set:
+
+- `WORKSPACE_MEET_TRANSCRIBER_AGENT`
+- `WORKSPACE_MEET_TRANSCRIBER_SECRET`
+- `WORKSPACE_MEET_TRANSCRIBER_MODEL`
+- `WORKSPACE_MEET_TRANSCRIBER_LANGUAGE`
+
+When the agent name and worker secret are configured, a host/co-host can start captions. The gateway explicitly dispatches the configured agent into the meeting room and records its dispatch id.
+
+The transcriber worker sends transcript batches to:
+
+`POST /v1/meetings/:roomName/transcript-worker`
+
+with:
+
+`x-tamishra-worker-secret: <WORKSPACE_MEET_TRANSCRIBER_SECRET>`
+
+The worker payload is:
+
+```json
+{
+  "segments": [
+    {
+      "segmentId": "stable-worker-segment-id",
+      "participantIdentity": "participant-id",
+      "participantName": "Display name",
+      "trackSid": "optional-livekit-track-sid",
+      "text": "recognized speech",
+      "isFinal": true,
+      "sourceTimestamp": 123456789
+    }
+  ]
+}
+```
+
+The gateway validates the worker secret using constant-time comparison, bounds each batch, upserts segments idempotently, and records the worker heartbeat in caption state.
+
+The client polls persisted segments and renders the latest segment as a caption overlay. Transcript history is also available in the Notes panel.
+
+The repository intentionally does not pretend a speech-to-text worker exists when none is deployed. `transcriptionConfigured` is false until the explicit worker/agent configuration is present.
+
+### Shared meeting notes
+
+Hosts and co-hosts can edit shared meeting notes.
+
+All participants with a valid meeting capability can read the notes. Updates record:
+
+- editor participant id
+- editor display name
+- update timestamp
+
+Notes are stored in `workspace_meeting_notes`.
+
+### Meeting summary and action items
+
+Hosts and co-hosts can generate a summary from:
+
+- finalized transcript segments
+- shared meeting notes
+
+The gateway always has a built-in extractive fallback so summary generation still works without an external AI service.
+
+Optionally configure:
+
+- `WORKSPACE_MEET_SUMMARY_ENDPOINT`
+- `WORKSPACE_MEET_SUMMARY_SECRET`
+
+When configured, the gateway POSTs bounded transcript/notes content to that Tamishra-controlled endpoint and stores the returned summary/action items. If the endpoint is unavailable or invalid, Workspace falls back to the local extractive summarizer.
+
+Generated summaries persist:
+
+- summary text
+- action items
+- provider label
+- creator identity
+- creation timestamp
+
+### Database migration
+
+- `apps/gateway/db/005_meet_breakouts_captions_notes.sql`
+
+The migration adds:
+
+- `workspace_meeting_breakout_rooms`
+- `workspace_meeting_breakout_assignments`
+- `workspace_meeting_caption_state`
+- `workspace_meeting_transcript_segments`
+- `workspace_meeting_notes`
+- `workspace_meeting_summaries`
+
+### Parent meeting shutdown
+
+Ending the parent meeting now also:
+
+- closes breakout assignments
+- deletes open breakout LiveKit rooms when possible
+- stops the caption agent dispatch
+- stops active recording
+- closes the main LiveKit room
+
+This prevents child meeting resources from outliving the parent meeting.

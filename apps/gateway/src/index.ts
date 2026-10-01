@@ -138,7 +138,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       {
         service: "tamishra-workspace-gateway",
         status: "ok",
-        version: process.env.WORKSPACE_RELEASE_VERSION ?? "0.8.0"
+        version: process.env.WORKSPACE_RELEASE_VERSION ?? "0.9.0"
       },
       origin
     );

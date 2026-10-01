@@ -131,6 +131,79 @@ export type MeetingAttendanceReport = {
   }>;
 };
 
+export type MeetingBreakoutRoom = {
+  parentRoomName: string;
+  groupId: string;
+  groupLabel: string;
+  livekitRoomName: string;
+  status: "open" | "closed";
+  durationMinutes: number | null;
+  openedAt: string;
+  closedAt: string | null;
+};
+
+export type MeetingBreakoutAssignment = {
+  parentRoomName: string;
+  participantId: string;
+  displayName: string;
+  groupId: string;
+  livekitRoomName: string;
+  assignedAt: string;
+  returnedAt: string | null;
+};
+
+export type MeetingBreakoutState = {
+  rooms: MeetingBreakoutRoom[];
+  assignments: MeetingBreakoutAssignment[];
+};
+
+export type MeetingCaptionState = {
+  roomName: string;
+  desiredState: "running" | "stopped" | "error";
+  agentName: string | null;
+  dispatchId: string | null;
+  model: string | null;
+  language: string | null;
+  lastHeartbeatAt: string | null;
+  lastError: string | null;
+  updatedAt: string;
+};
+
+export type MeetingCaptionStatus = {
+  configured: boolean;
+  state: MeetingCaptionState;
+};
+
+export type MeetingTranscriptSegment = {
+  segmentId: string;
+  participantIdentity: string;
+  participantName?: string;
+  trackSid?: string;
+  text: string;
+  isFinal: boolean;
+  sourceTimestamp?: number;
+  receivedAt?: string;
+};
+
+export type MeetingNotes = {
+  roomName: string;
+  body: string;
+  updatedByParticipantId: string | null;
+  updatedByDisplayName: string | null;
+  updatedAt: string;
+};
+
+export type MeetingSummary = {
+  id: string;
+  roomName: string;
+  summary: string;
+  actionItems: string[];
+  provider: string;
+  createdByParticipantId: string;
+  createdByDisplayName: string;
+  createdAt: string;
+};
+
 export type MeetingAuditEvent = {
   id: string;
   roomName: string;
@@ -180,6 +253,7 @@ export class WorkspaceMeetingGateway {
       mediaProvider: string;
       mediaConfigured: boolean;
       recordingConfigured: boolean;
+      transcriptionConfigured: boolean;
       capabilities: Record<string, boolean>;
     }>(response);
   }
@@ -385,6 +459,179 @@ export class WorkspaceMeetingGateway {
     const response = await fetch(url, { cache: "no-store" });
     const body = await parseResponse<{ audit: MeetingAuditEvent[] }>(response);
     return body.audit;
+  }
+
+  async getBreakouts(roomName: string, accessKey: string) {
+    const url = new URL(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/breakouts")
+    );
+    url.searchParams.set("accessKey", accessKey);
+    const response = await fetch(url, { cache: "no-store" });
+    return parseResponse<MeetingBreakoutState>(response);
+  }
+
+  async publishBreakouts(
+    roomName: string,
+    accessKey: string,
+    assignments: Array<{
+      participantId: string;
+      groupId: string;
+      groupLabel: string;
+    }>,
+    durationMinutes: number
+  ) {
+    const response = await fetch(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/breakouts"),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          accessKey,
+          action: "publish",
+          assignments,
+          durationMinutes
+        })
+      }
+    );
+    return parseResponse<{
+      ok: true;
+      rooms: MeetingBreakoutRoom[];
+      assignments: MeetingBreakoutAssignment[];
+      durationMinutes: number;
+    }>(response);
+  }
+
+  async returnAllBreakouts(roomName: string, accessKey: string) {
+    const response = await fetch(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/breakouts"),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          accessKey,
+          action: "return-all"
+        })
+      }
+    );
+    return parseResponse<{ ok: true; returned: number }>(response);
+  }
+
+  async issueBreakoutToken(roomName: string, accessKey: string) {
+    const response = await fetch(
+      this.url(
+        "/v1/meetings/" +
+          encodeURIComponent(roomName) +
+          "/breakout-token"
+      ),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accessKey })
+      }
+    );
+    return parseResponse<{
+      token: string;
+      url: string;
+      mediaRoom: string;
+      groupId: string;
+      groupLabel: string;
+    }>(response);
+  }
+
+  async getCaptionStatus(roomName: string, accessKey: string) {
+    const url = new URL(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/captions")
+    );
+    url.searchParams.set("accessKey", accessKey);
+    const response = await fetch(url, { cache: "no-store" });
+    return parseResponse<MeetingCaptionStatus>(response);
+  }
+
+  async controlCaptions(
+    roomName: string,
+    accessKey: string,
+    action: "start" | "stop",
+    options?: { model?: string; language?: string }
+  ) {
+    const response = await fetch(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/captions"),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          accessKey,
+          action,
+          model: options?.model,
+          language: options?.language
+        })
+      }
+    );
+    return parseResponse<MeetingCaptionStatus>(response);
+  }
+
+  async getTranscript(
+    roomName: string,
+    accessKey: string,
+    limit = 500
+  ) {
+    const url = new URL(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/transcript")
+    );
+    url.searchParams.set("accessKey", accessKey);
+    url.searchParams.set("limit", String(limit));
+    const response = await fetch(url, { cache: "no-store" });
+    const body = await parseResponse<{
+      segments: MeetingTranscriptSegment[];
+    }>(response);
+    return body.segments;
+  }
+
+  async getNotes(roomName: string, accessKey: string) {
+    const url = new URL(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/notes")
+    );
+    url.searchParams.set("accessKey", accessKey);
+    const response = await fetch(url, { cache: "no-store" });
+    const body = await parseResponse<{ notes: MeetingNotes }>(response);
+    return body.notes;
+  }
+
+  async saveNotes(roomName: string, accessKey: string, body: string) {
+    const response = await fetch(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/notes"),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accessKey, body })
+      }
+    );
+    const result = await parseResponse<{ notes: MeetingNotes }>(response);
+    return result.notes;
+  }
+
+  async getSummary(roomName: string, accessKey: string) {
+    const url = new URL(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/summary")
+    );
+    url.searchParams.set("accessKey", accessKey);
+    const response = await fetch(url, { cache: "no-store" });
+    const body = await parseResponse<{ summary: MeetingSummary | null }>(
+      response
+    );
+    return body.summary;
+  }
+
+  async generateSummary(roomName: string, accessKey: string) {
+    const response = await fetch(
+      this.url("/v1/meetings/" + encodeURIComponent(roomName) + "/summary"),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accessKey })
+      }
+    );
+    const body = await parseResponse<{ summary: MeetingSummary }>(response);
+    return body.summary;
   }
 
   async listAttendance(roomName: string, accessKey: string) {
