@@ -4,6 +4,7 @@
 
 apps/
 - web
+- gateway
 - desktop
 - mobile
 
@@ -52,6 +53,22 @@ Every module should share:
 - theme system
 - settings
 - audit events
+
+## Identity and authorization
+
+### Identity
+
+`@tamishra/identity` owns Workspace users, organizations, memberships and sessions.
+
+Authentication is Tamishra-native and does not require external productivity identity providers.
+
+### Permissions
+
+`@tamishra/permissions` provides role-based authorization shared by every Workspace app.
+
+Authorization must be enforced server-side by the Workspace gateway/services in addition to client UI checks.
+
+See `docs/IDENTITY.md`.
 
 ## Communication model
 
