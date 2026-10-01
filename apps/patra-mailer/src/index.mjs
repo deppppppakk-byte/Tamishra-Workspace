@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
 import { neon } from "@neondatabase/serverless";
 import nodemailer from "nodemailer";
 import PostalMime from "postal-mime";
@@ -32,6 +33,7 @@ const maxAttempts = Math.max(
   1,
   Number(process.env.PATRA_DELIVERY_MAX_ATTEMPTS ?? 5)
 );
+const healthPort = Number(process.env.PATRA_HEALTH_PORT ?? 4201);
 
 function parseJsonArray(value) {
   if (Array.isArray(value)) return value;
@@ -545,6 +547,42 @@ function smtpServer() {
 }
 
 await ensureSchema();
+
+const healthServer = createServer(async (request, response) => {
+  if (request.url !== "/health" && request.url !== "/ready") {
+    response.statusCode = 404;
+    response.end("not found");
+    return;
+  }
+
+  try {
+    if (request.url === "/ready") {
+      await sql`select 1 as ok`;
+    }
+
+    response.statusCode = 200;
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    response.setHeader("cache-control", "no-store");
+    response.end(
+      JSON.stringify({
+        service: "tamishra-patra-mailer",
+        status: "ok",
+        database: "ready",
+        inboundSmtp: true,
+        outboundRelayConfigured: Boolean(transport),
+        domains: Array.from(acceptedDomains)
+      })
+    );
+  } catch {
+    response.statusCode = 503;
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    response.end(JSON.stringify({ service: "tamishra-patra-mailer", status: "not-ready" }));
+  }
+});
+
+healthServer.listen(healthPort, "0.0.0.0", () => {
+  console.log(`Patra Mailer health endpoint listening on :${healthPort}`);
+});
 
 const server = smtpServer();
 server.on("error", (error) => {
