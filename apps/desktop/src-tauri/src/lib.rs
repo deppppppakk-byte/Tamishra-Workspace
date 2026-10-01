@@ -24,6 +24,15 @@ struct NativeTmslFile {
     bytes: Vec<u8>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeWorkspaceFile {
+    path: String,
+    name: String,
+    extension: String,
+    bytes: Vec<u8>,
+}
+
 fn is_tmsl(path: &Path) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
@@ -80,6 +89,93 @@ fn startup_tmnt() -> Result<Option<String>, String> {
 #[tauri::command]
 fn startup_tmfm() -> Result<Option<String>, String> {
     startup_text_file("tmfm")
+}
+
+fn workspace_route_for_extension(extension: &str) -> Option<&'static str> {
+    match extension.to_ascii_lowercase().as_str() {
+        "tmdoc" => Some("/apps/docs"),
+        "tmsh" => Some("/apps/sheets"),
+        "tmsl" => Some("/apps/slides"),
+        "tmnt" => Some("/apps/notes"),
+        "tmfm" => Some("/apps/forms"),
+        _ => None,
+    }
+}
+
+fn workspace_candidate_from_args(args: &[String], cwd: Option<&str>) -> Option<PathBuf> {
+    args.iter().find_map(|argument| {
+        if argument.starts_with('-') {
+            return None;
+        }
+
+        let raw = PathBuf::from(argument);
+        let candidate = if raw.is_absolute() {
+            raw
+        } else if let Some(cwd) = cwd {
+            PathBuf::from(cwd).join(raw)
+        } else {
+            raw
+        };
+
+        let extension = candidate.extension()?.to_str()?;
+        workspace_route_for_extension(extension)?;
+        Some(candidate.canonicalize().unwrap_or(candidate))
+    })
+}
+
+#[tauri::command]
+fn startup_workspace_route() -> Option<String> {
+    let args: Vec<String> = env::args().skip(1).collect();
+    workspace_candidate_from_args(&args, None)
+        .and_then(|path| {
+            path.extension()
+                .and_then(|value| value.to_str())
+                .and_then(workspace_route_for_extension)
+                .map(str::to_string)
+        })
+}
+
+#[tauri::command]
+fn open_workspace_native_path(
+    path: String,
+    state: State<'_, NativeFileState>,
+) -> Result<NativeWorkspaceFile, String> {
+    let raw = PathBuf::from(path);
+    let path = raw.canonicalize().unwrap_or(raw);
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .ok_or_else(|| "The selected file has no supported extension.".to_string())?;
+
+    workspace_route_for_extension(&extension)
+        .ok_or_else(|| format!("Unsupported Tamishra native extension: .{extension}"))?;
+
+    let metadata = fs::metadata(&path)
+        .map_err(|error| format!("Could not inspect native file: {error}"))?;
+    if metadata.len() > MAX_SIMPLE_NATIVE_FILE_BYTES {
+        return Err("Native file exceeds the 64 MB safety limit.".to_string());
+    }
+
+    let bytes = fs::read(&path)
+        .map_err(|error| format!("Could not read native file: {error}"))?;
+
+    if extension == "tmsl" {
+        set_current_path(&state, path.clone())?;
+    }
+
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("tamishra-file")
+        .to_string();
+
+    Ok(NativeWorkspaceFile {
+        path: path.to_string_lossy().into_owned(),
+        name,
+        extension,
+        bytes,
+    })
 }
 
 fn normalize_candidate(path: PathBuf) -> Option<PathBuf> {
@@ -320,9 +416,13 @@ pub fn run() {
     {
         builder = builder
             .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
-                if let Some(path) = tmsl_from_args(&args, Some(&cwd)) {
-                    if let Ok(mut pending) = app.state::<NativeFileState>().pending_path.lock() {
-                        *pending = Some(path.clone());
+                if let Some(path) = workspace_candidate_from_args(&args, Some(&cwd)) {
+                    let is_slide = is_tmsl(&path);
+
+                    if is_slide {
+                        if let Ok(mut pending) = app.state::<NativeFileState>().pending_path.lock() {
+                            *pending = Some(path.clone());
+                        }
                     }
 
                     if let Some(window) = app.get_webview_window("main") {
@@ -332,7 +432,7 @@ pub fn run() {
                     }
 
                     let _ = app.emit(
-                        "tamishra://open-tmsl",
+                        "tamishra://open-workspace-file",
                         path.to_string_lossy().into_owned(),
                     );
                 }
@@ -347,6 +447,8 @@ pub fn run() {
             startup_tmsh,
             startup_tmnt,
             startup_tmfm,
+            startup_workspace_route,
+            open_workspace_native_path,
             open_tmsl_path,
             current_tmsl_path,
             save_tmsl_current,
