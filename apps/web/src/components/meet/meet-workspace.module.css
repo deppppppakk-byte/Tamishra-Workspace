@@ -51,25 +51,55 @@
   font-size: 11px;
 }
 
-.serviceState {
+.serviceState,
+.serviceStateChecking,
+.serviceStateOffline {
   margin-left: 24px;
   padding: 8px 11px;
-  border: 1px solid rgba(20, 135, 92, 0.12);
   border-radius: 999px;
-  color: #226d52;
-  background: rgba(225, 246, 239, 0.68);
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 10px;
 }
 
-.serviceState span {
+.serviceState {
+  border: 1px solid rgba(20, 135, 92, 0.12);
+  color: #226d52;
+  background: rgba(225, 246, 239, 0.68);
+}
+
+.serviceStateChecking {
+  border: 1px solid rgba(166, 110, 20, 0.13);
+  color: #7d591d;
+  background: rgba(255, 244, 216, 0.72);
+}
+
+.serviceStateOffline {
+  border: 1px solid rgba(178, 61, 61, 0.13);
+  color: #963f3f;
+  background: rgba(255, 232, 232, 0.78);
+}
+
+.serviceState span,
+.serviceStateChecking span,
+.serviceStateOffline span {
   width: 7px;
   height: 7px;
   border-radius: 999px;
+}
+
+.serviceState span {
   background: #1c9d6c;
   box-shadow: 0 0 0 4px rgba(28, 157, 108, 0.11);
+}
+
+.serviceStateChecking span {
+  background: #c18a24;
+}
+
+.serviceStateOffline span {
+  background: #cb4a4a;
 }
 
 .backLink {
@@ -86,8 +116,8 @@
 }
 
 .hero,
+.builder,
 .runtime,
-.capabilities,
 .migrationNote {
   max-width: 1320px;
   margin-left: auto;
@@ -97,10 +127,10 @@
 }
 
 .hero {
-  padding-top: 70px;
-  padding-bottom: 46px;
+  padding-top: 68px;
+  padding-bottom: 44px;
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(340px, 0.65fr);
+  grid-template-columns: minmax(0, 1.12fr) minmax(340px, 0.68fr);
   gap: 52px;
   align-items: center;
 }
@@ -129,8 +159,41 @@
   line-height: 1.7;
 }
 
+.identityField {
+  max-width: 560px;
+  margin-top: 26px;
+}
+
+.identityField label,
+.builderPanel > label {
+  display: grid;
+  gap: 7px;
+  color: #59667b;
+  font-size: 11px;
+  font-weight: 780;
+}
+
+.identityField input,
+.builderPanel input {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid rgba(23, 32, 51, 0.1);
+  border-radius: 14px;
+  padding: 0 14px;
+  outline: none;
+  color: #172033;
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.identityField input:focus,
+.builderPanel input:focus,
+.codeInputWrap input:focus {
+  border-color: rgba(49, 92, 244, 0.46);
+  box-shadow: 0 0 0 4px rgba(49, 92, 244, 0.08);
+}
+
 .heroActions {
-  margin-top: 30px;
+  margin-top: 18px;
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
@@ -154,9 +217,16 @@
   box-shadow: 0 12px 28px rgba(49, 92, 244, 0.24);
 }
 
-.primaryAction:hover,
+.primaryAction:hover:not(:disabled),
 .joinButton:hover:not(:disabled) {
   background: #2448ca;
+}
+
+.primaryAction:disabled,
+.secondaryAction:disabled,
+.joinButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .secondaryAction {
@@ -167,18 +237,26 @@
 
 .notice {
   margin: 12px 0 0;
-  color: #4f5c72;
+  color: #8a4b2b;
   font-size: 11px;
+}
+
+.joinCard,
+.builderPanel,
+.statusPanel {
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.88),
+    rgba(244, 248, 255, 0.72)
+  );
+  backdrop-filter: blur(22px);
+  box-shadow: 0 26px 72px rgba(37, 52, 87, 0.1);
 }
 
 .joinCard {
   padding: 26px;
-  border: 1px solid rgba(255, 255, 255, 0.8);
   border-radius: 28px;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.86), rgba(244, 248, 255, 0.68));
-  backdrop-filter: blur(22px);
-  box-shadow: 0 26px 72px rgba(37, 52, 87, 0.12);
 }
 
 .joinHeading span,
@@ -218,11 +296,6 @@
   text-transform: uppercase;
 }
 
-.codeInputWrap input:focus {
-  border-color: rgba(49, 92, 244, 0.46);
-  box-shadow: 0 0 0 4px rgba(49, 92, 244, 0.08);
-}
-
 .codeInputWrap span {
   position: absolute;
   right: 14px;
@@ -238,20 +311,27 @@
   margin-top: 10px;
 }
 
-.joinButton:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+.joinMeta {
+  margin-top: 14px;
+  display: grid;
+  gap: 7px;
 }
 
-.joinCard > p {
-  margin: 12px 0 0;
+.joinMeta span {
   color: #7b8799;
-  font-size: 10px;
-  line-height: 1.55;
+  font-size: 9px;
+  line-height: 1.45;
 }
 
-.runtime,
-.capabilities {
+.joinMeta span::before {
+  content: "✓";
+  margin-right: 7px;
+  color: #1c9d6c;
+  font-weight: 900;
+}
+
+.builder,
+.runtime {
   padding-top: 38px;
 }
 
@@ -278,24 +358,105 @@
   font-weight: 800;
 }
 
+.builderGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.62fr);
+  gap: 14px;
+}
+
+.builderPanel,
+.statusPanel {
+  border-radius: 22px;
+  padding: 22px;
+}
+
+.builderPanel {
+  display: grid;
+  gap: 16px;
+}
+
+.toggleGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.toggleCard {
+  padding: 14px;
+  border: 1px solid rgba(23, 32, 51, 0.08);
+  border-radius: 16px;
+  background: rgba(248, 250, 253, 0.82);
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: start;
+  cursor: pointer;
+}
+
+.toggleCard input {
+  width: auto;
+  min-height: 0;
+  margin-top: 2px;
+}
+
+.toggleCard strong,
+.toggleCard small {
+  display: block;
+}
+
+.toggleCard strong {
+  font-size: 11px;
+}
+
+.toggleCard small {
+  margin-top: 4px;
+  color: #7b8799;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.statusPanel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.statusPanel > div {
+  padding: 13px;
+  border: 1px solid rgba(23, 32, 51, 0.07);
+  border-radius: 14px;
+  background: rgba(248, 250, 253, 0.72);
+}
+
+.statusPanel span,
+.statusPanel strong {
+  display: block;
+}
+
+.statusPanel span {
+  color: #8a95a7;
+  font-size: 9px;
+}
+
+.statusPanel strong {
+  margin-top: 5px;
+  font-size: 11px;
+}
+
 .flow {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
-.flow article,
-.capabilityGrid article {
-  border: 1px solid rgba(23, 32, 51, 0.08);
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(16px);
-  box-shadow: 0 12px 36px rgba(37, 52, 87, 0.04);
-}
-
 .flow article {
   min-height: 190px;
   padding: 22px;
+  border: 1px solid rgba(23, 32, 51, 0.08);
   border-radius: 22px;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 12px 36px rgba(37, 52, 87, 0.04);
 }
 
 .step {
@@ -307,47 +468,16 @@
   letter-spacing: 0.12em;
 }
 
-.flow strong,
-.capabilityGrid strong {
+.flow strong {
   display: block;
   font-size: 15px;
 }
 
-.flow p,
-.capabilityGrid p {
+.flow p {
   margin: 7px 0 0;
   color: #768297;
   font-size: 11px;
   line-height: 1.6;
-}
-
-.capabilityGrid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.capabilityGrid article {
-  min-height: 180px;
-  padding: 20px;
-  border-radius: 20px;
-}
-
-.cardTop {
-  margin-bottom: 30px;
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  color: #98a3b4;
-  font-size: 9px;
-  font-weight: 850;
-}
-
-.ready {
-  padding: 4px 7px;
-  border-radius: 999px;
-  color: #17704d;
-  background: #e9f7f1;
 }
 
 .migrationNote {
@@ -380,7 +510,8 @@
 }
 
 @media (max-width: 960px) {
-  .hero {
+  .hero,
+  .builderGrid {
     grid-template-columns: 1fr;
   }
 
@@ -388,8 +519,7 @@
     max-width: 640px;
   }
 
-  .flow,
-  .capabilityGrid {
+  .flow {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -400,13 +530,15 @@
     padding-right: 16px;
   }
 
-  .serviceState {
+  .serviceState,
+  .serviceStateChecking,
+  .serviceStateOffline {
     display: none;
   }
 
   .hero,
+  .builder,
   .runtime,
-  .capabilities,
   .migrationNote {
     padding-left: 18px;
     padding-right: 18px;
@@ -422,12 +554,16 @@
 
   .heroActions,
   .flow,
-  .capabilityGrid,
+  .toggleGrid,
   .migrationNote {
     grid-template-columns: 1fr;
   }
 
   .heroActions {
+    display: grid;
+  }
+
+  .flow {
     display: grid;
   }
 
