@@ -895,3 +895,10 @@ export function createPatraStore(): PatraStore {
     ? new PostgresPatraStore(databaseUrl)
     : new MemoryPatraStore();
 }
+
+let sharedPatraStore: PatraStore | null = null;
+
+export function getPatraStore() {
+  sharedPatraStore ??= createPatraStore();
+  return sharedPatraStore;
+}
