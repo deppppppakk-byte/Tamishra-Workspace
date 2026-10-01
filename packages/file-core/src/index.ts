@@ -122,3 +122,41 @@ export function searchWorkspaceFiles(index: WorkspaceFileIndex, query: string) {
       .includes(normalized)
   );
 }
+
+
+export function mergeWorkspaceFileIndexes(
+  local: WorkspaceFileIndex,
+  remote: WorkspaceFileIndex
+): WorkspaceFileIndex {
+  const byId = new Map<string, WorkspaceFileRecord>();
+
+  for (const item of [...local.records, ...remote.records]) {
+    const current = byId.get(item.id);
+    if (!current) {
+      byId.set(item.id, { ...item });
+      continue;
+    }
+
+    const currentStamp = Math.max(
+      Date.parse(current.updatedAt) || 0,
+      Date.parse(current.lastOpenedAt) || 0,
+      Date.parse(current.trashedAt ?? "") || 0
+    );
+    const itemStamp = Math.max(
+      Date.parse(item.updatedAt) || 0,
+      Date.parse(item.lastOpenedAt) || 0,
+      Date.parse(item.trashedAt ?? "") || 0
+    );
+
+    if (itemStamp >= currentStamp) {
+      byId.set(item.id, { ...item });
+    }
+  }
+
+  return {
+    version: 1,
+    records: Array.from(byId.values()).sort((a, b) =>
+      b.lastOpenedAt.localeCompare(a.lastOpenedAt)
+    )
+  };
+}
