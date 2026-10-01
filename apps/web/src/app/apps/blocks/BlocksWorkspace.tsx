@@ -32,9 +32,15 @@ const kindLabels: Record<TamishraBlockKind, string> = {
 };
 
 const targetApps = {
-  "rich-text": [{ id: "notes", label: "Notes" }],
+  "rich-text": [
+    { id: "notes", label: "Notes" },
+    { id: "docs", label: "Docs" }
+  ],
   visual: [{ id: "slides", label: "Slides" }],
-  table: [{ id: "slides", label: "Slides" }],
+  table: [
+    { id: "slides", label: "Slides" },
+    { id: "docs", label: "Docs" }
+  ],
   chart: [] as Array<{ id: string; label: string }>,
   form: [] as Array<{ id: string; label: string }>,
   reference: [] as Array<{ id: string; label: string }>,
