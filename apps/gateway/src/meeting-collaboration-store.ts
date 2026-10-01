@@ -310,6 +310,18 @@ class PostgresMeetingCollaborationStore
     `;
 
     await this.sql`
+      alter table workspace_meeting_controls
+      add column if not exists participant_microphone_enabled
+        boolean not null default true
+    `;
+
+    await this.sql`
+      alter table workspace_meeting_controls
+      add column if not exists participant_camera_enabled
+        boolean not null default true
+    `;
+
+    await this.sql`
       create table if not exists workspace_meeting_messages (
         id text primary key,
         room_name text not null
