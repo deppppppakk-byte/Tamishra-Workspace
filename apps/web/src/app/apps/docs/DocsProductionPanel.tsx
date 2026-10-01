@@ -7,6 +7,7 @@ import type {
   DocsOutlineEntry,
   DocsProofingStats,
   DocsShareGrant,
+  DocsSuggestion,
   DocsVersion,
   DocsWorkspaceSnapshot
 } from "@tamishra/docs-engine";
@@ -30,6 +31,8 @@ type Props = {
   comments: DocsComment[];
   versions: DocsVersion[];
   grants: DocsShareGrant[];
+  suggestions: DocsSuggestion[];
+  collaborators: string[];
   proofing: DocsProofingStats;
   editingMode: DocsEditingMode;
   language: string;
@@ -49,6 +52,8 @@ type Props = {
   onAddComment: () => void;
   onReplyComment: (commentId: string, body: string) => void;
   onToggleResolveComment: (commentId: string) => void;
+  onSuggestReplacement: () => void;
+  onResolveSuggestion: (suggestionId: string, status: "accepted" | "rejected") => void;
   onCreateVersion: (label?: string) => void;
   onRestoreVersion: (version: DocsVersion) => void;
   onAddGrant: (principal: string, role: "editor" | "commenter" | "viewer") => void;
@@ -104,6 +109,8 @@ export default function DocsProductionPanel(props: Props) {
     comments,
     versions,
     grants,
+    suggestions,
+    collaborators,
     proofing,
     editingMode,
     language,
@@ -225,9 +232,14 @@ export default function DocsProductionPanel(props: Props) {
               </select>
             </label>
 
-            <button className="docsPanelPrimary" onClick={props.onAddComment}>
-              Comment on selection
-            </button>
+            <div className="docsPanelActions">
+              <button className="docsPanelPrimary" onClick={props.onAddComment}>
+                Comment on selection
+              </button>
+              <button className="docsPanelPrimary" onClick={props.onSuggestReplacement}>
+                Suggest replacement
+              </button>
+            </div>
 
             {comments.length === 0 ? (
               <Empty>No comments in this document.</Empty>
@@ -262,6 +274,34 @@ export default function DocsProductionPanel(props: Props) {
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+
+            <h4>Suggested changes</h4>
+            {suggestions.filter((item) => item.status === "pending").length === 0 ? (
+              <Empty>No pending suggestions.</Empty>
+            ) : (
+              <div className="docsCommentList">
+                {suggestions
+                  .filter((item) => item.status === "pending")
+                  .map((suggestion) => (
+                    <div className="docsCommentCard" key={suggestion.id}>
+                      <div className="docsCommentMeta">
+                        <strong>{suggestion.authorName}</strong>
+                        <span>{new Date(suggestion.createdAt).toLocaleString()}</span>
+                      </div>
+                      <p><del>{suggestion.beforeText || "—"}</del></p>
+                      <p><ins>{suggestion.afterText || "—"}</ins></p>
+                      <div className="docsRecordActions">
+                        <button onClick={() => props.onResolveSuggestion(suggestion.id, "accepted")}>
+                          Accept
+                        </button>
+                        <button onClick={() => props.onResolveSuggestion(suggestion.id, "rejected")}>
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
               </div>
             )}
           </>
@@ -316,6 +356,10 @@ export default function DocsProductionPanel(props: Props) {
 
             <div className="docsPanelHint">
               Local permissions work offline; the gateway adapter can sync the same grants to cloud storage.
+            </div>
+            <div className="docsPresenceStrip">
+              <strong>{collaborators.length + 1} active</strong>
+              <span>You{collaborators.length ? ` + ${collaborators.join(", ")}` : ""}</span>
             </div>
 
             {grants.length === 0 ? (
