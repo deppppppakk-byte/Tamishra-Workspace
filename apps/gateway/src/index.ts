@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { handleMeetingRequest } from "./meetings.js";
 
 const port = Number(process.env.WORKSPACE_GATEWAY_PORT ?? process.env.PORT ?? 4100);
 const allowedOrigin = process.env.WORKSPACE_WEB_ORIGIN ?? "http://localhost:3000";
@@ -33,7 +34,7 @@ function notFound(response: ServerResponse, origin?: string) {
   json(response, 404, { error: "not_found" }, origin);
 }
 
-function handle(request: IncomingMessage, response: ServerResponse) {
+async function handle(request: IncomingMessage, response: ServerResponse) {
   const origin = request.headers.origin;
   const url = new URL(request.url ?? "/", "http://workspace.local");
 
@@ -53,7 +54,7 @@ function handle(request: IncomingMessage, response: ServerResponse) {
     json(response, 200, {
       service: "tamishra-workspace-gateway",
       status: "ok",
-      version: "0.1.0"
+      version: "0.2.0"
     }, origin);
     return;
   }
@@ -88,9 +89,22 @@ function handle(request: IncomingMessage, response: ServerResponse) {
     return;
   }
 
+  if (await handleMeetingRequest(request, response, url, origin, allowedOrigin)) {
+    return;
+  }
+
   notFound(response, origin);
 }
 
-createServer(handle).listen(port, () => {
+createServer((request, response) => {
+  void handle(request, response).catch((error) => {
+    console.error("Workspace gateway request failed", error);
+    if (!response.headersSent) {
+      json(response, 500, { error: "internal_error" }, request.headers.origin);
+    } else {
+      response.end();
+    }
+  });
+}).listen(port, () => {
   console.log(`Tamishra Workspace gateway listening on :${port}`);
 });
