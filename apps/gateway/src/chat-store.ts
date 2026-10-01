@@ -311,6 +311,12 @@ class MemoryChatStore implements ChatStore {
   private readonly members = new Map<string, ChatMember>();
   private readonly messages = new Map<string, ChatMessage>();
   private readonly reactions = new Map<string, StoredReaction>();
+  private readonly files = new Map<string, StoredChatFile>();
+  private readonly events: ChatEvent[] = [];
+  private eventSequence = 0;
+  private readonly notifications = new Map<string, ChatNotification>();
+  private readonly presence = new Map<string, ChatPresence>();
+  private readonly typing = new Map<string, ChatTypingState>();
 
   async ready() {}
 
@@ -341,6 +347,7 @@ class MemoryChatStore implements ChatStore {
       memberCount,
       unreadCount,
       muted: member.muted,
+      pinned: member.pinned,
       lastReadAt: member.lastReadAt
     };
   }
@@ -350,7 +357,10 @@ class MemoryChatStore implements ChatStore {
       .filter((conversation) => conversation.organizationId === organizationId)
       .map((conversation) => this.withUnread(conversation, userId))
       .filter((conversation): conversation is ChatConversation => Boolean(conversation))
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .sort((left, right) =>
+        Number(right.pinned) - Number(left.pinned) ||
+        right.updatedAt.localeCompare(left.updatedAt)
+      )
       .map(clone);
   }
 
@@ -376,6 +386,7 @@ class MemoryChatStore implements ChatStore {
       memberCount: 0,
       unreadCount: 0,
       muted: false,
+      pinned: false,
       lastReadAt: createdAt
     };
     this.conversations.set(id, conversation);
@@ -388,6 +399,7 @@ class MemoryChatStore implements ChatStore {
         role,
         joinedAt: createdAt,
         muted: false,
+        pinned: false,
         lastReadMessageId: null,
         lastReadAt: createdAt
       });
@@ -415,6 +427,7 @@ class MemoryChatStore implements ChatStore {
       role,
       joinedAt: nowIso(),
       muted: false,
+      pinned: false,
       lastReadMessageId: null,
       lastReadAt: null
     };
@@ -538,6 +551,215 @@ class MemoryChatStore implements ChatStore {
 
   async removeReaction(messageId: string, userId: string, emoji: string) {
     return this.reactions.delete(this.reactionKey(messageId, userId, emoji));
+  }
+
+  async updateMemberSettings(
+    conversationId: string,
+    userId: string,
+    settings: { muted?: boolean; pinned?: boolean }
+  ) {
+    const member = this.members.get(this.memberKey(conversationId, userId));
+    if (!member) return null;
+    if (typeof settings.muted === "boolean") member.muted = settings.muted;
+    if (typeof settings.pinned === "boolean") member.pinned = settings.pinned;
+    return clone(member);
+  }
+
+  async createFile(input: {
+    organizationId: string;
+    conversationId: string;
+    uploaderId: string;
+    name: string;
+    mimeType: string;
+    bytes: Buffer;
+  }) {
+    if (!this.members.has(this.memberKey(input.conversationId, input.uploaderId))) {
+      throw Object.assign(new Error("conversation_not_found"), { status: 404 });
+    }
+    const id = randomUUID();
+    const createdAt = nowIso();
+    this.files.set(id, {
+      id,
+      organizationId: input.organizationId,
+      conversationId: input.conversationId,
+      uploaderId: input.uploaderId,
+      name: input.name,
+      mimeType: input.mimeType,
+      size: input.bytes.byteLength,
+      bytes: Buffer.from(input.bytes),
+      createdAt
+    });
+    return {
+      id,
+      fileId: id,
+      name: input.name,
+      mimeType: input.mimeType,
+      size: input.bytes.byteLength
+    } satisfies ChatAttachment;
+  }
+
+  async validateFiles(conversationId: string, fileIds: string[]) {
+    return fileIds.every((fileId) => {
+      const file = this.files.get(fileId);
+      return file?.conversationId === conversationId;
+    });
+  }
+
+  async getFileForUser(fileId: string, userId: string) {
+    const file = this.files.get(fileId);
+    if (!file || !this.members.has(this.memberKey(file.conversationId, userId))) {
+      return null;
+    }
+    return { ...file, bytes: Buffer.from(file.bytes) };
+  }
+
+  async appendEvent(input: AppendEventInput) {
+    const event: ChatEvent = {
+      id: String(++this.eventSequence),
+      organizationId: input.organizationId,
+      conversationId: input.conversationId ?? null,
+      actorId: input.actorId ?? null,
+      targetUserId: input.targetUserId ?? null,
+      type: input.type,
+      payload: clone(input.payload ?? {}),
+      createdAt: nowIso()
+    };
+    this.events.push(event);
+    if (this.events.length > 5000) this.events.splice(0, this.events.length - 5000);
+    return clone(event);
+  }
+
+  async listEvents(
+    organizationId: string,
+    userId: string,
+    afterId: string,
+    limit = 100
+  ) {
+    const after = Number(afterId) || 0;
+    return this.events
+      .filter((event) => {
+        if (event.organizationId !== organizationId || Number(event.id) <= after) return false;
+        if (event.targetUserId && event.targetUserId !== userId) return false;
+        if (
+          event.conversationId &&
+          !this.members.has(this.memberKey(event.conversationId, userId))
+        ) return false;
+        return true;
+      })
+      .slice(0, Math.max(1, Math.min(250, limit)))
+      .map(clone);
+  }
+
+  async createNotification(input: CreateNotificationInput) {
+    const notification: ChatNotification = {
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      userId: input.userId,
+      conversationId: input.conversationId,
+      messageId: input.messageId,
+      kind: input.kind,
+      title: input.title,
+      bodyPreview: input.bodyPreview,
+      createdAt: nowIso(),
+      readAt: null
+    };
+    this.notifications.set(notification.id, notification);
+    return clone(notification);
+  }
+
+  async listNotifications(organizationId: string, userId: string, limit = 50) {
+    return Array.from(this.notifications.values())
+      .filter(
+        (notification) =>
+          notification.organizationId === organizationId &&
+          notification.userId === userId
+      )
+      .sort(
+        (left, right) =>
+          Number(Boolean(left.readAt)) - Number(Boolean(right.readAt)) ||
+          right.createdAt.localeCompare(left.createdAt)
+      )
+      .slice(0, Math.max(1, Math.min(100, limit)))
+      .map(clone);
+  }
+
+  async markNotificationRead(notificationId: string, userId: string) {
+    const notification = this.notifications.get(notificationId);
+    if (!notification || notification.userId !== userId) return false;
+    notification.readAt = notification.readAt ?? nowIso();
+    return true;
+  }
+
+  async markAllNotificationsRead(organizationId: string, userId: string) {
+    let count = 0;
+    for (const notification of this.notifications.values()) {
+      if (
+        notification.organizationId === organizationId &&
+        notification.userId === userId &&
+        !notification.readAt
+      ) {
+        notification.readAt = nowIso();
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  async heartbeatPresence(
+    organizationId: string,
+    userId: string,
+    displayName: string
+  ) {
+    const presence: ChatPresence = {
+      organizationId,
+      userId,
+      displayName,
+      status: "online",
+      lastSeenAt: nowIso()
+    };
+    this.presence.set(organizationId + ":" + userId, presence);
+    return clone(presence);
+  }
+
+  async listPresence(organizationId: string) {
+    return Array.from(this.presence.values())
+      .filter((presence) => presence.organizationId === organizationId)
+      .map((presence) => ({
+        ...clone(presence),
+        status: presenceStatus(presence.lastSeenAt)
+      }));
+  }
+
+  async setTyping(
+    conversationId: string,
+    userId: string,
+    displayName: string,
+    active: boolean
+  ) {
+    const key = this.memberKey(conversationId, userId);
+    if (!this.members.has(key)) return null;
+    if (!active) {
+      this.typing.delete(key);
+      return null;
+    }
+    const typing: ChatTypingState = {
+      conversationId,
+      userId,
+      displayName,
+      expiresAt: new Date(Date.now() + 6000).toISOString()
+    };
+    this.typing.set(key, typing);
+    return clone(typing);
+  }
+
+  async listTyping(conversationId: string) {
+    const now = Date.now();
+    for (const [key, typing] of this.typing) {
+      if (Date.parse(typing.expiresAt) <= now) this.typing.delete(key);
+    }
+    return Array.from(this.typing.values())
+      .filter((typing) => typing.conversationId === conversationId)
+      .map(clone);
   }
 
   async searchMessages(organizationId: string, userId: string, query: string) {
