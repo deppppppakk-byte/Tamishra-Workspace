@@ -92,6 +92,22 @@
             "public.data"
           ]
         }
+      },
+      {
+        "ext": [
+          "tmnt"
+        ],
+        "name": "Tamishra Note",
+        "description": "Tamishra Notes native note",
+        "mimeType": "application/vnd.tamishra.note",
+        "role": "Editor",
+        "rank": "Owner",
+        "exportedType": {
+          "identifier": "in.tamishra.notes.tmnt",
+          "conformsTo": [
+            "public.data"
+          ]
+        }
       }
     ]
   }
