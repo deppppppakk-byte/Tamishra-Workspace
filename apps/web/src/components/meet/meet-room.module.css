@@ -1133,3 +1133,228 @@
     padding-left: 0;
   }
 }
+
+
+.recordingConsentCard {
+  max-width: 900px;
+  margin: 18px auto 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(196, 48, 48, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 247, 247, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.recordingConsentCard span,
+.recordingConsentCard strong,
+.recordingConsentCard small {
+  display: block;
+}
+
+.recordingConsentCard span {
+  color: #b53c3c;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.recordingConsentCard strong {
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.recordingConsentCard small {
+  margin-top: 3px;
+  max-width: 640px;
+  color: #7a8495;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.recordingConsentCard > div:last-child {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+.consentButton,
+.consentAccepted,
+.consentDeclined {
+  min-height: 34px;
+  border-radius: 10px;
+  padding: 0 10px;
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 850;
+}
+
+.consentButton {
+  border: 1px solid rgba(23, 32, 51, 0.09);
+  color: #536078;
+  background: white;
+}
+
+.consentAccepted {
+  border: 1px solid rgba(28, 157, 108, 0.16);
+  color: #176f4e;
+  background: #e8f8f1;
+}
+
+.consentDeclined {
+  border: 1px solid rgba(181, 60, 60, 0.16);
+  color: #9f3737;
+  background: #fff0f0;
+}
+
+.recordingBadge {
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: #a63434;
+  background: #ffeded;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.recordingBadge > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #d63d3d;
+  box-shadow: 0 0 0 4px rgba(214, 61, 61, 0.1);
+  animation: recordingPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes recordingPulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.recordingButton,
+.stopRecordingButton {
+  min-height: 36px;
+  border-radius: 11px;
+  padding: 0 11px;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.recordingButton {
+  border: 1px solid rgba(166, 52, 52, 0.13);
+  color: #9f3737;
+  background: #fff1f1;
+}
+
+.stopRecordingButton {
+  border: 0;
+  color: white;
+  background: #b93838;
+}
+
+.recordingButton:disabled,
+.stopRecordingButton:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.toolbarConsentAccepted,
+.toolbarConsentDeclined {
+  min-height: 32px;
+  border-radius: 10px;
+  padding: 0 10px;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.toolbarConsentAccepted {
+  border: 1px solid rgba(84, 201, 157, 0.22);
+  color: #baf4dc;
+  background: rgba(38, 133, 97, 0.2);
+}
+
+.toolbarConsentDeclined {
+  border: 1px solid rgba(231, 103, 103, 0.2);
+  color: #ffd0d0;
+  background: rgba(166, 52, 52, 0.2);
+}
+
+.recordingPanel {
+  padding: 14px;
+  border-bottom: 1px solid rgba(23, 32, 51, 0.07);
+  background: linear-gradient(145deg, #fff9f9, #ffffff);
+}
+
+.recordingPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.recordingPanelHeader strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.recordingPanel > small {
+  display: block;
+  margin-top: 8px;
+  color: #858fa1;
+  font-size: 8px;
+}
+
+.startRecordingInline,
+.stopRecordingInline {
+  width: 100%;
+  min-height: 34px;
+  margin-top: 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 850;
+}
+
+.startRecordingInline {
+  border: 1px solid rgba(181, 60, 60, 0.13);
+  color: #9f3737;
+  background: #fff0f0;
+}
+
+.stopRecordingInline {
+  border: 0;
+  color: white;
+  background: #b93838;
+}
+
+@media (max-width: 680px) {
+  .recordingConsentCard {
+    margin-left: 16px;
+    margin-right: 16px;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .recordingConsentCard > div:last-child {
+    width: 100%;
+  }
+
+  .recordingConsentCard button {
+    flex: 1;
+  }
+
+  .recordingButton,
+  .stopRecordingButton {
+    padding: 0 8px;
+  }
+}
