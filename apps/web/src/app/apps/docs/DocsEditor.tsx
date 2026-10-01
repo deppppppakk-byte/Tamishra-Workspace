@@ -31,6 +31,9 @@ function applyCommand(command: string, value?: string) {
 
 export default function DocsEditor() {
   const editorRef = useRef<HTMLDivElement>(null);
+  const pageEditorsRef = useRef<Array<HTMLDivElement | null>>([]);
+  const activePageRef = useRef(0);
+  const reflowFrameRef = useRef<number | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const draftRef = useRef<PersistedDocsDraft | null>(null);
   const pageHistoryRef = useRef(new TransactionHistory<PageConfig>(100));
@@ -41,6 +44,7 @@ export default function DocsEditor() {
   const [wordCount, setWordCount] = useState(0);
   const [charCount, setCharCount] = useState(0);
   const [pageCount, setPageCount] = useState(1);
+  const [activePage, setActivePage] = useState(1);
   const [fontSize, setFontSize] = useState("3");
   const [textColor, setTextColor] = useState("#202939");
   const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
@@ -54,9 +58,47 @@ export default function DocsEditor() {
   const [wholeWord, setWholeWord] = useState(false);
   const [findStatus, setFindStatus] = useState("");
 
+  const getEditors = () =>
+    pageEditorsRef.current.slice(0, pageCount).filter(
+      (editor): editor is HTMLDivElement => Boolean(editor)
+    );
+
+  const getDocumentHtml = () =>
+    getEditors().map((editor) => editor.innerHTML).join("");
+
+  const getDocumentText = () =>
+    getEditors().map((editor) => editor.innerText).join("\n");
+
+  const queryDocument = <T extends Element = Element>(selector: string): T | null => {
+    for (const editor of getEditors()) {
+      const match = editor.querySelector<T>(selector);
+      if (match) return match;
+    }
+    return null;
+  };
+
+  const queryDocumentAll = (selector: string): Element[] =>
+    getEditors().flatMap((editor) => Array.from(editor.querySelectorAll(selector)));
+
+  const focusEditor = () => {
+    const active = pageEditorsRef.current[activePageRef.current] ?? pageEditorsRef.current[0];
+    if (active) {
+      editorRef.current = active;
+      active.focus();
+    }
+  };
+
+  const setActiveEditor = (index: number, editor: HTMLDivElement | null) => {
+    pageEditorsRef.current[index] = editor;
+
+    if (editor && (!editorRef.current || index === activePageRef.current)) {
+      editorRef.current = editor;
+    }
+  };
+
   const ensureBlockIds = () => {
-    const editor = editorRef.current;
-    if (!editor) return;
+    const editors = getEditors();
+    if (!editors.length) return;
 
     const assign = (element: Element, prefix: string) => {
       if (element instanceof HTMLElement && !element.dataset.tamishraId) {
@@ -64,15 +106,17 @@ export default function DocsEditor() {
       }
     };
 
-    Array.from(editor.children).forEach((element) => assign(element, "block"));
-    editor
-      .querySelectorAll("a, img, hr, ul, ol, li, table, tr, th, td, [data-page-break]")
-      .forEach((element) => assign(element, element.tagName.toLowerCase()));
+    editors.forEach((editor) => {
+      Array.from(editor.children).forEach((element) => assign(element, "block"));
+      editor
+        .querySelectorAll("a, img, hr, ul, ol, li, table, tr, th, td, [data-page-break]")
+        .forEach((element) => assign(element, element.tagName.toLowerCase()));
+    });
   };
 
   const saveDocument = () => {
     ensureBlockIds();
-    const html = editorRef.current?.innerHTML ?? "";
+    const html = getDocumentHtml();
     const safeTitle = title.trim() || "Untitled document";
     const nextDraft = draftRef.current
       ? updateDraft(draftRef.current, {
@@ -139,41 +183,22 @@ export default function DocsEditor() {
   }, [page]);
 
   const updateCounts = () => {
-    const editor = editorRef.current;
-    const text = editor?.innerText ?? "";
+    const text = getDocumentText();
     const trimmed = text.trim();
 
     setCharCount(text.length);
     setWordCount(trimmed ? trimmed.split(/\s+/).length : 0);
-
-    if (editor) {
-      const printableHeight =
-        mmToCssPx(page.heightMm) -
-        mmToCssPx(page.margins.topMm) -
-        mmToCssPx(page.margins.bottomMm);
-
-      const explicitBreaks = editor.querySelectorAll('[data-page-break="true"]').length;
-      const verticalPadding =
-        mmToCssPx(page.margins.topMm) + mmToCssPx(page.margins.bottomMm);
-      const contentHeight = Math.max(0, editor.scrollHeight - verticalPadding);
-      const measuredPages = printableHeight > 0
-        ? Math.max(1, Math.ceil(contentHeight / printableHeight))
-        : 1;
-
-      setPageCount(Math.max(measuredPages, explicitBreaks + 1));
-    }
-
     setSavedState("Saving…");
   };
 
   const command = (name: string, value?: string) => {
-    editorRef.current?.focus();
+    focusEditor();
     applyCommand(name, value);
     updateCounts();
   };
 
   const formatBlock = (tag: "p" | "h1" | "h2" | "h3" | "blockquote") => {
-    editorRef.current?.focus();
+    focusEditor();
     applyCommand("formatBlock", tag);
     updateCounts();
   };
@@ -182,7 +207,7 @@ export default function DocsEditor() {
     const url = window.prompt("Paste a link");
     if (!url) return;
 
-    editorRef.current?.focus();
+    focusEditor();
     applyCommand("createLink", url);
     updateCounts();
   };
@@ -222,7 +247,7 @@ export default function DocsEditor() {
   };
 
   const insertTable = () => {
-    editorRef.current?.focus();
+    focusEditor();
     applyCommand(
       "insertHTML",
       '<table><tbody><tr><th>Heading 1</th><th>Heading 2</th></tr><tr><td>Cell</td><td>Cell</td></tr><tr><td>Cell</td><td>Cell</td></tr></tbody></table><p><br></p>'
@@ -235,7 +260,7 @@ export default function DocsEditor() {
   };
 
   const insertPageBreak = () => {
-    editorRef.current?.focus();
+    focusEditor();
     const id = createId("page-break");
     applyCommand(
       "insertHTML",
@@ -280,7 +305,7 @@ export default function DocsEditor() {
       const src = typeof reader.result === "string" ? reader.result : "";
       if (!src) return;
 
-      editorRef.current?.focus();
+      focusEditor();
       const id = createId("img");
       const escapedName = file.name.replace(/[&<>"']/g, "");
       applyCommand(
@@ -389,7 +414,7 @@ export default function DocsEditor() {
       return;
     }
 
-    editorRef.current?.focus();
+    focusEditor();
     const found =
       typeof window.find === "function"
         ? window.find(findQuery, matchCase, backwards, true, wholeWord, false, false)
