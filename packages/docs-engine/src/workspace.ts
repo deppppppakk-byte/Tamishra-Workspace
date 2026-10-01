@@ -448,3 +448,36 @@ export function deleteDocsFolder(
   );
   return next;
 }
+
+function newestById<T extends { id: string }>(
+  left: T[],
+  right: T[],
+  timestamp: (item: T) => string
+) {
+  const map = new Map<string, T>();
+  [...left, ...right].forEach((item) => {
+    const existing = map.get(item.id);
+    if (!existing || timestamp(item) >= timestamp(existing)) {
+      map.set(item.id, clone(item));
+    }
+  });
+  return Array.from(map.values());
+}
+
+export function mergeDocsWorkspaces(
+  local: DocsWorkspaceSnapshot,
+  remote: DocsWorkspaceSnapshot
+): DocsWorkspaceSnapshot {
+  return {
+    records: newestById(local.records, remote.records, (item) => item.updatedAt),
+    folders: newestById(local.folders, remote.folders, (item) => item.updatedAt),
+    versions: newestById(local.versions, remote.versions, (item) => item.createdAt)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 100),
+    grants: newestById(local.grants, remote.grants, (item) => item.createdAt),
+    comments: newestById(local.comments, remote.comments, (item) =>
+      item.resolvedAt ?? item.createdAt
+    ),
+    suggestions: newestById(local.suggestions, remote.suggestions, (item) => item.createdAt)
+  };
+}
