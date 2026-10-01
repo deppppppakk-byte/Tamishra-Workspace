@@ -945,6 +945,85 @@ kbd {
   font-size: 10px;
 }
 
+.docsHeaderFooterSettings {
+  display: grid;
+  gap: 10px;
+}
+
+.docsToggleRow {
+  min-height: 28px;
+  display: flex !important;
+  align-items: center;
+  gap: 7px;
+  color: #475467;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.docsToggleRow input {
+  margin: 0;
+}
+
+.docsChromeGroup {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid rgba(23, 32, 51, 0.07);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.docsChromeGroup > input[type="text"],
+.docsChromeGroup > select,
+.docsInlineSettings select,
+.docsInlineSettings input,
+.docsNumberStart input {
+  width: 100%;
+  min-width: 0;
+  height: 31px;
+  border: 1px solid rgba(23, 32, 51, 0.1);
+  border-radius: 8px;
+  padding: 0 8px;
+  outline: none;
+  color: #344054;
+  background: #fff;
+  font-size: 10px;
+}
+
+.docsChromeGroup > input:focus,
+.docsChromeGroup > select:focus,
+.docsInlineSettings select:focus,
+.docsInlineSettings input:focus,
+.docsNumberStart input:focus {
+  border-color: rgba(49, 92, 244, 0.42);
+  box-shadow: 0 0 0 3px rgba(49, 92, 244, 0.07);
+}
+
+.docsInlineSettings {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 82px;
+  gap: 7px;
+}
+
+.docsInlineSettings label,
+.docsNumberStart {
+  display: grid !important;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  color: #788496;
+  font-size: 9px;
+}
+
+.docsInlineSettings small {
+  font-size: 8px;
+  color: #98a2b3;
+}
+
+.docsNumberStart input {
+  width: 62px;
+}
+
 .docsImageInspector {
   display: grid;
   gap: 10px;
@@ -1050,16 +1129,57 @@ kbd {
     0 0 0 2px rgba(49, 92, 244, 0.06);
 }
 
-.docsPageNumber {
+.docsPageChrome {
   position: absolute;
-  right: 20px;
-  bottom: 12px;
   z-index: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
   pointer-events: none;
-  color: #98a2b3;
-  font-size: 9px;
-  font-weight: 700;
+  color: #667085;
+  font-size: 10px;
+  line-height: 1.25;
   user-select: none;
+}
+
+.docsPageHeader {
+  min-height: 18px;
+}
+
+.docsPageFooter {
+  min-height: 18px;
+}
+
+.docsChromeSlot {
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.docsChromeSlot.left {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.docsChromeSlot.center {
+  justify-content: center;
+  text-align: center;
+}
+
+.docsChromeSlot.right {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.docsChromeSlot span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.docsPageNumber {
+  display: none;
 }
 
 .docsEditor {
@@ -1410,6 +1530,10 @@ kbd {
 
   .docsPageNumber {
     display: none !important;
+  }
+
+  .docsPageChrome {
+    display: grid !important;
   }
 
   .docsPageEditor {
