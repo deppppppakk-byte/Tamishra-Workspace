@@ -70,3 +70,10 @@ Workspace owns its own:
 - product settings and release lifecycle
 
 The original Tamishra website may link users to Workspace, but it is an external product boundary—not a runtime dependency.
+
+
+## Patra mail transport
+
+Patra's persistent mailbox API is implemented in the Workspace gateway. Internet SMTP transport runs as the separate `@tamishra/patra-mailer` service.
+
+See `docs/PATRA_MAILER.md` for SMTP, MX, SPF, DKIM, DMARC, TLS and deployment requirements.
