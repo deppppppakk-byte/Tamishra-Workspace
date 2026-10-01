@@ -537,3 +537,549 @@ kbd {
     flex-direction: column;
   }
 }
+
+
+/* Tamishra Docs */
+
+.docsApp {
+  min-height: 100vh;
+  background: #eef2f7;
+  color: #172033;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+.docsTopbar {
+  min-height: 72px;
+  padding: 10px 18px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid rgba(23, 32, 51, 0.07);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(18px);
+}
+
+.docsBack {
+  width: 44px;
+  height: 44px;
+  border-radius: 15px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, #2448ca, #5177ff);
+  color: white;
+  font-weight: 850;
+  box-shadow: 0 10px 24px rgba(49, 92, 244, 0.22);
+}
+
+.docsIdentity {
+  min-width: 0;
+}
+
+.docsTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.docsTitleInput {
+  min-width: 120px;
+  max-width: 480px;
+  width: min(44vw, 480px);
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  outline: none;
+  color: #172033;
+  background: transparent;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.docsTitleInput:hover,
+.docsTitleInput:focus {
+  border-color: rgba(49, 92, 244, 0.18);
+  background: rgba(49, 92, 244, 0.035);
+}
+
+.docsSaveState {
+  color: #7b8798;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.docsMenuRow {
+  margin-top: 5px;
+  display: flex;
+  gap: 2px;
+}
+
+.docsMenuRow button {
+  border: 0;
+  border-radius: 8px;
+  padding: 4px 7px;
+  color: #596579;
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.docsMenuRow button:hover {
+  color: #172033;
+  background: #f2f5f9;
+}
+
+.docsTopActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.docsIconButton,
+.docsProfile,
+.docsShareButton {
+  border: 1px solid rgba(23, 32, 51, 0.08);
+  cursor: pointer;
+}
+
+.docsIconButton {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: #f7f9fc;
+  color: #3f4c62;
+}
+
+.docsShareButton {
+  height: 38px;
+  border-radius: 12px;
+  padding: 0 16px;
+  background: #315cf4;
+  color: white;
+  font-weight: 750;
+}
+
+.docsProfile {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #172033;
+  color: white;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.docsToolbar {
+  min-height: 54px;
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid rgba(23, 32, 51, 0.07);
+  background: rgba(249, 251, 254, 0.96);
+  scrollbar-width: thin;
+}
+
+.docsToolGroup {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.docsToolbar button,
+.docsToolbar select {
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: #414e63;
+  cursor: pointer;
+}
+
+.docsToolbar button {
+  min-width: 34px;
+  padding: 0 8px;
+}
+
+.docsToolbar select {
+  padding: 0 28px 0 10px;
+  outline: none;
+}
+
+.docsToolbar button:hover,
+.docsToolbar select:hover,
+.docsToolbar select:focus {
+  border-color: rgba(23, 32, 51, 0.08);
+  background: white;
+}
+
+.docsToolDivider {
+  width: 1px;
+  height: 24px;
+  flex: 0 0 auto;
+  background: rgba(23, 32, 51, 0.09);
+}
+
+.docsToolbarSpacer {
+  flex: 1 0 20px;
+}
+
+.docsExportButton {
+  padding-inline: 13px !important;
+  border-color: rgba(49, 92, 244, 0.14) !important;
+  color: #315cf4 !important;
+  background: rgba(49, 92, 244, 0.05) !important;
+  font-weight: 700;
+}
+
+.docsWorkArea {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) 220px;
+}
+
+.docsLeftRail,
+.docsRightRail {
+  border-right: 1px solid rgba(23, 32, 51, 0.07);
+  background: rgba(248, 250, 253, 0.84);
+}
+
+.docsLeftRail {
+  padding: 12px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+}
+
+.docsRailButton {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 10px;
+  color: #6d7889;
+  background: transparent;
+  cursor: pointer;
+}
+
+.docsRailButton:hover,
+.docsRailButton.active {
+  color: #315cf4;
+  background: white;
+  box-shadow: 0 5px 16px rgba(42, 54, 84, 0.06);
+}
+
+.docsRightRail {
+  padding: 16px 12px;
+  border-right: 0;
+  border-left: 1px solid rgba(23, 32, 51, 0.07);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.docsInfoCard {
+  padding: 13px;
+  border: 1px solid rgba(23, 32, 51, 0.06);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.docsInfoCard > * {
+  display: block;
+}
+
+.docsInfoLabel {
+  margin-bottom: 7px;
+  color: #8a95a5;
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.docsInfoCard strong {
+  font-size: 12px;
+}
+
+.docsInfoCard span:last-child {
+  margin-top: 4px;
+  color: #788496;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.docsCanvasWrap {
+  min-width: 0;
+  overflow: auto;
+  background:
+    radial-gradient(circle at 50% -20%, rgba(49, 92, 244, 0.05), transparent 40rem),
+    #e9edf3;
+}
+
+.docsRuler {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  width: min(794px, calc(100vw - 350px));
+  min-width: 650px;
+  height: 24px;
+  margin: 0 auto;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #8b95a3;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 9px, rgba(23, 32, 51, 0.12) 9px 10px),
+    rgba(235, 239, 245, 0.96);
+  font-size: 8px;
+}
+
+.docsPageStage {
+  min-height: 100%;
+  padding: 30px 36px 80px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.docsPage {
+  width: 794px;
+  min-height: 1123px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(23, 32, 51, 0.08);
+  background: white;
+  box-shadow: 0 20px 55px rgba(39, 50, 77, 0.13);
+  transition: transform 120ms ease;
+}
+
+.docsEditor {
+  min-height: 1123px;
+  padding: 82px 88px 96px;
+  outline: none;
+  color: #202939;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 15px;
+  line-height: 1.62;
+  overflow-wrap: break-word;
+}
+
+.docsEditor h1 {
+  margin: 0 0 22px;
+  font-size: 34px;
+  line-height: 1.18;
+  letter-spacing: -0.035em;
+}
+
+.docsEditor h2 {
+  margin: 30px 0 13px;
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+.docsEditor h3 {
+  margin: 24px 0 11px;
+  font-size: 19px;
+}
+
+.docsEditor p {
+  margin: 0 0 13px;
+}
+
+.docsEditor blockquote {
+  margin: 22px 0;
+  padding: 7px 0 7px 18px;
+  border-left: 3px solid #315cf4;
+  color: #596579;
+}
+
+.docsEditor a {
+  color: #315cf4;
+  text-decoration: underline;
+}
+
+.docsEditor:focus {
+  caret-color: #315cf4;
+}
+
+.docsStatusBar {
+  min-height: 32px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  border-top: 1px solid rgba(23, 32, 51, 0.07);
+  background: rgba(255, 255, 255, 0.93);
+  color: #788496;
+  font-size: 10px;
+}
+
+.docsStatusSpacer {
+  flex: 1;
+}
+
+.modulePage {
+  min-height: 100vh;
+  padding: 40px;
+  background: #f4f7fb;
+}
+
+.backLink {
+  display: inline-block;
+  margin-bottom: 28px;
+  color: #315cf4;
+  font-weight: 700;
+}
+
+.moduleHero {
+  max-width: 760px;
+  padding: 42px;
+  border: 1px solid rgba(23, 32, 51, 0.08);
+  border-radius: 26px;
+  background: white;
+  box-shadow: 0 18px 50px rgba(42, 54, 84, 0.08);
+}
+
+.moduleHero h1 {
+  margin: 12px 0 8px;
+  font-size: 42px;
+  letter-spacing: -0.04em;
+}
+
+.moduleHero > p:last-of-type {
+  color: #667085;
+  line-height: 1.6;
+}
+
+.moduleStatus {
+  margin-top: 24px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #f5f7fb;
+  color: #667085;
+  font-size: 12px;
+}
+
+@media (max-width: 1100px) {
+  .docsWorkArea {
+    grid-template-columns: 50px minmax(0, 1fr);
+  }
+
+  .docsRightRail {
+    display: none;
+  }
+
+  .docsRuler {
+    width: min(794px, calc(100vw - 120px));
+  }
+}
+
+@media (max-width: 760px) {
+  .docsTopbar {
+    min-height: 64px;
+    padding-inline: 12px;
+  }
+
+  .docsBack {
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+  }
+
+  .docsMenuRow,
+  .docsSaveState,
+  .docsIconButton {
+    display: none;
+  }
+
+  .docsTitleInput {
+    width: 100%;
+    font-size: 14px;
+  }
+
+  .docsShareButton {
+    padding-inline: 12px;
+  }
+
+  .docsProfile {
+    display: none;
+  }
+
+  .docsToolbar {
+    padding-inline: 8px;
+  }
+
+  .docsWorkArea {
+    display: block;
+  }
+
+  .docsLeftRail,
+  .docsRuler {
+    display: none;
+  }
+
+  .docsPageStage {
+    padding: 14px 0 64px;
+  }
+
+  .docsPage {
+    width: 100%;
+    min-height: calc(100vh - 155px);
+    border-left: 0;
+    border-right: 0;
+    box-shadow: none;
+    transform: none !important;
+  }
+
+  .docsEditor {
+    min-height: calc(100vh - 155px);
+    padding: 34px 24px 72px;
+    font-size: 15px;
+  }
+
+  .docsStatusBar {
+    position: sticky;
+    bottom: 0;
+  }
+}
+
+@media print {
+  body {
+    background: white !important;
+  }
+
+  .docsTopbar,
+  .docsToolbar,
+  .docsLeftRail,
+  .docsRightRail,
+  .docsRuler,
+  .docsStatusBar {
+    display: none !important;
+  }
+
+  .docsApp,
+  .docsWorkArea,
+  .docsCanvasWrap,
+  .docsPageStage {
+    display: block;
+    background: white !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  .docsPage {
+    width: auto;
+    min-height: 0;
+    border: 0;
+    box-shadow: none;
+    transform: none !important;
+  }
+
+  .docsEditor {
+    min-height: 0;
+    padding: 0;
+  }
+}
