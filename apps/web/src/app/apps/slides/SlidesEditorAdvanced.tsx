@@ -529,23 +529,51 @@ export default function SlidesEditorAdvanced() {
             if (
               !block ||
               block.version === element.workspaceBlockVersion ||
-              block.kind !== "table" ||
               !block.payload ||
               typeof block.payload !== "object"
             ) {
               return element;
             }
 
-            const payload = block.payload as { tableData?: string[][] };
-            if (!Array.isArray(payload.tableData)) return element;
+            if (block.kind === "table") {
+              const payload = block.payload as { tableData?: string[][] };
+              if (!Array.isArray(payload.tableData)) return element;
 
-            changed = true;
-            return {
-              ...element,
-              tableData: payload.tableData.map((row) => [...row]),
-              workspaceBlockVersion: block.version,
-              name: block.title
-            };
+              changed = true;
+              return {
+                ...element,
+                tableData: payload.tableData.map((row) => [...row]),
+                workspaceBlockVersion: block.version,
+                name: block.title
+              };
+            }
+
+            if (block.kind === "chart") {
+              const payload = block.payload as {
+                labels?: string[];
+                values?: number[];
+                chartKind?: ChartKind;
+              };
+              if (
+                !Array.isArray(payload.labels) ||
+                !Array.isArray(payload.values) ||
+                payload.values.length === 0
+              ) {
+                return element;
+              }
+
+              changed = true;
+              return {
+                ...element,
+                chartLabels: [...payload.labels],
+                chartData: payload.values.map((value) => Number(value) || 0),
+                chartKind: payload.chartKind ?? element.chartKind ?? "bar",
+                workspaceBlockVersion: block.version,
+                name: block.title
+              };
+            }
+
+            return element;
           })
         }));
 
@@ -945,6 +973,54 @@ export default function SlidesEditorAdvanced() {
   };
 
   const insertWorkspaceBlock = (block: TamishraBlock) => {
+    if (block.kind === "chart" && block.payload && typeof block.payload === "object") {
+      const payload = block.payload as {
+        labels?: string[];
+        values?: number[];
+        chartKind?: ChartKind;
+      };
+      if (
+        !Array.isArray(payload.labels) ||
+        !Array.isArray(payload.values) ||
+        payload.values.length === 0
+      ) {
+        return false;
+      }
+
+      const chart: SlideElement = {
+        id: uid(),
+        type: "chart",
+        x: 170,
+        y: 130,
+        w: 620,
+        h: 300,
+        fill: "#6554de",
+        color: "#172033",
+        chartData: payload.values.map((value) => Number(value) || 0),
+        chartLabels: payload.labels.map((label) => String(label)),
+        chartKind: payload.chartKind ?? "bar",
+        name: block.title,
+        workspaceBlockId: block.binding?.mode === "live" ? block.id : undefined,
+        workspaceBlockVersion:
+          block.binding?.mode === "live" ? block.version : undefined,
+        workspaceBlockMode:
+          block.binding?.mode === "live" ? "live" : undefined
+      };
+
+      mutateActive((slide) => ({
+        ...slide,
+        elements: [...slide.elements, chart]
+      }));
+      setSelectedIds([chart.id]);
+      setInspectorMode("element");
+      setSaveState(
+        block.binding?.mode === "live"
+          ? "Live Chart inserted"
+          : "Workspace Chart inserted"
+      );
+      return true;
+    }
+
     if (block.kind === "table" && block.payload && typeof block.payload === "object") {
       const payload = block.payload as {
         tableData?: string[][];
