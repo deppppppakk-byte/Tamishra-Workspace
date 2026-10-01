@@ -29,6 +29,7 @@ export type NamedRange = {
 };
 
 export type Workbook = {
+  formatVersion: number;
   id: string;
   title: string;
   version: number;
@@ -40,8 +41,19 @@ export type Workbook = {
 
 export type FormulaValue = string | number | boolean | null;
 
+export type CellRange = {
+  start: string;
+  end: string;
+};
+
+export type SortDirection = "asc" | "desc";
+
+export const WORKBOOK_FORMAT_VERSION = 2;
 export const DEFAULT_ROWS = 1000;
 export const DEFAULT_COLUMNS = 52;
+export const MAX_SHEETS = 100;
+export const MAX_CELLS_PER_SHEET = 100_000;
+export const MAX_CELL_RAW_LENGTH = 100_000;
 
 export function columnLabel(index: number): string {
   let value = index + 1;
@@ -80,6 +92,7 @@ export function cellAddress(row: number, col: number): string {
 export function createWorkbook(title = "Untitled spreadsheet"): Workbook {
   const firstSheetId = "sheet-1";
   return {
+    formatVersion: WORKBOOK_FORMAT_VERSION,
     id: "workbook-" + Date.now().toString(36),
     title,
     version: 1,
@@ -94,6 +107,56 @@ export function createWorkbook(title = "Untitled spreadsheet"): Workbook {
       }
     ]
   };
+}
+
+export function cloneWorkbook(workbook: Workbook): Workbook {
+  return JSON.parse(JSON.stringify(workbook)) as Workbook;
+}
+
+export function normalizeRange(a: string, b: string): CellRange | null {
+  const first = parseAddress(a);
+  const second = parseAddress(b);
+  if (!first || !second) return null;
+  const minRow = Math.min(first.row, second.row);
+  const maxRow = Math.max(first.row, second.row);
+  const minCol = Math.min(first.col, second.col);
+  const maxCol = Math.max(first.col, second.col);
+  return {
+    start: cellAddress(minRow, minCol),
+    end: cellAddress(maxRow, maxCol)
+  };
+}
+
+export function rangeDimensions(range: CellRange) {
+  const start = parseAddress(range.start);
+  const end = parseAddress(range.end);
+  if (!start || !end) return { rows: 0, columns: 0 };
+  return {
+    rows: Math.abs(end.row - start.row) + 1,
+    columns: Math.abs(end.col - start.col) + 1
+  };
+}
+
+export function rangeAddresses(range: CellRange): string[] {
+  const normalized = normalizeRange(range.start, range.end);
+  if (!normalized) return [];
+  const start = parseAddress(normalized.start)!;
+  const end = parseAddress(normalized.end)!;
+  const addresses: string[] = [];
+  for (let row = start.row; row <= end.row; row += 1) {
+    for (let col = start.col; col <= end.col; col += 1) {
+      addresses.push(cellAddress(row, col));
+    }
+  }
+  return addresses;
+}
+
+export function rangeLabel(range: CellRange) {
+  const normalized = normalizeRange(range.start, range.end);
+  if (!normalized) return "";
+  return normalized.start === normalized.end
+    ? normalized.start
+    : `${normalized.start}:${normalized.end}`;
 }
 
 function numeric(value: FormulaValue | FormulaValue[]): number {
@@ -111,7 +174,10 @@ function flatten(values: Array<FormulaValue | FormulaValue[]>): FormulaValue[] {
 
 function tokenize(input: string): string[] {
   const normalized = input.replace(/\s+/g, "");
-  const tokens = normalized.match(/(?:\d+\.\d+|\d+|[A-Za-z_][A-Za-z0-9_]*|>=|<=|<>|=|>|<|[+\-*/^(),:])/g) ?? [];
+  const tokens =
+    normalized.match(
+      /(?:\d+\.\d+|\d+|[A-Za-z_][A-Za-z0-9_]*|>=|<=|<>|=|>|<|[+\-*/^(),:])/g
+    ) ?? [];
   if (tokens.join("") !== normalized) {
     throw new Error("Unsupported formula syntax");
   }
@@ -166,7 +232,10 @@ class FormulaParser {
     while (this.peek() === "+" || this.peek() === "-") {
       const op = this.take();
       const right = this.parseTerm();
-      left = op === "+" ? numeric(left) + numeric(right) : numeric(left) - numeric(right);
+      left =
+        op === "+"
+          ? numeric(left) + numeric(right)
+          : numeric(left) - numeric(right);
     }
     return left;
   }
@@ -241,15 +310,26 @@ class FormulaParser {
         if (this.peek() === ":") {
           this.take();
           const end = this.take();
-          if (!end || !/^[A-Za-z]+[1-9]\d*$/.test(end)) throw new Error("Invalid range");
+          if (!end || !/^[A-Za-z]+[1-9]\d*$/.test(end)) {
+            throw new Error("Invalid range");
+          }
           return this.range(identifier, end.toUpperCase());
         }
-        return evaluateCell(this.workbook, this.sheet.id, identifier, this.stack);
+        return evaluateCell(
+          this.workbook,
+          this.sheet.id,
+          identifier,
+          this.stack
+        );
       }
 
-      const named = this.workbook.namedRanges.find((range) => range.name.toUpperCase() === identifier);
+      const named = this.workbook.namedRanges.find(
+        (range) => range.name.toUpperCase() === identifier
+      );
       if (named) {
-        const targetSheet = this.workbook.sheets.find((sheet) => sheet.id === named.sheetId);
+        const targetSheet = this.workbook.sheets.find(
+          (sheet) => sheet.id === named.sheetId
+        );
         if (!targetSheet) return [];
         return this.range(named.start, named.end, targetSheet);
       }
@@ -262,20 +342,42 @@ class FormulaParser {
     throw new Error("Unexpected token " + token);
   }
 
-  private range(start: string, end: string, sourceSheet = this.sheet): FormulaValue[] {
+  private range(
+    start: string,
+    end: string,
+    sourceSheet = this.sheet
+  ): FormulaValue[] {
     const a = parseAddress(start);
     const b = parseAddress(end);
     if (!a || !b) return [];
     const values: FormulaValue[] = [];
-    for (let row = Math.min(a.row, b.row); row <= Math.max(a.row, b.row); row += 1) {
-      for (let col = Math.min(a.col, b.col); col <= Math.max(a.col, b.col); col += 1) {
-        values.push(evaluateCell(this.workbook, sourceSheet.id, cellAddress(row, col), this.stack));
+    for (
+      let row = Math.min(a.row, b.row);
+      row <= Math.max(a.row, b.row);
+      row += 1
+    ) {
+      for (
+        let col = Math.min(a.col, b.col);
+        col <= Math.max(a.col, b.col);
+        col += 1
+      ) {
+        values.push(
+          evaluateCell(
+            this.workbook,
+            sourceSheet.id,
+            cellAddress(row, col),
+            this.stack
+          )
+        );
       }
     }
     return values;
   }
 
-  private callFunction(name: string, args: Array<FormulaValue | FormulaValue[]>): FormulaValue {
+  private callFunction(
+    name: string,
+    args: Array<FormulaValue | FormulaValue[]>
+  ): FormulaValue {
     const values = flatten(args);
     const nums = values.map(numeric);
     switch (name) {
@@ -283,23 +385,58 @@ class FormulaParser {
         return nums.reduce((sum, value) => sum + value, 0);
       case "AVERAGE":
       case "AVG":
-        return nums.length ? nums.reduce((sum, value) => sum + value, 0) / nums.length : 0;
+        return nums.length
+          ? nums.reduce((sum, value) => sum + value, 0) / nums.length
+          : 0;
       case "MIN":
         return nums.length ? Math.min(...nums) : 0;
       case "MAX":
         return nums.length ? Math.max(...nums) : 0;
       case "COUNT":
-        return values.filter((value) => value !== "" && value != null && Number.isFinite(Number(value))).length;
+        return values.filter(
+          (value) =>
+            value !== "" &&
+            value != null &&
+            Number.isFinite(Number(value))
+        ).length;
       case "COUNTA":
         return values.filter((value) => value !== "" && value != null).length;
+      case "PRODUCT":
+        return nums.reduce((product, value) => product * value, 1);
+      case "MEDIAN": {
+        if (!nums.length) return 0;
+        const ordered = [...nums].sort((a, b) => a - b);
+        const middle = Math.floor(ordered.length / 2);
+        return ordered.length % 2
+          ? ordered[middle]
+          : (ordered[middle - 1] + ordered[middle]) / 2;
+      }
       case "ABS":
         return Math.abs(numeric(args[0] ?? 0));
+      case "SQRT":
+        return Math.sqrt(numeric(args[0] ?? 0));
+      case "POWER":
+        return Math.pow(
+          numeric(args[0] ?? 0),
+          numeric(args[1] ?? 0)
+        );
+      case "MOD": {
+        const divisor = numeric(args[1] ?? 0);
+        if (divisor === 0) throw new Error("#DIV/0!");
+        return numeric(args[0] ?? 0) % divisor;
+      }
       case "ROUND": {
         const value = numeric(args[0] ?? 0);
         const places = Math.max(0, Math.floor(numeric(args[1] ?? 0)));
         const factor = 10 ** places;
         return Math.round(value * factor) / factor;
       }
+      case "AND":
+        return values.every(Boolean);
+      case "OR":
+        return values.some(Boolean);
+      case "NOT":
+        return !Boolean(values[0]);
       case "IF":
         return Boolean(Array.isArray(args[0]) ? args[0][0] : args[0])
           ? ((Array.isArray(args[1]) ? args[1][0] : args[1]) ?? true)
@@ -326,7 +463,9 @@ export function evaluateCell(
 
   if (!cell.raw.startsWith("=")) {
     const asNumber = Number(cell.raw);
-    return cell.raw.trim() !== "" && Number.isFinite(asNumber) ? asNumber : cell.raw;
+    return cell.raw.trim() !== "" && Number.isFinite(asNumber)
+      ? asNumber
+      : cell.raw;
   }
 
   const stackKey = sheetId + ":" + key;
@@ -335,7 +474,12 @@ export function evaluateCell(
   stack.add(stackKey);
 
   try {
-    const parser = new FormulaParser(tokenize(cell.raw.slice(1)), sheet, workbook, stack);
+    const parser = new FormulaParser(
+      tokenize(cell.raw.slice(1)),
+      sheet,
+      workbook,
+      stack
+    );
     const value = parser.parse();
     return Array.isArray(value) ? value[0] ?? null : value;
   } catch (error) {
@@ -344,17 +488,37 @@ export function evaluateCell(
   }
 }
 
-export function formatDisplay(value: FormulaValue, style?: CellStyle): string {
+export function formatDisplay(
+  value: FormulaValue,
+  style?: CellStyle
+): string {
   if (value == null) return "";
   if (typeof value !== "number") return String(value);
-  if (style?.numberFormat === "percent") return new Intl.NumberFormat(undefined, { style: "percent", maximumFractionDigits: 2 }).format(value);
-  if (style?.numberFormat === "currency") return new Intl.NumberFormat(undefined, { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(value);
-  if (style?.numberFormat === "number") return new Intl.NumberFormat(undefined, { maximumFractionDigits: 6 }).format(value);
+  if (style?.numberFormat === "percent") {
+    return new Intl.NumberFormat(undefined, {
+      style: "percent",
+      maximumFractionDigits: 2
+    }).format(value);
+  }
+  if (style?.numberFormat === "currency") {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: "INR",
+      maximumFractionDigits: 2
+    }).format(value);
+  }
+  if (style?.numberFormat === "number") {
+    return new Intl.NumberFormat(undefined, {
+      maximumFractionDigits: 6
+    }).format(value);
+  }
   return String(value);
 }
 
 function escapeCsv(value: string): string {
-  if (/[",\n]/.test(value)) return '"' + value.replace(/"/g, '""') + '"';
+  if (/[",\n]/.test(value)) {
+    return '"' + value.replace(/"/g, '""') + '"';
+  }
   return value;
 }
 
@@ -378,27 +542,26 @@ export function worksheetToCsv(sheet: Worksheet): string {
   return rows.join("\n");
 }
 
-export function csvToCells(csv: string): Record<string, SheetCell> {
-  const cells: Record<string, SheetCell> = {};
+function parseDelimited(text: string, delimiter: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
   let quoted = false;
 
-  for (let i = 0; i < csv.length; i += 1) {
-    const char = csv[i];
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
     if (char === '"') {
-      if (quoted && csv[i + 1] === '"') {
+      if (quoted && text[i + 1] === '"') {
         field += '"';
         i += 1;
       } else {
         quoted = !quoted;
       }
-    } else if (char === "," && !quoted) {
+    } else if (char === delimiter && !quoted) {
       row.push(field);
       field = "";
     } else if ((char === "\n" || char === "\r") && !quoted) {
-      if (char === "\r" && csv[i + 1] === "\n") i += 1;
+      if (char === "\r" && text[i + 1] === "\n") i += 1;
       row.push(field);
       rows.push(row);
       row = [];
@@ -407,13 +570,292 @@ export function csvToCells(csv: string): Record<string, SheetCell> {
       field += char;
     }
   }
+
   row.push(field);
-  rows.push(row);
+  if (row.length > 1 || row[0] !== "" || rows.length === 0) rows.push(row);
+  return rows;
+}
+
+export function parseClipboardMatrix(text: string): string[][] {
+  return parseDelimited(text, text.includes("\t") ? "\t" : ",");
+}
+
+export function csvToCells(csv: string): Record<string, SheetCell> {
+  const cells: Record<string, SheetCell> = {};
+  const rows = parseDelimited(csv, ",");
 
   rows.forEach((values, rowIndex) => {
     values.forEach((value, colIndex) => {
-      if (value !== "") cells[cellAddress(rowIndex, colIndex)] = { raw: value };
+      if (value !== "") {
+        cells[cellAddress(rowIndex, colIndex)] = {
+          raw: value.slice(0, MAX_CELL_RAW_LENGTH)
+        };
+      }
     });
   });
   return cells;
+}
+
+export function rangeToTsv(sheet: Worksheet, range: CellRange): string {
+  const normalized = normalizeRange(range.start, range.end);
+  if (!normalized) return "";
+  const start = parseAddress(normalized.start)!;
+  const end = parseAddress(normalized.end)!;
+  const lines: string[] = [];
+  for (let row = start.row; row <= end.row; row += 1) {
+    const values: string[] = [];
+    for (let col = start.col; col <= end.col; col += 1) {
+      values.push(sheet.cells[cellAddress(row, col)]?.raw ?? "");
+    }
+    lines.push(values.join("\t"));
+  }
+  return lines.join("\n");
+}
+
+export function applyMatrixToSheet(
+  sheet: Worksheet,
+  startAddress: string,
+  matrix: string[][]
+) {
+  const start = parseAddress(startAddress);
+  if (!start) return;
+  matrix.forEach((values, rowOffset) => {
+    values.forEach((raw, colOffset) => {
+      const row = start.row + rowOffset;
+      const col = start.col + colOffset;
+      if (row >= DEFAULT_ROWS || col >= DEFAULT_COLUMNS) return;
+      const address = cellAddress(row, col);
+      const existing = sheet.cells[address] ?? { raw: "" };
+      const nextRaw = raw.slice(0, MAX_CELL_RAW_LENGTH);
+      if (nextRaw === "" && !existing.style) {
+        delete sheet.cells[address];
+      } else {
+        sheet.cells[address] = { ...existing, raw: nextRaw };
+      }
+    });
+  });
+}
+
+function sortableRaw(raw: string) {
+  const numericValue = Number(raw);
+  if (raw.trim() !== "" && Number.isFinite(numericValue)) {
+    return { kind: 0, value: numericValue };
+  }
+  return { kind: 1, value: raw.toLocaleLowerCase() };
+}
+
+export function sortRangeRows(
+  sheet: Worksheet,
+  range: CellRange,
+  keyColumn: number,
+  direction: SortDirection
+) {
+  const normalized = normalizeRange(range.start, range.end);
+  if (!normalized) return;
+  const start = parseAddress(normalized.start)!;
+  const end = parseAddress(normalized.end)!;
+  if (keyColumn < start.col || keyColumn > end.col) return;
+
+  const rows = Array.from(
+    { length: end.row - start.row + 1 },
+    (_, offset) => {
+      const row = start.row + offset;
+      return {
+        originalRow: row,
+        cells: Array.from(
+          { length: end.col - start.col + 1 },
+          (_, colOffset) => {
+            const address = cellAddress(row, start.col + colOffset);
+            const cell = sheet.cells[address];
+            return cell ? JSON.parse(JSON.stringify(cell)) as SheetCell : undefined;
+          }
+        )
+      };
+    }
+  );
+
+  rows.sort((a, b) => {
+    const aRaw =
+      a.cells[keyColumn - start.col]?.raw ?? "";
+    const bRaw =
+      b.cells[keyColumn - start.col]?.raw ?? "";
+    const av = sortableRaw(aRaw);
+    const bv = sortableRaw(bRaw);
+    let result = av.kind - bv.kind;
+    if (result === 0) {
+      result =
+        typeof av.value === "number" && typeof bv.value === "number"
+          ? av.value - bv.value
+          : String(av.value).localeCompare(String(bv.value));
+    }
+    if (result === 0) result = a.originalRow - b.originalRow;
+    return direction === "asc" ? result : -result;
+  });
+
+  rows.forEach((source, rowOffset) => {
+    source.cells.forEach((cell, colOffset) => {
+      const address = cellAddress(
+        start.row + rowOffset,
+        start.col + colOffset
+      );
+      if (cell) sheet.cells[address] = cell;
+      else delete sheet.cells[address];
+    });
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function sanitizeStyle(value: unknown): CellStyle | undefined {
+  if (!isRecord(value)) return undefined;
+  const style: CellStyle = {};
+  if (typeof value.bold === "boolean") style.bold = value.bold;
+  if (typeof value.italic === "boolean") style.italic = value.italic;
+  if (typeof value.underline === "boolean") style.underline = value.underline;
+  if (["left", "center", "right"].includes(String(value.align))) {
+    style.align = value.align as CellStyle["align"];
+  }
+  if (typeof value.fill === "string" && /^#[0-9a-f]{6}$/i.test(value.fill)) {
+    style.fill = value.fill;
+  }
+  if (typeof value.color === "string" && /^#[0-9a-f]{6}$/i.test(value.color)) {
+    style.color = value.color;
+  }
+  if (
+    ["general", "number", "percent", "currency"].includes(
+      String(value.numberFormat)
+    )
+  ) {
+    style.numberFormat = value.numberFormat as CellStyle["numberFormat"];
+  }
+  return Object.keys(style).length ? style : undefined;
+}
+
+export function normalizeWorkbook(input: unknown): Workbook | null {
+  if (!isRecord(input) || !Array.isArray(input.sheets) || !input.sheets.length) {
+    return null;
+  }
+
+  const sheets: Worksheet[] = [];
+  for (const [sheetIndex, sheetInput] of input.sheets.slice(0, MAX_SHEETS).entries()) {
+    if (!isRecord(sheetInput)) continue;
+    const cells: Record<string, SheetCell> = {};
+    if (isRecord(sheetInput.cells)) {
+      let count = 0;
+      for (const [address, cellInput] of Object.entries(sheetInput.cells)) {
+        if (count >= MAX_CELLS_PER_SHEET) break;
+        const parsed = parseAddress(address);
+        if (
+          !parsed ||
+          parsed.row >= DEFAULT_ROWS ||
+          parsed.col >= DEFAULT_COLUMNS ||
+          !isRecord(cellInput) ||
+          typeof cellInput.raw !== "string"
+        ) {
+          continue;
+        }
+        cells[parsed.address] = {
+          raw: cellInput.raw.slice(0, MAX_CELL_RAW_LENGTH),
+          style: sanitizeStyle(cellInput.style)
+        };
+        count += 1;
+      }
+    }
+
+    sheets.push({
+      id:
+        typeof sheetInput.id === "string" && sheetInput.id
+          ? sheetInput.id
+          : `sheet-${sheetIndex + 1}`,
+      name:
+        typeof sheetInput.name === "string" && sheetInput.name.trim()
+          ? sheetInput.name.trim().slice(0, 80)
+          : `Sheet ${sheetIndex + 1}`,
+      cells,
+      frozenRows:
+        typeof sheetInput.frozenRows === "number"
+          ? Math.max(0, Math.min(5, Math.floor(sheetInput.frozenRows)))
+          : 0,
+      frozenColumns:
+        typeof sheetInput.frozenColumns === "number"
+          ? Math.max(0, Math.min(5, Math.floor(sheetInput.frozenColumns)))
+          : 0
+    });
+  }
+
+  if (!sheets.length) return null;
+  const activeSheetId =
+    typeof input.activeSheetId === "string" &&
+    sheets.some((sheet) => sheet.id === input.activeSheetId)
+      ? input.activeSheetId
+      : sheets[0].id;
+
+  const namedRanges: NamedRange[] = Array.isArray(input.namedRanges)
+    ? input.namedRanges
+        .filter(isRecord)
+        .slice(0, 1000)
+        .flatMap((range) => {
+          const sheetId =
+            typeof range.sheetId === "string" ? range.sheetId : "";
+          const name = typeof range.name === "string" ? range.name.trim() : "";
+          const start = typeof range.start === "string" ? parseAddress(range.start) : null;
+          const end = typeof range.end === "string" ? parseAddress(range.end) : null;
+          if (
+            !name ||
+            !start ||
+            !end ||
+            !sheets.some((sheet) => sheet.id === sheetId)
+          ) {
+            return [];
+          }
+          return [
+            {
+              name: name.slice(0, 80),
+              sheetId,
+              start: start.address,
+              end: end.address
+            }
+          ];
+        })
+    : [];
+
+  return {
+    formatVersion: WORKBOOK_FORMAT_VERSION,
+    id:
+      typeof input.id === "string" && input.id
+        ? input.id
+        : "workbook-" + Date.now().toString(36),
+    title:
+      typeof input.title === "string" && input.title.trim()
+        ? input.title.trim().slice(0, 160)
+        : "Untitled spreadsheet",
+    version:
+      typeof input.version === "number" && Number.isFinite(input.version)
+        ? Math.max(1, Math.floor(input.version))
+        : 1,
+    activeSheetId,
+    sheets,
+    namedRanges,
+    updatedAt:
+      typeof input.updatedAt === "string"
+        ? input.updatedAt
+        : new Date().toISOString()
+  };
+}
+
+export function serializeWorkbook(workbook: Workbook): string {
+  return JSON.stringify({
+    ...workbook,
+    formatVersion: WORKBOOK_FORMAT_VERSION
+  });
+}
+
+export function parseWorkbookJson(json: string): Workbook | null {
+  try {
+    return normalizeWorkbook(JSON.parse(json));
+  } catch {
+    return null;
+  }
 }

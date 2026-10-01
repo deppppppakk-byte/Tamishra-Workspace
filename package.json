@@ -25,7 +25,7 @@
     "dev:web:native": "node scripts/run-web.mjs dev native",
     "build:web:native": "node scripts/run-web.mjs build native",
     "build:hosted": "npm run build:web && npm run build:gateway",
-    "check": "npm run check:web && npm run check:gateway && npm run check:patra-mailer",
+    "check": "npm run check:sheets && npm run test:sheets && npm run check:web && npm run check:gateway && npm run check:patra-mailer",
     "dev:patra-mailer": "npm run dev --workspace @tamishra/patra-mailer",
     "start:patra-mailer": "npm run start --workspace @tamishra/patra-mailer",
     "check:patra-mailer": "npm run check --workspace @tamishra/patra-mailer",
@@ -34,7 +34,9 @@
     "build:runtime-packages": "npm run build --workspace @tamishra/identity && npm run build --workspace @tamishra/permissions",
     "check:runtime-packages": "npm run check --workspace @tamishra/identity && npm run check --workspace @tamishra/permissions",
     "production:check": "npm run check && npm audit --omit=dev --audit-level=high",
-    "start:gateway": "npm run start --workspace @tamishra/gateway"
+    "start:gateway": "npm run start --workspace @tamishra/gateway",
+    "check:sheets": "npm run check --workspace @tamishra/sheets-engine",
+    "test:sheets": "npm run test --workspace @tamishra/sheets-engine"
   },
   "engines": {
     "node": ">=22"
