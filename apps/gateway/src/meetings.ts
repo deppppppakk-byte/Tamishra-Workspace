@@ -130,6 +130,7 @@ function publicContext(
 ) {
   return {
     roomName: meeting.roomName,
+    participantId: participant.id,
     title: meeting.title,
     status: meeting.status,
     role: participant.role,
