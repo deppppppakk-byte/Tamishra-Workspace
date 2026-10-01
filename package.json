@@ -28,7 +28,9 @@
     "check": "npm run check:web && npm run check:gateway && npm run check:patra-mailer",
     "dev:patra-mailer": "npm run dev --workspace @tamishra/patra-mailer",
     "start:patra-mailer": "npm run start --workspace @tamishra/patra-mailer",
-    "check:patra-mailer": "npm run check --workspace @tamishra/patra-mailer"
+    "check:patra-mailer": "npm run check --workspace @tamishra/patra-mailer",
+    "dev:web:patra": "node scripts/run-web.mjs dev patra",
+    "build:web:patra": "node scripts/run-web.mjs build patra"
   },
   "engines": {
     "node": ">=22"
