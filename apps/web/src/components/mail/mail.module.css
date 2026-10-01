@@ -1391,3 +1391,247 @@
     bottom: 72px;
   }
 }
+
+
+/* Patra account provisioning and persistent-mailbox states */
+
+.setupShell {
+  min-height: 100vh;
+  padding: 28px;
+  color: #172033;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(49, 92, 244, 0.16), transparent 34rem),
+    radial-gradient(circle at 90% 100%, rgba(45, 125, 190, 0.12), transparent 28rem),
+    #f3f6fb;
+  display: grid;
+  place-items: center;
+}
+
+.setupHome {
+  position: fixed;
+  top: 24px;
+  left: 24px;
+  color: #536077;
+  font-size: 11px;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.setupCard {
+  width: min(560px, 100%);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 28px;
+  padding: clamp(28px, 5vw, 48px);
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(24px);
+  box-shadow: 0 28px 85px rgba(35, 49, 75, 0.14);
+}
+
+.setupMark {
+  width: 54px;
+  height: 54px;
+  border-radius: 18px;
+  color: white;
+  background: linear-gradient(145deg, #2448ca, #2d7dbe);
+  box-shadow: 0 14px 30px rgba(45, 125, 190, 0.24);
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.setupEyebrow {
+  margin: 28px 0 8px !important;
+  color: #315cf4 !important;
+  font-size: 9px !important;
+  font-weight: 850;
+  letter-spacing: 0.13em;
+}
+
+.setupCard h1 {
+  margin: 0;
+  font-size: clamp(30px, 5vw, 48px);
+  line-height: 1.02;
+  letter-spacing: -0.045em;
+}
+
+.setupCard > p:not(.setupEyebrow) {
+  margin: 16px 0 0;
+  color: #6d788b;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.setupPrimary {
+  width: max-content;
+  min-height: 42px;
+  margin-top: 24px;
+  border-radius: 12px;
+  padding: 0 16px;
+  color: white;
+  background: #172033;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.setupField {
+  margin-top: 26px;
+  display: grid;
+  gap: 7px;
+}
+
+.setupField > span {
+  color: #5f6b7f;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.setupField > div {
+  height: 48px;
+  border: 1px solid rgba(23, 32, 51, 0.1);
+  border-radius: 13px;
+  padding: 0 12px;
+  background: rgba(248, 250, 253, 0.9);
+  display: flex;
+  align-items: center;
+}
+
+.setupField input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  color: #253248;
+  background: transparent;
+  font-size: 13px;
+}
+
+.setupField b {
+  color: #315cf4;
+  font-size: 11px;
+}
+
+.setupAvailable,
+.setupUnavailable {
+  margin-top: 10px;
+  border-radius: 10px;
+  padding: 9px 10px;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.setupAvailable {
+  color: #067647;
+  background: rgba(6, 118, 71, 0.07);
+}
+
+.setupUnavailable {
+  color: #b42318;
+  background: rgba(180, 35, 24, 0.06);
+}
+
+.setupActions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.setupActions button {
+  min-height: 40px;
+  border: 1px solid rgba(23, 32, 51, 0.09);
+  border-radius: 11px;
+  padding: 0 14px;
+  color: #526078;
+  background: white;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.setupActions .setupPrimaryButton {
+  border-color: #315cf4;
+  color: white;
+  background: #315cf4;
+}
+
+.setupActions button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.mailboxIdentity {
+  min-width: 0;
+  flex: 1;
+}
+
+.mailboxIdentity strong,
+.mailboxIdentity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mailboxIdentity select {
+  width: 100%;
+  height: 25px;
+  margin-top: 5px;
+  border: 1px solid rgba(23, 32, 51, 0.08);
+  border-radius: 7px;
+  padding: 0 5px;
+  outline: none;
+  color: #536077;
+  background: rgba(255, 255, 255, 0.8);
+  font-size: 8px;
+}
+
+.statusDotActive {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #12a36d;
+  box-shadow: 0 0 0 5px rgba(18, 163, 109, 0.12);
+}
+
+.listStatus {
+  margin-left: 0 !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recipientLine {
+  max-width: 760px;
+  margin-top: 10px;
+  color: #8490a2;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .setupShell {
+    padding: 18px;
+  }
+
+  .setupHome {
+    top: 16px;
+    left: 16px;
+  }
+
+  .setupCard {
+    padding: 24px 20px;
+    border-radius: 22px;
+  }
+
+  .setupActions {
+    flex-direction: column;
+  }
+
+  .setupActions button {
+    width: 100%;
+  }
+}
