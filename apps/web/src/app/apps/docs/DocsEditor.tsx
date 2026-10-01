@@ -347,8 +347,16 @@ export default function DocsEditor() {
         localStorage.removeItem(LEGACY_STORAGE_KEY);
       }
 
+      const firstEditor = pageEditorsRef.current[0];
+
       if (!draft) {
+        if (firstEditor && !firstEditor.innerHTML.trim()) {
+          firstEditor.innerHTML =
+            "<h1>Untitled document</h1><p>Start writing here. Tamishra Docs now supports real multi-page document flow, autosave, formatting and print/PDF output.</p>";
+        }
+        ensureBlockIds();
         updateCounts();
+        scheduleReflow();
         return;
       }
 
@@ -356,13 +364,14 @@ export default function DocsEditor() {
       setTitle(draft.document.title || "Untitled document");
       setPage(draft.document.sections[0]?.page ?? createPageConfig());
 
-      if (editorRef.current && draft.editorHtml) {
-        editorRef.current.innerHTML = draft.editorHtml;
+      if (firstEditor && draft.editorHtml) {
+        firstEditor.innerHTML = draft.editorHtml;
         ensureBlockIds();
       }
 
       updateCounts();
       setSavedState("Recovered local draft");
+      scheduleReflow();
     } catch {
       localStorage.removeItem(STORAGE_KEY);
       updateCounts();
@@ -379,7 +388,16 @@ export default function DocsEditor() {
 
   useEffect(() => {
     updateCounts();
-  }, [page]);
+    scheduleReflow();
+  }, [page, pageCount]);
+
+  useEffect(() => {
+    return () => {
+      if (reflowFrameRef.current !== null) {
+        cancelAnimationFrame(reflowFrameRef.current);
+      }
+    };
+  }, []);
 
   const updateCounts = () => {
     const text = getDocumentText();
@@ -452,6 +470,7 @@ export default function DocsEditor() {
       '<table><tbody><tr><th>Heading 1</th><th>Heading 2</th></tr><tr><td>Cell</td><td>Cell</td></tr><tr><td>Cell</td><td>Cell</td></tr></tbody></table><p><br></p>'
     );
     updateCounts();
+    scheduleReflow();
   };
 
   const insertDivider = () => {
@@ -466,12 +485,13 @@ export default function DocsEditor() {
       `<div data-page-break="true" data-tamishra-id="${id}" contenteditable="false" class="docsManualPageBreak"><span>Page break</span></div><p><br></p>`
     );
     updateCounts();
+    scheduleReflow();
   };
 
   const selectImageElement = (image: HTMLImageElement | null) => {
-    editorRef.current
-      ?.querySelectorAll("img.docsSelectedImage")
-      .forEach((element) => element.classList.remove("docsSelectedImage"));
+    queryDocumentAll("img.docsSelectedImage").forEach((element) =>
+      element.classList.remove("docsSelectedImage")
+    );
 
     if (!image) {
       setSelectedImageId(null);
@@ -491,9 +511,9 @@ export default function DocsEditor() {
 
   const findSelectedImage = () => {
     if (!selectedImageId) return null;
-    return editorRef.current?.querySelector(
+    return queryDocument<HTMLImageElement>(
       `img[data-tamishra-id="${CSS.escape(selectedImageId)}"]`
-    ) as HTMLImageElement | null;
+    );
   };
 
   const insertImageFile = (file: File) => {
@@ -515,9 +535,9 @@ export default function DocsEditor() {
       updateCounts();
 
       requestAnimationFrame(() => {
-        const image = editorRef.current?.querySelector(
+        const image = queryDocument<HTMLImageElement>(
           `img[data-tamishra-id="${CSS.escape(id)}"]`
-        ) as HTMLImageElement | null;
+        );
         selectImageElement(image);
       });
     };
@@ -648,7 +668,7 @@ export default function DocsEditor() {
     if (!selection || selection.rangeCount === 0) return;
 
     const range = selection.getRangeAt(0);
-    if (!editorRef.current?.contains(range.commonAncestorContainer)) {
+    if (!getEditors().some((editor) => editor.contains(range.commonAncestorContainer))) {
       findInDocument(false);
       return;
     }
@@ -666,8 +686,8 @@ export default function DocsEditor() {
   };
 
   const replaceAll = () => {
-    const editor = editorRef.current;
-    if (!editor || !findQuery) return;
+    const editors = getEditors();
+    if (!editors.length || !findQuery) return;
 
     const escaped = findQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const expression = new RegExp(
@@ -675,14 +695,16 @@ export default function DocsEditor() {
       matchCase ? "g" : "gi"
     );
 
-    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
     const nodes: Text[] = [];
-    let currentNode = walker.nextNode();
+    editors.forEach((editor) => {
+      const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+      let currentNode = walker.nextNode();
 
-    while (currentNode) {
-      nodes.push(currentNode as Text);
-      currentNode = walker.nextNode();
-    }
+      while (currentNode) {
+        nodes.push(currentNode as Text);
+        currentNode = walker.nextNode();
+      }
+    });
 
     let replacements = 0;
     for (const node of nodes) {
@@ -695,11 +717,12 @@ export default function DocsEditor() {
     }
 
     updateCounts();
+    scheduleReflow();
     setFindStatus(replacements ? `Replaced ${replacements} match${replacements === 1 ? "" : "es"}` : "No match");
   };
 
   const handleExportText = () => {
-    const text = editorRef.current?.innerText ?? "";
+    const text = getDocumentText();
     const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
     const href = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -714,7 +737,7 @@ export default function DocsEditor() {
   };
 
   const handleExportHtml = () => {
-    const html = editorRef.current?.innerHTML ?? "";
+    const html = getDocumentHtml();
     const fullDocument = `<!doctype html>
 <html>
 <head>
