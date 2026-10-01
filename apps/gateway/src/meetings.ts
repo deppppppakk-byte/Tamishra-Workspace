@@ -1,17 +1,30 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { AccessToken, RoomServiceClient, TrackSource } from "livekit-server-sdk";
+import {
+  AccessToken,
+  EgressClient,
+  EncodedFileOutput,
+  RoomServiceClient,
+  S3Upload,
+  TrackSource
+} from "livekit-server-sdk";
 import {
   createMeetingStore,
   type StoredMeeting,
   type StoredParticipant
 } from "./meeting-store.js";
 import { createMeetingCollaborationStore } from "./meeting-collaboration-store.js";
+import {
+  createMeetingRecordingStore,
+  type RecordingStatus,
+  type StoredMeetingRecording
+} from "./meeting-recording-store.js";
 
 type JsonObject = Record<string, unknown>;
 
 const store = createMeetingStore();
 const collaboration = createMeetingCollaborationStore();
+const recordings = createMeetingRecordingStore();
 const MAX_BODY_BYTES = 32_768;
 const MAX_PARTICIPANTS = 100;
 const joinAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -172,6 +185,135 @@ function isOwner(
   participant: StoredParticipant | null
 ): participant is StoredParticipant {
   return participant?.role === "host";
+}
+
+function recordingStorageConfig() {
+  const bucket = process.env.WORKSPACE_MEET_RECORDING_BUCKET?.trim();
+  const accessKey =
+    process.env.WORKSPACE_MEET_RECORDING_ACCESS_KEY?.trim();
+  const secret =
+    process.env.WORKSPACE_MEET_RECORDING_SECRET?.trim();
+
+  if (!bucket || !accessKey || !secret) return null;
+
+  return {
+    bucket,
+    accessKey,
+    secret,
+    region:
+      process.env.WORKSPACE_MEET_RECORDING_REGION?.trim() ?? "",
+    endpoint:
+      process.env.WORKSPACE_MEET_RECORDING_ENDPOINT?.trim() ?? "",
+    forcePathStyle:
+      process.env.WORKSPACE_MEET_RECORDING_FORCE_PATH_STYLE !== "false",
+    prefix:
+      process.env.WORKSPACE_MEET_RECORDING_PREFIX?.trim() ||
+      "tamishra-meet"
+  };
+}
+
+function recordingConfigured() {
+  return Boolean(liveKitConfig() && recordingStorageConfig());
+}
+
+function egressClient() {
+  const livekit = liveKitConfig();
+  if (!livekit) return null;
+  return new EgressClient(
+    livekit.apiUrl,
+    livekit.apiKey,
+    livekit.apiSecret
+  );
+}
+
+function recordingStatus(value: number): RecordingStatus {
+  switch (value) {
+    case 0:
+      return "starting";
+    case 1:
+      return "active";
+    case 2:
+      return "stopping";
+    case 3:
+      return "complete";
+    case 4:
+      return "failed";
+    case 5:
+    case 6:
+      return "aborted";
+    default:
+      return "failed";
+  }
+}
+
+function recordingPublic(recording: StoredMeetingRecording | null) {
+  if (!recording) return null;
+  return {
+    id: recording.id,
+    roomName: recording.roomName,
+    egressId: recording.egressId,
+    status: recording.status,
+    filepath: recording.filepath,
+    location: recording.location,
+    startedAt: recording.startedAt,
+    endedAt: recording.endedAt,
+    durationNs: recording.durationNs,
+    sizeBytes: recording.sizeBytes,
+    error: recording.error,
+    createdAt: recording.createdAt,
+    updatedAt: recording.updatedAt
+  };
+}
+
+async function syncActiveRecording(roomNameValue: string) {
+  const active = await recordings.getActiveRecording(roomNameValue);
+  if (!active) return null;
+
+  const client = egressClient();
+  if (!client) return active;
+
+  try {
+    const items = await client.listEgress({ roomName: roomNameValue });
+    const info = items.find((item) => item.egressId === active.egressId);
+    if (!info) return active;
+
+    const file = info.fileResults[0];
+    return (
+      await recordings.updateRecording(
+        roomNameValue,
+        active.egressId,
+        {
+          status: recordingStatus(Number(info.status)),
+          location: file?.location || active.location,
+          durationNs:
+            file?.duration === undefined
+              ? active.durationNs
+              : String(file.duration),
+          sizeBytes:
+            file?.size === undefined
+              ? active.sizeBytes
+              : String(file.size),
+          error: info.error || active.error
+        }
+      )
+    ) ?? active;
+  } catch {
+    return active;
+  }
+}
+
+function safeRecordingPath(roomNameValue: string) {
+  const config = recordingStorageConfig();
+  const prefix = config?.prefix.replace(/^\/+|\/+$/g, "") || "tamishra-meet";
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return prefix + "/" + roomNameValue + "/" + stamp + ".mp4";
+}
+
+function durationMs(start: string, end: string) {
+  return Math.max(
+    0,
+    new Date(end).getTime() - new Date(start).getTime()
+  );
 }
 
 function roomServiceClient() {
@@ -339,6 +481,7 @@ export async function handleMeetingRequest(
   try {
     await store.ready();
     await collaboration.ready();
+    await recordings.ready();
   } catch (error) {
     console.error("Workspace meeting store initialization failed", error);
     sendJson(
@@ -361,6 +504,7 @@ export async function handleMeetingRequest(
         persistence: store.kind,
         mediaProvider: "livekit",
         mediaConfigured: Boolean(liveKitConfig()),
+        recordingConfigured: recordingConfigured(),
         capabilities: {
           privateCodes: true,
           waitingRoom: true,
@@ -380,7 +524,11 @@ export async function handleMeetingRequest(
           auditLog: true,
           cohost: true,
           serverMediaModeration: true,
-          participantMediaPolicies: true
+          participantMediaPolicies: true,
+          recording: true,
+          recordingConsent: true,
+          meetingHistory: true,
+          attendanceReports: true
         }
       },
       origin,
@@ -475,6 +623,89 @@ export async function handleMeetingRequest(
             error instanceof Error
               ? error.message
               : "meeting_create_failed"
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/meetings/history") {
+    try {
+      const body = await readJson(request);
+      const rawEntries = Array.isArray(body.entries) ? body.entries : [];
+      const entries = rawEntries
+        .slice(0, 50)
+        .map((value) =>
+          value && typeof value === "object"
+            ? value as Record<string, unknown>
+            : {}
+        );
+
+      const history = (
+        await Promise.all(
+          entries.map(async (entry) => {
+            const roomNameValue = String(entry.roomName ?? "").trim();
+            const accessKey = String(entry.accessKey ?? "").trim();
+            if (!roomNameValue || !accessKey) return null;
+
+            const [meeting, participant] = await Promise.all([
+              store.getMeeting(roomNameValue),
+              findAccess(roomNameValue, accessKey)
+            ]);
+
+            if (!meeting || !participant) return null;
+
+            const [participants, attendance, roomRecordings] =
+              await Promise.all([
+                store.listParticipants(roomNameValue),
+                store.listAttendance(roomNameValue),
+                recordings.listRecordings(roomNameValue, 20)
+              ]);
+
+            return {
+              roomName: meeting.roomName,
+              title: meeting.title,
+              status: meeting.status,
+              role: participant.role,
+              createdAt: meeting.createdAt,
+              scheduledStartAt: meeting.scheduledStartAt,
+              startedAt: meeting.startedAt,
+              endedAt: meeting.endedAt,
+              joinCode:
+                participant.role === "host" ? meeting.joinCode : null,
+              participantCount: participants.filter(
+                (item) => item.admissionStatus === "admitted"
+              ).length,
+              attendanceCount: attendance.length,
+              recordingCount: roomRecordings.length
+            };
+          })
+        )
+      )
+        .filter(Boolean)
+        .sort((left, right) =>
+          String(right!.createdAt).localeCompare(String(left!.createdAt))
+        );
+
+      sendJson(
+        response,
+        200,
+        { history },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "meeting_history_failed"
         },
         origin,
         allowedOrigins
@@ -1504,6 +1735,511 @@ export async function handleMeetingRequest(
     return true;
   }
 
+  if (request.method === "GET" && parsed.action === "recording") {
+    const participant = await findAccess(
+      meeting.roomName,
+      url.searchParams.get("accessKey")
+    );
+
+    if (!participant) {
+      sendJson(
+        response,
+        401,
+        { error: "invalid_meeting_access" },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+
+    const [active, consent, consents, roomRecordings] =
+      await Promise.all([
+        syncActiveRecording(meeting.roomName),
+        recordings.getConsent(meeting.roomName, participant.id),
+        canModerate(participant)
+          ? recordings.listConsents(meeting.roomName)
+          : Promise.resolve([]),
+        canModerate(participant)
+          ? recordings.listRecordings(meeting.roomName, 20)
+          : Promise.resolve([])
+      ]);
+
+    sendJson(
+      response,
+      200,
+      {
+        configured: recordingConfigured(),
+        active: recordingPublic(active),
+        consent,
+        consents,
+        recordings: roomRecordings.map(recordingPublic)
+      },
+      origin,
+      allowedOrigins
+    );
+    return true;
+  }
+
+  if (
+    request.method === "POST" &&
+    parsed.action === "recording-consent"
+  ) {
+    try {
+      const body = await readJson(request);
+      const participant = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
+      if (
+        !participant ||
+        participant.admissionStatus !== "admitted"
+      ) {
+        sendJson(
+          response,
+          403,
+          { error: "recording_consent_unavailable" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const consent =
+        body.consent === "accepted"
+          ? "accepted"
+          : body.consent === "declined"
+            ? "declined"
+            : null;
+
+      if (!consent) {
+        sendJson(
+          response,
+          400,
+          { error: "invalid_recording_consent" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const saved = await recordings.setConsent(
+        meeting.roomName,
+        participant.id,
+        participant.displayName,
+        consent
+      );
+
+      let recordingStopped = false;
+      if (consent === "declined") {
+        const active = await recordings.getActiveRecording(
+          meeting.roomName
+        );
+        const client = egressClient();
+
+        if (active && client) {
+          try {
+            const info = await client.stopEgress(active.egressId);
+            const file = info.fileResults[0];
+            await recordings.updateRecording(
+              meeting.roomName,
+              active.egressId,
+              {
+                status: recordingStatus(Number(info.status)),
+                location: file?.location || active.location,
+                endedAt: new Date().toISOString(),
+                durationNs:
+                  file?.duration === undefined
+                    ? active.durationNs
+                    : String(file.duration),
+                sizeBytes:
+                  file?.size === undefined
+                    ? active.sizeBytes
+                    : String(file.size),
+                error: info.error || null
+              }
+            );
+            recordingStopped = true;
+            await recordings.resetConsents(meeting.roomName);
+          } catch (error) {
+            console.warn(
+              "Unable to stop recording after consent withdrawal",
+              error
+            );
+          }
+        }
+      }
+
+      await collaboration.appendAudit({
+        roomName: meeting.roomName,
+        actorParticipantId: participant.id,
+        actorDisplayName: participant.displayName,
+        eventType:
+          consent === "accepted"
+            ? "recording_consent_accepted"
+            : "recording_consent_declined",
+        targetParticipantId: participant.id,
+        metadata: { recordingStopped }
+      });
+
+      sendJson(
+        response,
+        200,
+        { consent: saved, recordingStopped },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "recording_consent_failed"
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (request.method === "POST" && parsed.action === "recording") {
+    try {
+      const body = await readJson(request);
+      const host = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
+      if (!isOwner(host)) {
+        sendJson(
+          response,
+          403,
+          { error: "host_access_required" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const action = String(body.action ?? "");
+
+      if (action === "start") {
+        if (meeting.status !== "live") {
+          sendJson(
+            response,
+            409,
+            { error: "meeting_not_live" },
+            origin,
+            allowedOrigins
+          );
+          return true;
+        }
+
+        const storage = recordingStorageConfig();
+        const client = egressClient();
+        if (!storage || !client) {
+          sendJson(
+            response,
+            503,
+            { error: "recording_not_configured" },
+            origin,
+            allowedOrigins
+          );
+          return true;
+        }
+
+        const existing = await syncActiveRecording(meeting.roomName);
+        if (existing) {
+          sendJson(
+            response,
+            409,
+            {
+              error: "recording_already_active",
+              recording: recordingPublic(existing)
+            },
+            origin,
+            allowedOrigins
+          );
+          return true;
+        }
+
+        const [participants, consents] = await Promise.all([
+          store.listParticipants(meeting.roomName),
+          recordings.listConsents(meeting.roomName)
+        ]);
+        const required = participants.filter(
+          (item) =>
+            item.role !== "host" &&
+            item.admissionStatus === "admitted"
+        );
+        const consentByParticipant = new Map(
+          consents.map((item) => [item.participantId, item])
+        );
+        const pending = required.filter(
+          (item) =>
+            consentByParticipant.get(item.id)?.consent !== "accepted"
+        );
+        const declined = pending.filter(
+          (item) =>
+            consentByParticipant.get(item.id)?.consent === "declined"
+        );
+
+        if (pending.length > 0) {
+          sendJson(
+            response,
+            409,
+            {
+              error: "recording_consent_required",
+              pending: pending.map((item) => ({
+                participantId: item.id,
+                displayName: item.displayName
+              })),
+              declined: declined.map((item) => ({
+                participantId: item.id,
+                displayName: item.displayName
+              }))
+            },
+            origin,
+            allowedOrigins
+          );
+          return true;
+        }
+
+        const filepath = safeRecordingPath(meeting.roomName);
+        const output = new EncodedFileOutput({
+          filepath,
+          output: {
+            case: "s3",
+            value: new S3Upload({
+              accessKey: storage.accessKey,
+              secret: storage.secret,
+              region: storage.region,
+              endpoint: storage.endpoint,
+              bucket: storage.bucket,
+              forcePathStyle: storage.forcePathStyle,
+              contentDisposition: "attachment"
+            })
+          }
+        });
+
+        const info = await client.startRoomCompositeEgress(
+          meeting.roomName,
+          { file: output },
+          { layout: "grid" }
+        );
+
+        const saved = await recordings.createRecording({
+          roomName: meeting.roomName,
+          egressId: info.egressId,
+          status: recordingStatus(Number(info.status)),
+          filepath,
+          location: info.fileResults[0]?.location || null,
+          startedAt: new Date().toISOString(),
+          endedAt: null,
+          durationNs: null,
+          sizeBytes: null,
+          error: info.error || null
+        });
+
+        await collaboration.appendAudit({
+          roomName: meeting.roomName,
+          actorParticipantId: host.id,
+          actorDisplayName: host.displayName,
+          eventType: "recording_started",
+          targetParticipantId: null,
+          metadata: { egressId: info.egressId }
+        });
+
+        sendJson(
+          response,
+          201,
+          { recording: recordingPublic(saved) },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      if (action === "stop") {
+        const active = await recordings.getActiveRecording(
+          meeting.roomName
+        );
+        if (!active) {
+          sendJson(
+            response,
+            409,
+            { error: "recording_not_active" },
+            origin,
+            allowedOrigins
+          );
+          return true;
+        }
+
+        const client = egressClient();
+        if (!client) {
+          sendJson(
+            response,
+            503,
+            { error: "livekit_not_configured" },
+            origin,
+            allowedOrigins
+          );
+          return true;
+        }
+
+        await recordings.updateRecording(
+          meeting.roomName,
+          active.egressId,
+          { status: "stopping" }
+        );
+
+        const info = await client.stopEgress(active.egressId);
+        const file = info.fileResults[0];
+        const saved = await recordings.updateRecording(
+          meeting.roomName,
+          active.egressId,
+          {
+            status: recordingStatus(Number(info.status)),
+            location: file?.location || active.location,
+            endedAt: new Date().toISOString(),
+            durationNs:
+              file?.duration === undefined
+                ? active.durationNs
+                : String(file.duration),
+            sizeBytes:
+              file?.size === undefined
+                ? active.sizeBytes
+                : String(file.size),
+            error: info.error || null
+          }
+        );
+
+        await recordings.resetConsents(meeting.roomName);
+
+        await collaboration.appendAudit({
+          roomName: meeting.roomName,
+          actorParticipantId: host.id,
+          actorDisplayName: host.displayName,
+          eventType: "recording_stopped",
+          targetParticipantId: null,
+          metadata: {
+            egressId: active.egressId,
+            status: saved?.status ?? "complete"
+          }
+        });
+
+        sendJson(
+          response,
+          200,
+          { recording: recordingPublic(saved ?? active) },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      sendJson(
+        response,
+        400,
+        { error: "invalid_recording_action" },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "recording_control_failed"
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (request.method === "GET" && parsed.action === "report/attendance") {
+    const moderator = await findAccess(
+      meeting.roomName,
+      url.searchParams.get("accessKey")
+    );
+
+    if (!canModerate(moderator)) {
+      sendJson(
+        response,
+        403,
+        { error: "moderator_access_required" },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+
+    const attendance = await store.listAttendance(meeting.roomName);
+    const now = new Date().toISOString();
+    const rows = attendance.map((entry) => {
+      const effectiveEnd =
+        entry.leftAt ??
+        (meeting.status === "ended"
+          ? meeting.endedAt ?? entry.lastSeenAt
+          : entry.lastSeenAt);
+
+      return {
+        participantId: entry.participantId,
+        displayName: entry.displayName,
+        joinedAt: entry.joinedAt,
+        lastSeenAt: entry.lastSeenAt,
+        leftAt: entry.leftAt,
+        durationMs: durationMs(
+          entry.joinedAt,
+          effectiveEnd ?? now
+        )
+      };
+    });
+
+    const meetingStart =
+      meeting.startedAt ??
+      meeting.scheduledStartAt ??
+      meeting.createdAt;
+    const meetingEnd =
+      meeting.endedAt ??
+      (meeting.status === "live" ? now : meetingStart);
+
+    sendJson(
+      response,
+      200,
+      {
+        report: {
+          roomName: meeting.roomName,
+          title: meeting.title,
+          status: meeting.status,
+          startedAt: meeting.startedAt,
+          endedAt: meeting.endedAt,
+          meetingDurationMs: durationMs(meetingStart, meetingEnd),
+          participantCount: rows.length,
+          totalAttendanceMs: rows.reduce(
+            (sum, row) => sum + row.durationMs,
+            0
+          ),
+          rows
+        }
+      },
+      origin,
+      allowedOrigins
+    );
+    return true;
+  }
+
   if (request.method === "POST" && parsed.action === "heartbeat") {
     try {
       const body = await readJson(request);
@@ -1783,7 +2519,44 @@ export async function handleMeetingRequest(
       }
 
       let mediaRoomClosed = false;
+      let recordingStopped = false;
       if (action === "end") {
+        const activeRecording = await recordings.getActiveRecording(
+          meeting.roomName
+        );
+        if (activeRecording) {
+          const client = egressClient();
+          if (client) {
+            try {
+              const info = await client.stopEgress(activeRecording.egressId);
+              const file = info.fileResults[0];
+              await recordings.updateRecording(
+                meeting.roomName,
+                activeRecording.egressId,
+                {
+                  status: recordingStatus(Number(info.status)),
+                  location:
+                    file?.location || activeRecording.location,
+                  endedAt: new Date().toISOString(),
+                  durationNs:
+                    file?.duration === undefined
+                      ? activeRecording.durationNs
+                      : String(file.duration),
+                  sizeBytes:
+                    file?.size === undefined
+                      ? activeRecording.sizeBytes
+                      : String(file.size),
+                  error: info.error || null
+                }
+              );
+              recordingStopped = true;
+            } catch (error) {
+              console.warn("Unable to stop meeting recording", error);
+            }
+          }
+          await recordings.resetConsents(meeting.roomName);
+        }
+
         try {
           mediaRoomClosed = await closeLiveKitRoom(meeting.roomName);
         } catch (error) {
@@ -1798,7 +2571,10 @@ export async function handleMeetingRequest(
         eventType:
           action === "start" ? "meeting_started" : "meeting_ended",
         targetParticipantId: null,
-        metadata: action === "end" ? { mediaRoomClosed } : {}
+        metadata:
+          action === "end"
+            ? { mediaRoomClosed, recordingStopped }
+            : {}
       });
 
       sendJson(
@@ -1868,6 +2644,28 @@ export async function handleMeetingRequest(
           allowedOrigins
         );
         return true;
+      }
+
+      const activeRecording = await syncActiveRecording(meeting.roomName);
+      if (activeRecording && participant.role !== "host") {
+        const consent = await recordings.getConsent(
+          meeting.roomName,
+          participant.id
+        );
+        if (consent?.consent !== "accepted") {
+          sendJson(
+            response,
+            409,
+            {
+              error: "recording_consent_required",
+              recording: recordingPublic(activeRecording),
+              consent: consent?.consent ?? null
+            },
+            origin,
+            allowedOrigins
+          );
+          return true;
+        }
       }
 
       const livekit = liveKitConfig();
