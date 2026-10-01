@@ -11,6 +11,7 @@ import {
 } from "../lib/native-file-handoff";
 import {
   loadWorkspaceFileIndex,
+  syncWorkspaceFileIndexFromCloud,
   watchWorkspaceFileIndex
 } from "../lib/workspace-files";
 import styles from "./workspace-home.module.css";
@@ -45,6 +46,7 @@ export function WorkspaceHomeClient() {
 
   useEffect(() => {
     setIndex(loadWorkspaceFileIndex());
+    void syncWorkspaceFileIndexFromCloud().then(setIndex);
     return watchWorkspaceFileIndex(setIndex);
   }, []);
 
