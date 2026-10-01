@@ -468,8 +468,19 @@ export default function FormsWorkspace() {
       setStatus("Response limit reached");
       return;
     }
+    if (!selectedForm.settings.allowMultipleSubmissions && formResponses.length > 0) {
+      setStatus("Multiple submissions are disabled for this local form");
+      return;
+    }
 
     const nextErrors = validateAnswers(selectedForm, answers);
+    if (selectedForm.settings.collectEmail) {
+      const rawEmail = answers.__respondentEmail;
+      const email = Array.isArray(rawEmail) ? "" : String(rawEmail ?? "");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        nextErrors.__respondentEmail = "Enter a valid respondent email.";
+      }
+    }
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length) {
       setStatus("Complete required or invalid fields");
@@ -1014,6 +1025,21 @@ export default function FormsWorkspace() {
                   </div>
 
                   <div className={styles.previewFields}>
+                    {selectedForm.settings.collectEmail && (
+                      <label className={styles.previewField}>
+                        <div><strong>Respondent email</strong><em>*</em></div>
+                        <input
+                          className={errors.__respondentEmail ? styles.inputError : ""}
+                          type="email"
+                          value={String(answers.__respondentEmail ?? "")}
+                          placeholder="name@example.com"
+                          onChange={(event) =>
+                            setAnswers((current) => ({ ...current, __respondentEmail: event.target.value }))
+                          }
+                        />
+                        {errors.__respondentEmail && <small>{errors.__respondentEmail}</small>}
+                      </label>
+                    )}
                     {selectedForm.fields.filter((field) => isFieldVisible(field, answers)).map((field) => (
                       <label className={styles.previewField} key={field.id}>
                         <div>
@@ -1077,6 +1103,7 @@ export default function FormsWorkspace() {
                       <thead>
                         <tr>
                           <th>Submitted</th>
+                          {selectedForm.settings.collectEmail && <th>Respondent email</th>}
                           {selectedForm.fields.map((field) => <th key={field.id}>{field.label}</th>)}
                         </tr>
                       </thead>
@@ -1084,6 +1111,7 @@ export default function FormsWorkspace() {
                         {formResponses.map((response) => (
                           <tr key={response.id}>
                             <td>{new Date(response.submittedAt).toLocaleString()}</td>
+                            {selectedForm.settings.collectEmail && <td>{String(response.answers.__respondentEmail ?? "")}</td>}
                             {selectedForm.fields.map((field) => {
                               const value = response.answers[field.id];
                               return <td key={field.id}>{Array.isArray(value) ? value.join(", ") : String(value ?? "")}</td>;
