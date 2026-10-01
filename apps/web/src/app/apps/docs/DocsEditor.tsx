@@ -142,8 +142,11 @@ export default function DocsEditor() {
         mmToCssPx(page.margins.bottomMm);
 
       const explicitBreaks = editor.querySelectorAll('[data-page-break="true"]').length;
+      const verticalPadding =
+        mmToCssPx(page.margins.topMm) + mmToCssPx(page.margins.bottomMm);
+      const contentHeight = Math.max(0, editor.scrollHeight - verticalPadding);
       const measuredPages = printableHeight > 0
-        ? Math.max(1, Math.ceil(editor.scrollHeight / printableHeight))
+        ? Math.max(1, Math.ceil(contentHeight / printableHeight))
         : 1;
 
       setPageCount(Math.max(measuredPages, explicitBreaks + 1));
