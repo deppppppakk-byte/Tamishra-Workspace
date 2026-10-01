@@ -236,7 +236,7 @@ td,th{border:1px solid #d0d5dd;padding:8px}
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [title]);
+  }, [title, page]);
 
   const pageStyle = useMemo(
     () => ({
