@@ -29,9 +29,10 @@ export type MeetingJoinContext = {
   role: MeetingRole;
   status: MeetingStatus;
   canEnter: boolean;
-  recordingActive: boolean;
   scheduledStartAt?: string | null;
   scheduledEndAt?: string | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
   timezone?: string;
   waitingRoomEnabled?: boolean;
   admissionStatus?: "waiting" | "admitted" | "denied";
@@ -42,6 +43,8 @@ export type MeetingJoinContext = {
   presenter?: boolean;
   accessScope?: string;
   joinCode?: string | null;
+  recordingActive?: boolean;
+  ephemeralStore?: boolean;
 };
 
 export type MeetingCapabilities = {
