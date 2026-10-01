@@ -1,5 +1,5 @@
-import SlidesEditor from "./SlidesEditor";
+import SlidesEditorAdvanced from "./SlidesEditorAdvanced";
 
 export default function SlidesPage() {
-  return <SlidesEditor />;
+  return <SlidesEditorAdvanced />;
 }
