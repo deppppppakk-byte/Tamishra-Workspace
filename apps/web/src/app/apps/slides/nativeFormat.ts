@@ -209,7 +209,7 @@ export async function downloadTmsl<TSlide>(
   deckDocument: TamishraSlidesDocument<TSlide>
 ) {
   const bytes = await encodeTmsl(deckDocument);
-  const blob = new Blob([bytes], { type: TMSL_MIME });
+  const blob = new Blob([toArrayBuffer(bytes)], { type: TMSL_MIME });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
