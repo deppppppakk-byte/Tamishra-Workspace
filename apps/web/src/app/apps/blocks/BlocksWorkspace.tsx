@@ -40,7 +40,9 @@ const targetApps = [
 
 function downloadBlock(block: TamishraBlock) {
   const bytes = serializeTamishraBlock(block);
-  const blob = new Blob([bytes], { type: TMBLOCK_MIME_TYPE });
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  const blob = new Blob([buffer], { type: TMBLOCK_MIME_TYPE });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
