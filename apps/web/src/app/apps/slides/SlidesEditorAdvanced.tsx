@@ -22,6 +22,12 @@ import {
   type DistributeAxis
 } from "@tamishra/slides-core";
 import { exportDeckToPptx } from "./pptxExport";
+import {
+  decodeTmsl,
+  downloadTmsl,
+  TMSL_EXTENSION,
+  TMSL_MIME
+} from "./nativeFormat";
 import styles from "./slides.module.css";
 
 type ElementType = "text" | "shape" | "image" | "line" | "table" | "chart";
@@ -1307,7 +1313,45 @@ export default function SlidesEditorAdvanced() {
     }
   };
 
-  const exportDeck = () => {
+  const applyImportedDeck = (data: { title?: string; slides?: Slide[] }) => {
+    if (!data.slides?.length) throw new Error("Presentation has no slides.");
+
+    const importedSlides = data.slides.map((slide) => ({
+      ...slide,
+      layout: slide.layout ?? "content",
+      section: slide.section ?? "",
+      guides: slide.guides ?? { vertical: [], horizontal: [] },
+      comments: slide.comments ?? []
+    }));
+
+    undoStack.current.push(slides);
+    redoStack.current = [];
+    setSlides(importedSlides);
+    setActiveId(importedSlides[0].id);
+    setSelectedIds([]);
+    setEditingId(null);
+    if (data.title) setDeckTitle(data.title);
+  };
+
+  const exportNativeDeck = async () => {
+    try {
+      setSaveState("Packing " + TMSL_EXTENSION + "…");
+      await downloadTmsl<Slide>({
+        schemaVersion: 4,
+        title: deckTitle,
+        slides,
+        metadata: {
+          createdAt: new Date().toISOString(),
+          appVersion: "Tamishra Slides"
+        }
+      });
+      setSaveState("TMSL saved");
+    } catch {
+      setSaveState("TMSL export failed");
+    }
+  };
+
+  const exportLegacyJson = () => {
     const blob = new Blob(
       [JSON.stringify({ version: 3, title: deckTitle, slides }, null, 2)],
       { type: "application/json" }
@@ -1315,37 +1359,44 @@ export default function SlidesEditorAdvanced() {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = (deckTitle.trim() || "presentation").replace(/[^\w-]+/g, "-") + ".tamishra-slides.json";
+    anchor.download =
+      (deckTitle.trim() || "presentation").replace(/[^\w-]+/g, "-") +
+      ".tamishra-slides.json";
     anchor.click();
     URL.revokeObjectURL(url);
   };
 
-  const importDeck = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+  const importDeck = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const data = JSON.parse(String(reader.result)) as { title?: string; slides?: Slide[] };
-        if (!data.slides?.length) return;
-        undoStack.current.push(slides);
-        redoStack.current = [];
-        setSlides(data.slides.map((slide) => ({
-          ...slide,
-          layout: slide.layout ?? "content",
-          section: slide.section ?? "",
-          guides: slide.guides ?? { vertical: [], horizontal: [] },
-          comments: slide.comments ?? []
-        })));
-        setActiveId(data.slides[0].id);
-        setSelectedIds([]);
-        if (data.title) setDeckTitle(data.title);
-      } catch {
-        setSaveState("Import failed");
+
+    try {
+      setSaveState("Opening " + file.name + "…");
+
+      if (
+        file.name.toLowerCase().endsWith(TMSL_EXTENSION) ||
+        file.type === TMSL_MIME
+      ) {
+        const decoded = await decodeTmsl<Slide>(await file.arrayBuffer());
+        applyImportedDeck({
+          title: decoded.document.title,
+          slides: decoded.document.slides
+        });
+        setSaveState("TMSL opened · integrity verified");
+      } else {
+        const data = JSON.parse(await file.text()) as {
+          title?: string;
+          slides?: Slide[];
+        };
+        applyImportedDeck(data);
+        setSaveState("Legacy deck imported");
       }
-    };
-    reader.readAsText(file);
-    event.target.value = "";
+    } catch {
+      setSaveState("Import failed or file is invalid");
+    } finally {
+      input.value = "";
+    }
   };
 
   const shareLink = async () => {
@@ -1825,7 +1876,9 @@ export default function SlidesEditorAdvanced() {
             onChange={(event) => setDeckTitle(event.target.value)}
             aria-label="Presentation title"
           />
-          <span className={styles.fileMeta}>{saveState} · {slides.length} slides</span>
+          <span className={styles.fileMeta}>
+            {saveState} · {slides.length} slides · TMSL
+          </span>
         </div>
         <div className={styles.headerSpacer} />
         <button className={styles.iconBtn} onClick={undo} title="Undo (Ctrl+Z)">↶</button>
@@ -1836,9 +1889,10 @@ export default function SlidesEditorAdvanced() {
 
       <nav className={styles.menuBar} aria-label="Presentation menu">
         <button className={styles.menuItem} onClick={() => addSlide("content")}>New slide</button>
-        <button className={styles.menuItem} onClick={() => importInput.current?.click()}>Import</button>
-        <button className={styles.menuItem} onClick={exportDeck}>Export JSON</button>
+        <button className={styles.menuItem} onClick={() => importInput.current?.click()}>Open</button>
+        <button className={styles.menuItem} onClick={() => void exportNativeDeck()}>Save .tmsl</button>
         <button className={styles.menuItem} onClick={() => void exportPptx()}>Export PPTX</button>
+        <button className={styles.menuItem} onClick={exportLegacyJson}>Legacy JSON</button>
         <button className={styles.menuItem} onClick={() => window.print()}>Print / PDF</button>
         <button className={styles.menuItem} onClick={() => duplicateSlide()}>Duplicate slide</button>
         <button className={styles.menuItem} onClick={createSnapshot}>Save version</button>
@@ -2756,7 +2810,13 @@ export default function SlidesEditorAdvanced() {
       </footer>
 
       <input ref={imageInput} type="file" accept="image/*" hidden onChange={insertImage} />
-      <input ref={importInput} type="file" accept=".json,application/json" hidden onChange={importDeck} />
+      <input
+        ref={importInput}
+        type="file"
+        accept=".tmsl,.json,application/vnd.tamishra.slides,application/json"
+        hidden
+        onChange={importDeck}
+      />
 
       <div className={styles.printDeck}>{printSlides}</div>
 
