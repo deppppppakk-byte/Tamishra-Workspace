@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
+const workspaceBasePath = process.env.WORKSPACE_BASE_PATH ?? "/workspace";
+
 const nextConfig: NextConfig = {
   output: "export",
+  basePath: workspaceBasePath === "/" ? "" : workspaceBasePath,
   images: {
     unoptimized: true
   },
