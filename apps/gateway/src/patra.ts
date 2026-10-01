@@ -13,7 +13,7 @@ type JsonObject = Record<string, unknown>;
 const store = createPatraStore();
 const MAX_BODY_BYTES = 128 * 1024;
 const PUBLIC_DOMAIN = (
-  process.env.PATRA_MAIL_DOMAIN?.trim().toLowerCase() || "patra.in"
+  process.env.PATRA_MAIL_DOMAIN?.trim().toLowerCase() || "patra.tamishra.in"
 );
 const COMPANY_DOMAIN = (
   process.env.PATRA_COMPANY_MAIL_DOMAIN?.trim().toLowerCase() || "tamishra.in"
