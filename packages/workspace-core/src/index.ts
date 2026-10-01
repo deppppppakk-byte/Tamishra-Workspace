@@ -18,7 +18,7 @@ export const workspaceApps: WorkspaceApp[] = [
   { id: "chat", name: "Tamishra Chat", shortName: "C", description: "Direct messages, groups, channels and threaded conversations.", status: "functional", href: "/apps/chat" },
   { id: "mail", name: "Tamishra Patra", shortName: "PA", description: "Tamishra-native email, inbox, threads and delivery.", status: "functional", href: "/apps/mail" },
   { id: "meet", name: "Tamishra Meet", shortName: "V", description: "Meetings, screen sharing, chat, recording and attendance.", status: "advanced", href: "/apps/meet" },
-  { id: "notes", name: "Tamishra Notes", shortName: "N", description: "Capture ideas, checklists, meeting notes and knowledge.", status: "foundation", href: "/apps/notes" },
+  { id: "notes", name: "Tamishra Notes", shortName: "N", description: "Capture ideas, checklists, notebooks, tags and knowledge.", status: "functional", href: "/apps/notes", nativeExtension: ".tmnt" },
   { id: "forms", name: "Tamishra Forms", shortName: "F", description: "Build forms, surveys, quizzes and response flows.", status: "foundation", href: "/apps/forms" },
   { id: "files", name: "Tamishra Files", shortName: "FL", description: "Organize, search, open, favorite and recover workspace files.", status: "functional", href: "/apps/files" }
 ];
