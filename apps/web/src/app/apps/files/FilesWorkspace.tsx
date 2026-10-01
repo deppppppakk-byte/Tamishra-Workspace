@@ -89,7 +89,7 @@ export default function FilesWorkspace() {
     setError("");
     const target = targetAppForNativeFile(file.name);
     if (!target) {
-      setError("Unsupported file. Open a Tamishra native file, DOCX, CSV or PDF.");
+      setError("Unsupported file. Open a Tamishra native file, DOCX, CSV.");
       return;
     }
 
@@ -118,7 +118,7 @@ export default function FilesWorkspace() {
           ref={fileInputRef}
           hidden
           type="file"
-          accept=".tmdoc,.tmsh,.tmsl,.docx,.csv,.json,.pdf"
+          accept=".tmdoc,.tmsh,.tmsl,.docx,.csv,.json"
           onChange={(event) => {
             const file = event.target.files?.[0];
             event.target.value = "";
