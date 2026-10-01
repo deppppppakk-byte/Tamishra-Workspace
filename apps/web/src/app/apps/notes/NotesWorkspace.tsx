@@ -60,7 +60,11 @@ function loadSnapshot(): NotesSnapshot {
       notebooks:
         Array.isArray(parsed.notebooks) && parsed.notebooks.length
           ? parsed.notebooks
-          : ["Notes"]
+          : ["Notes"],
+      deleted:
+        parsed.deleted && typeof parsed.deleted === "object" && !Array.isArray(parsed.deleted)
+          ? parsed.deleted
+          : {}
     };
   } catch {
     return createNotesSnapshot();
@@ -391,7 +395,11 @@ export default function NotesWorkspace() {
     const id = selectedNote.id;
     setSnapshot((current) => ({
       ...current,
-      notes: current.notes.filter((note) => note.id !== id)
+      notes: current.notes.filter((note) => note.id !== id),
+      deleted: {
+        ...current.deleted,
+        [id]: new Date().toISOString()
+      }
     }));
     mutateWorkspaceFileIndex((index) =>
       permanentlyDeleteWorkspaceFile(index, `notes:${id}`)
