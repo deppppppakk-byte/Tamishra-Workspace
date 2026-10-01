@@ -23,7 +23,7 @@ const apiBase =
         "https://tamishra.in/api/workspace"
       : process.env.PATRA_API_BASE ||
         process.env.NEXT_PUBLIC_WORKSPACE_API_BASE ||
-        "https://api.patra.in";
+        "https://api.patra.tamishra.in";
 
 const env = {
   ...process.env,
