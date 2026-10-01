@@ -81,3 +81,35 @@ Attachments require:
 Tamishra Workspace is deployed under `tamishra.in/workspace`.
 
 Workspace APIs are served under the Tamishra domain through the Workspace-owned backend boundary. The product must not depend on Google or Microsoft services for its core runtime.
+
+
+## Public Patra domain
+
+Tamishra Patra has its own public product domain:
+
+```text
+https://patra.in
+```
+
+Primary Patra mailbox addresses use:
+
+```text
+name@patra.in
+```
+
+Patra is available in two product surfaces:
+
+```text
+https://tamishra.in/workspace/apps/mail   -> Workspace-integrated Patra
+https://patra.in                          -> public standalone Patra
+```
+
+The public Patra domain should expose its own first-party API path, recommended as:
+
+```text
+https://patra.in/api/*
+```
+
+That API may reverse-proxy to the same Tamishra-owned gateway/service internally, but browser cookies and security headers should remain first-party to `patra.in`.
+
+The internal code may retain `mail` and `mail-core` naming for protocol/domain stability. User-facing branding is **Tamishra Patra** or simply **Patra**.
