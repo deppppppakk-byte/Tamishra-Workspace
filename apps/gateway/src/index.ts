@@ -1,6 +1,6 @@
-import { nativeAuthCapabilities } from "@tamishra/identity";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { handleMeetingRequest } from "./meetings.js";
+import { handleIdentityRequest } from "./identity.js";
 
 const port = Number(process.env.WORKSPACE_GATEWAY_PORT ?? process.env.PORT ?? 4100);
 
@@ -31,6 +31,7 @@ type JsonValue =
 function applyCors(response: ServerResponse, origin?: string) {
   if (origin && allowedOrigins.has(origin)) {
     response.setHeader("access-control-allow-origin", origin);
+    response.setHeader("access-control-allow-credentials", "true");
     response.setHeader("vary", "origin");
   }
 }
@@ -60,6 +61,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     response.statusCode = 204;
     if (origin && allowedOrigins.has(origin)) {
       response.setHeader("access-control-allow-origin", origin);
+      response.setHeader("access-control-allow-credentials", "true");
       response.setHeader(
         "access-control-allow-methods",
         "GET,POST,PUT,PATCH,DELETE,OPTIONS"
@@ -81,19 +83,10 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       {
         service: "tamishra-workspace-gateway",
         status: "ok",
-        version: "0.6.0"
+        version: "0.7.0"
       },
       origin
     );
-    return;
-  }
-
-  if (request.method === "GET" && url.pathname === "/v1/auth/capabilities") {
-    json(response, 200, {
-      product: "Tamishra Workspace Identity",
-      native: true,
-      capabilities: nativeAuthCapabilities
-    }, origin);
     return;
   }
 
@@ -138,6 +131,18 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       },
       origin
     );
+    return;
+  }
+
+  if (
+    await handleIdentityRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
     return;
   }
 
