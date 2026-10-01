@@ -90,7 +90,8 @@ export function MeetWorkspace() {
         roomName: result.meeting.roomName,
         accessKey: result.accessKey,
         role: "host",
-        displayName: name
+        displayName: name,
+        joinCode: result.joinCode
       });
 
       localStorage.setItem(
