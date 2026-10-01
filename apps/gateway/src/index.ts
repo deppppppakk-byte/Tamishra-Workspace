@@ -81,10 +81,8 @@ function handle(request: IncomingMessage, response: ServerResponse) {
   if (request.method === "GET" && url.pathname === "/v1/mail/providers") {
     json(response, 200, {
       providers: [
-        { key: "google", method: "oauth" },
-        { key: "microsoft", method: "oauth" },
-        { key: "imap-smtp", method: "gateway-secret" },
-        { key: "tamishra", method: "native", status: "planned" }
+        { key: "tamishra", method: "native", status: "primary" },
+        { key: "imap-smtp", method: "gateway-secret", status: "optional" }
       ]
     }, origin);
     return;
