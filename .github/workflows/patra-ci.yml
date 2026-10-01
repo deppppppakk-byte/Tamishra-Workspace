@@ -29,6 +29,9 @@ jobs:
       - name: Type and syntax checks
         run: npm run check
 
+      - name: Patra end-to-end smoke flow
+        run: npm run test:patra-smoke
+
       - name: Production hosted build
         run: npm run build:hosted
         env:
