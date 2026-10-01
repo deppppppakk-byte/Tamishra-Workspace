@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { workspaceApps } from "@tamishra/workspace-core";
 
 const recentFiles = [
@@ -21,7 +22,7 @@ export default function HomePage() {
         <button className="newButton">+ New</button>
 
         <nav className="nav">
-          <a className="active" href="/">Home</a>
+          <Link className="active" href="/">Home</Link>
           <a href="#recent">Recent</a>
           <a href="#apps">Apps</a>
           <a href="#shared">Shared</a>
@@ -76,14 +77,14 @@ export default function HomePage() {
 
           <div className="appGrid">
             {workspaceApps.map((app) => (
-              <a className={"appCard app-" + app.id} href={app.href} key={app.id}>
+              <Link className={"appCard app-" + app.id} href={app.href} key={app.id}>
                 <div className="appIcon">{app.shortName}</div>
                 <div className="appCopy">
                   <strong>{app.name}</strong>
                   <p>{app.description}</p>
                 </div>
                 <span className="arrow">↗</span>
-              </a>
+              </Link>
             ))}
           </div>
         </section>
