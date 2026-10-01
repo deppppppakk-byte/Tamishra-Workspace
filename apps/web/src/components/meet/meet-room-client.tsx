@@ -294,9 +294,10 @@ export function MeetRoomClient() {
     setDisplayName(access.displayName);
     setHostJoinCode(access.joinCode ?? "");
 
-    void loadContext(room, access.accessKey)
-      .then((result) => {
-        const sharedLoads = [
+    void (async () => {
+      try {
+        const result = await loadContext(room, access.accessKey);
+        const loads: Promise<unknown>[] = [
           loadRecording(room, access.accessKey).catch(() => undefined),
           loadBreakouts(room, access.accessKey).catch(() => undefined),
           loadCaptionStatus(room, access.accessKey).catch(() => undefined),
@@ -307,21 +308,21 @@ export function MeetRoomClient() {
 
         if (result.role === "host" || result.role === "cohost") {
           setSidebarTab("people");
-          return Promise.all([
-            ...sharedLoads,
+          loads.push(
             loadParticipants(room, access.accessKey).catch(() => undefined),
             loadAttendance(room, access.accessKey).catch(() => undefined)
-          ]);
+          );
         }
 
-        return Promise.all(sharedLoads);
-      })
-      .catch((reason) => {
+        await Promise.all(loads);
+      } catch (reason) {
         setError(
           reason instanceof Error ? reason.message : "Unable to load meeting."
         );
-      })
-      .finally(() => setLoading(false));
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [
     loadAttendance,
     loadBreakouts,
