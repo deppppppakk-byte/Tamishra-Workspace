@@ -119,7 +119,7 @@ export default function FilesWorkspace() {
           ref={fileInputRef}
           hidden
           type="file"
-          accept=".tmdoc,.tmsh,.tmsl,.tmnt,.docx,.csv,.json,.pdf"
+          accept=".tmdoc,.tmsh,.tmsl,.tmnt,.tmfm,.docx,.csv,.json,.pdf"
           onChange={(event) => {
             const file = event.target.files?.[0];
             event.target.value = "";
@@ -143,6 +143,7 @@ export default function FilesWorkspace() {
           <Link href="/apps/sheets">Spreadsheet <small>.tmsh</small></Link>
           <Link href="/apps/slides">Presentation <small>.tmsl</small></Link>
           <Link href="/apps/notes">Note <small>.tmnt</small></Link>
+          <Link href="/apps/forms">Form <small>.tmfm</small></Link>
         </div>
       </aside>
 
