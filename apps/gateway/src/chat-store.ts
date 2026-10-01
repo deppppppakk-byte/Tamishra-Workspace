@@ -829,6 +829,7 @@ class PostgresChatStore implements ChatStore {
         role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'moderator', 'member')),
         joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         muted BOOLEAN NOT NULL DEFAULT FALSE,
+        pinned BOOLEAN NOT NULL DEFAULT FALSE,
         last_read_message_id TEXT,
         last_read_at TIMESTAMPTZ,
         PRIMARY KEY (conversation_id, user_id)
@@ -837,6 +838,10 @@ class PostgresChatStore implements ChatStore {
     await this.sql`
       CREATE INDEX IF NOT EXISTS workspace_chat_members_user_idx
       ON workspace_chat_members (user_id, conversation_id)
+    `;
+    await this.sql`
+      ALTER TABLE workspace_chat_members
+      ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT FALSE
     `;
     await this.sql`
       CREATE TABLE IF NOT EXISTS workspace_chat_messages (
@@ -870,6 +875,76 @@ class PostgresChatStore implements ChatStore {
         PRIMARY KEY (message_id, user_id, emoji)
       )
     `;
+    await this.sql`
+      CREATE TABLE IF NOT EXISTS workspace_chat_files (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL REFERENCES workspace_chat_conversations(id) ON DELETE CASCADE,
+        uploader_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        size BIGINT NOT NULL,
+        bytes BYTEA NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
+    await this.sql`
+      CREATE INDEX IF NOT EXISTS workspace_chat_files_conversation_idx
+      ON workspace_chat_files (conversation_id, created_at DESC)
+    `;
+    await this.sql`
+      CREATE TABLE IF NOT EXISTS workspace_chat_events (
+        id BIGSERIAL PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        conversation_id TEXT REFERENCES workspace_chat_conversations(id) ON DELETE CASCADE,
+        actor_id TEXT,
+        target_user_id TEXT,
+        type TEXT NOT NULL,
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
+    await this.sql`
+      CREATE INDEX IF NOT EXISTS workspace_chat_events_org_cursor_idx
+      ON workspace_chat_events (organization_id, id)
+    `;
+    await this.sql`
+      CREATE TABLE IF NOT EXISTS workspace_chat_notifications (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL REFERENCES workspace_chat_conversations(id) ON DELETE CASCADE,
+        message_id TEXT NOT NULL REFERENCES workspace_chat_messages(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('mention', 'direct', 'thread')),
+        title TEXT NOT NULL,
+        body_preview TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        read_at TIMESTAMPTZ
+      )
+    `;
+    await this.sql`
+      CREATE INDEX IF NOT EXISTS workspace_chat_notifications_user_idx
+      ON workspace_chat_notifications (organization_id, user_id, read_at, created_at DESC)
+    `;
+    await this.sql`
+      CREATE TABLE IF NOT EXISTS workspace_chat_presence (
+        organization_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (organization_id, user_id)
+      )
+    `;
+    await this.sql`
+      CREATE TABLE IF NOT EXISTS workspace_chat_typing (
+        conversation_id TEXT NOT NULL REFERENCES workspace_chat_conversations(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (conversation_id, user_id)
+      )
+    `;
     this.initialized = true;
   }
 
@@ -901,6 +976,7 @@ class PostgresChatStore implements ChatStore {
         c.created_at,
         c.updated_at,
         cm.muted,
+        cm.pinned,
         cm.last_read_at,
         (SELECT COUNT(*) FROM workspace_chat_members x WHERE x.conversation_id = c.id) AS member_count,
         (
@@ -916,7 +992,7 @@ class PostgresChatStore implements ChatStore {
         ON cm.conversation_id = c.id
        AND cm.user_id = ${userId}
       WHERE c.organization_id = ${organizationId}
-      ORDER BY c.updated_at DESC
+      ORDER BY cm.pinned DESC, c.updated_at DESC
     `;
     return rows.map((row) => toConversation(row as Record<string, unknown>));
   }
@@ -934,6 +1010,7 @@ class PostgresChatStore implements ChatStore {
         c.created_at,
         c.updated_at,
         cm.muted,
+        cm.pinned,
         cm.last_read_at,
         (SELECT COUNT(*) FROM workspace_chat_members x WHERE x.conversation_id = c.id) AS member_count,
         (
@@ -990,7 +1067,7 @@ class PostgresChatStore implements ChatStore {
   async listMembers(conversationId: string) {
     await this.ready();
     const rows = await this.sql`
-      SELECT conversation_id, user_id, role, joined_at, muted, last_read_message_id, last_read_at
+      SELECT conversation_id, user_id, role, joined_at, muted, pinned, last_read_message_id, last_read_at
       FROM workspace_chat_members
       WHERE conversation_id = ${conversationId}
       ORDER BY joined_at ASC
@@ -1005,7 +1082,7 @@ class PostgresChatStore implements ChatStore {
       VALUES (${conversationId}, ${userId}, ${role})
       ON CONFLICT (conversation_id, user_id)
       DO UPDATE SET role = EXCLUDED.role
-      RETURNING conversation_id, user_id, role, joined_at, muted, last_read_message_id, last_read_at
+      RETURNING conversation_id, user_id, role, joined_at, muted, pinned, last_read_message_id, last_read_at
     `;
     return toMember(rows[0] as Record<string, unknown>);
   }
@@ -1186,7 +1263,7 @@ class PostgresChatStore implements ChatStore {
         last_read_at = NOW()
       WHERE conversation_id = ${conversationId}
         AND user_id = ${userId}
-      RETURNING conversation_id, user_id, role, joined_at, muted, last_read_message_id, last_read_at
+      RETURNING conversation_id, user_id, role, joined_at, muted, pinned, last_read_message_id, last_read_at
     `;
     const row = rows[0] as Record<string, unknown> | undefined;
     return row ? toMember(row) : null;
