@@ -159,14 +159,18 @@ function liveKitConfig() {
   return { url, apiUrl, apiKey, apiSecret };
 }
 
-function canModerate(participant: StoredParticipant | null) {
+function canModerate(
+  participant: StoredParticipant | null
+): participant is StoredParticipant {
   return Boolean(
     participant &&
       (participant.role === "host" || participant.role === "cohost")
   );
 }
 
-function isOwner(participant: StoredParticipant | null) {
+function isOwner(
+  participant: StoredParticipant | null
+): participant is StoredParticipant {
   return participant?.role === "host";
 }
 
