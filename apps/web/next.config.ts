@@ -5,7 +5,11 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true
   },
-  transpilePackages: ["@tamishra/workspace-core", "@tamishra/mail-core"]
+  transpilePackages: [
+    "@tamishra/workspace-core",
+    "@tamishra/mail-core",
+    "@tamishra/sheets-engine"
+  ]
 };
 
 export default nextConfig;
