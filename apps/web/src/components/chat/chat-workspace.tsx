@@ -1,15 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type {
+  ChatAttachment,
   ChatConversation,
+  ChatEvent,
+  ChatMember,
   ChatMessage,
-  ChatSearchResult
+  ChatNotification,
+  ChatPresence,
+  ChatSearchResult,
+  ChatTypingState
 } from "@tamishra/chat-core";
 import {
   workspaceApi,
+  workspaceApiBase,
   type WorkspaceSessionResponse
 } from "../../lib/workspace-api";
 import styles from "./chat-workspace.module.css";
@@ -30,6 +37,8 @@ type DirectoryMember = {
 type CreateMode = "channel" | "group" | "direct";
 
 const quickReactions = ["👍", "✅", "❤️"];
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_ATTACHMENTS = 10;
 
 function formatTime(value: string) {
   const date = new Date(value);
@@ -38,6 +47,13 @@ function formatTime(value: string) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(date);
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  if (value < 1024) return Math.round(value) + " B";
+  if (value < 1024 * 1024) return (value / 1024).toFixed(1) + " KB";
+  return (value / (1024 * 1024)).toFixed(1) + " MB";
 }
 
 function conversationIcon(conversation: ChatConversation) {
@@ -73,6 +89,18 @@ export function ChatWorkspace() {
   const [createName, setCreateName] = useState("");
   const [createTopic, setCreateTopic] = useState("");
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+  const [conversationMembers, setConversationMembers] = useState<ChatMember[]>([]);
+  const [notifications, setNotifications] = useState<ChatNotification[]>([]);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [presence, setPresence] = useState<ChatPresence[]>([]);
+  const [typing, setTyping] = useState<ChatTypingState[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [threadFiles, setThreadFiles] = useState<File[]>([]);
+  const [realtimeStatus, setRealtimeStatus] = useState<"connecting" | "live" | "offline">("connecting");
+  const mainFileInputRef = useRef<HTMLInputElement>(null);
+  const threadFileInputRef = useRef<HTMLInputElement>(null);
+  const typingLastSentRef = useRef(0);
+  const typingStopTimerRef = useRef<number | null>(null);
 
   const currentUser = session?.authenticated ? session.user : null;
   const memberships = session?.authenticated ? session.memberships : [];
@@ -88,19 +116,86 @@ export function ChatWorkspace() {
     () => messages.filter((message) => !message.parentMessageId),
     [messages]
   );
+  const unreadNotificationCount = useMemo(
+    () => notifications.filter((notification) => !notification.readAt).length,
+    [notifications]
+  );
+  const activeMemberIds = useMemo(
+    () => new Set(conversationMembers.map((member) => member.userId)),
+    [conversationMembers]
+  );
+  const presenceByUser = useMemo(
+    () => new Map(presence.map((item) => [item.userId, item])),
+    [presence]
+  );
+  const mainMentionSuggestions = useMemo(
+    () => mentionSuggestions(composer),
+    [composer, directory, activeMemberIds]
+  );
+  const threadMentionSuggestions = useMemo(
+    () => mentionSuggestions(threadComposer),
+    [threadComposer, directory, activeMemberIds]
+  );
 
   useEffect(() => {
     void initialize();
   }, []);
 
   useEffect(() => {
-    if (!activeConversationId || !organizationId) return;
-    const timer = window.setInterval(() => {
-      void refreshMessages(activeConversationId, false);
+    if (!organizationId || !currentUser) return;
+
+    setRealtimeStatus("connecting");
+    const source = new EventSource(
+      workspaceApiBase +
+        "/v1/chat/events?organizationId=" +
+        encodeURIComponent(organizationId),
+      { withCredentials: true }
+    );
+
+    source.onopen = () => setRealtimeStatus("live");
+    source.onerror = () => setRealtimeStatus("offline");
+    source.addEventListener("chat", (event) => {
+      try {
+        const chatEvent = JSON.parse((event as MessageEvent).data) as ChatEvent;
+        void handleRealtimeEvent(chatEvent);
+      } catch {
+        // Ignore malformed event frames; EventSource will continue.
+      }
+    });
+
+    const recoveryTimer = window.setInterval(() => {
       void loadConversations(organizationId, activeConversationId, false);
-    }, 5000);
+      void loadNotifications(organizationId);
+      void loadPresence(organizationId);
+      if (activeConversationId) {
+        void refreshMessages(activeConversationId, false);
+        void loadTyping(activeConversationId);
+      }
+    }, 30_000);
+
+    return () => {
+      source.close();
+      window.clearInterval(recoveryTimer);
+    };
+  }, [organizationId, currentUser?.id, activeConversationId]);
+
+  useEffect(() => {
+    if (!organizationId || !currentUser) return;
+    void heartbeatPresence(organizationId);
+    const timer = window.setInterval(
+      () => void heartbeatPresence(organizationId),
+      30_000
+    );
     return () => window.clearInterval(timer);
-  }, [activeConversationId, organizationId]);
+  }, [organizationId, currentUser?.id]);
+
+  useEffect(() => {
+    return () => {
+      if (typingStopTimerRef.current) {
+        window.clearTimeout(typingStopTimerRef.current);
+      }
+    };
+  }, []);
 
   async function initialize() {
     setLoading(true);
