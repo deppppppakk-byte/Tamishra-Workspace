@@ -29,6 +29,9 @@ type Transition = "none" | "fade" | "slide" | "zoom";
 type ChartKind = "bar" | "line" | "donut";
 type SlideLayout = "title" | "content" | "section" | "two-column" | "blank";
 type Placeholder = "title" | "body" | "body2";
+type ObjectAnimation = "none" | "fade" | "float-up" | "zoom" | "wipe";
+type ImageFit = "cover" | "contain";
+type ImageMask = "rect" | "rounded" | "circle";
 
 type SlideElement = {
   id: string;
@@ -52,6 +55,21 @@ type SlideElement = {
   chartData?: number[];
   chartLabels?: string[];
   chartKind?: ChartKind;
+  borderColor?: string;
+  borderWidth?: number;
+  opacity?: number;
+  shadow?: boolean;
+  fontFamily?: string;
+  italic?: boolean;
+  underline?: boolean;
+  letterSpacing?: number;
+  animation?: ObjectAnimation;
+  animationDuration?: number;
+  animationDelay?: number;
+  imageFit?: ImageFit;
+  imageMask?: ImageMask;
+  imageX?: number;
+  imageY?: number;
 };
 
 type Slide = {
@@ -60,6 +78,11 @@ type Slide = {
   transition: Transition;
   notes: string;
   layout?: SlideLayout;
+  section?: string;
+  guides?: {
+    vertical: number[];
+    horizontal: number[];
+  };
   elements: SlideElement[];
 };
 
@@ -75,6 +98,14 @@ type Theme = {
 type GuideState = {
   x?: number;
   y?: number;
+};
+
+type MarqueeState = {
+  startX: number;
+  startY: number;
+  x: number;
+  y: number;
+  base: string[];
 };
 
 const SLIDE_W = 960;
@@ -179,6 +210,8 @@ const starterSlides: Slide[] = [
     transition: "fade",
     notes: "Open with the purpose of the presentation and the outcome you want from the audience.",
     layout: "content",
+    section: "Opening",
+    guides: { vertical: [], horizontal: [] },
     elements: [
       textElement("title", "Build ideas that move people.", 86, 92, 788, 110, 48, 760, "#172033"),
       textElement("body", "Tamishra Slides — a focused, local-first presentation workspace.", 90, 220, 690, 180, 24, 420, "#667085"),
@@ -191,6 +224,8 @@ const starterSlides: Slide[] = [
     transition: "slide",
     notes: "Use this slide to explain the three core ideas.",
     layout: "content",
+    section: "Story",
+    guides: { vertical: [], horizontal: [] },
     elements: [
       textElement("title", "One canvas. Clear story.", 86, 92, 788, 110, 48, 760, "#2b2358"),
       textElement("body", "Create, arrange and present with a distraction-free editor built into Tamishra Workspace.", 90, 220, 690, 180, 24, 420, "#5f5680"),
@@ -204,6 +239,8 @@ const starterSlides: Slide[] = [
     transition: "zoom",
     notes: "Close with the next action.",
     layout: "content",
+    section: "Closing",
+    guides: { vertical: [], horizontal: [] },
     elements: [
       textElement("title", "Ready to present?", 86, 92, 788, 110, 48, 760, "#ffffff"),
       textElement("body", "Press Present to run the deck full-screen. Add speaker notes on the right.", 90, 220, 690, 180, 24, 420, "#cbd5e1"),
@@ -285,6 +322,7 @@ export default function SlidesEditorAdvanced() {
   const [showGrid, setShowGrid] = useState(false);
   const [snap, setSnap] = useState(true);
   const [guides, setGuides] = useState<GuideState>({});
+  const [marquee, setMarquee] = useState<MarqueeState | null>(null);
   const [inspectorMode, setInspectorMode] = useState<"slide" | "element" | "theme">("slide");
   const [saveState, setSaveState] = useState("Saved locally");
   const [presenterIndex, setPresenterIndex] = useState<number | null>(null);
@@ -316,13 +354,18 @@ export default function SlidesEditorAdvanced() {
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem("tamishra-slides-deck-v2") ?? localStorage.getItem("tamishra-slides-deck-v1");
+      const raw =
+        localStorage.getItem("tamishra-slides-deck-v3") ??
+        localStorage.getItem("tamishra-slides-deck-v2") ??
+        localStorage.getItem("tamishra-slides-deck-v1");
       if (!raw) return;
       const parsed = JSON.parse(raw) as { title?: string; slides?: Slide[] };
       if (parsed.slides?.length) {
         const normalized = parsed.slides.map((slide) => ({
           ...slide,
           layout: slide.layout ?? "content",
+          section: slide.section ?? "",
+          guides: slide.guides ?? { vertical: [], horizontal: [] },
           elements: slide.elements.map((element) => ({ ...element }))
         }));
         setSlides(normalized);
@@ -337,7 +380,7 @@ export default function SlidesEditorAdvanced() {
   useEffect(() => {
     setSaveState("Saving…");
     const timer = window.setTimeout(() => {
-      localStorage.setItem("tamishra-slides-deck-v2", JSON.stringify({ title: deckTitle, slides }));
+      localStorage.setItem("tamishra-slides-deck-v3", JSON.stringify({ title: deckTitle, slides }));
       setSaveState("Saved locally");
     }, 420);
     return () => window.clearTimeout(timer);
@@ -413,6 +456,8 @@ export default function SlidesEditorAdvanced() {
       transition: "none",
       notes: "",
       layout,
+      section: activeSlide?.section ?? "",
+      guides: { vertical: [], horizontal: [] },
       elements: layoutElements(layout, theme)
     };
     const insertAt = activeIndex + 1;
@@ -539,7 +584,11 @@ export default function SlidesEditorAdvanced() {
       w: 420,
       h: 280,
       fill: "transparent",
-      color: "#172033"
+      color: "#172033",
+      imageFit: "cover",
+      imageMask: "rect",
+      imageX: 50,
+      imageY: 50
     });
     reader.readAsDataURL(file);
     event.target.value = "";
@@ -737,6 +786,67 @@ export default function SlidesEditorAdvanced() {
     setSelectedIds([]);
   };
 
+  const updateGuideList = (axis: "vertical" | "horizontal", raw: string) => {
+    const max = axis === "vertical" ? SLIDE_W : SLIDE_H;
+    const values = raw
+      .split(",")
+      .map((value) => Number(value.trim()))
+      .filter((value) => Number.isFinite(value))
+      .map((value) => Math.max(0, Math.min(max, value)));
+    mutateActive((slide) => ({
+      ...slide,
+      guides: {
+        vertical: axis === "vertical" ? values : (slide.guides?.vertical ?? []),
+        horizontal: axis === "horizontal" ? values : (slide.guides?.horizontal ?? [])
+      }
+    }));
+  };
+
+  const addGuide = (axis: "vertical" | "horizontal") => {
+    const value = axis === "vertical" ? SLIDE_W / 2 : SLIDE_H / 2;
+    mutateActive((slide) => {
+      const current = slide.guides ?? { vertical: [], horizontal: [] };
+      const values = current[axis].includes(value)
+        ? current[axis]
+        : [...current[axis], value].sort((a, b) => a - b);
+      return {
+        ...slide,
+        guides: { ...current, [axis]: values }
+      };
+    });
+  };
+
+  const clearManualGuides = () => {
+    mutateActive((slide) => ({
+      ...slide,
+      guides: { vertical: [], horizontal: [] }
+    }));
+  };
+
+  const staggerSlideAnimations = () => {
+    let order = 0;
+    mutateActive((slide) => ({
+      ...slide,
+      elements: slide.elements.map((element) => {
+        if (!element.animation || element.animation === "none") return element;
+        const delay = order * 180;
+        order += 1;
+        return { ...element, animationDelay: delay };
+      })
+    }));
+  };
+
+  const clearSlideAnimations = () => {
+    mutateActive((slide) => ({
+      ...slide,
+      elements: slide.elements.map((element) => ({
+        ...element,
+        animation: "none",
+        animationDelay: 0
+      }))
+    }));
+  };
+
   const snapValue = (value: number) => snap ? Math.round(value / 10) * 10 : Math.round(value);
 
   const smartGuideDelta = (
@@ -753,8 +863,18 @@ export default function SlidesEditorAdvanced() {
     };
     const others = activeSlide.elements.filter((element) => !movingIds.includes(element.id));
 
-    const targetXs = [0, SLIDE_W / 2, SLIDE_W];
-    const targetYs = [0, SLIDE_H / 2, SLIDE_H];
+    const targetXs = [
+      0,
+      SLIDE_W / 2,
+      SLIDE_W,
+      ...(activeSlide.guides?.vertical ?? [])
+    ];
+    const targetYs = [
+      0,
+      SLIDE_H / 2,
+      SLIDE_H,
+      ...(activeSlide.guides?.horizontal ?? [])
+    ];
 
     for (const element of others) {
       targetXs.push(element.x, element.x + element.w / 2, element.x + element.w);
@@ -909,6 +1029,57 @@ export default function SlidesEditorAdvanced() {
     setGuides({});
   };
 
+  const pointerToSlide = (
+    event: ReactPointerEvent<HTMLDivElement>
+  ) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(SLIDE_W, (event.clientX - rect.left) * (SLIDE_W / rect.width))),
+      y: Math.max(0, Math.min(SLIDE_H, (event.clientY - rect.top) * (SLIDE_H / rect.height)))
+    };
+  };
+
+  const beginMarquee = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || event.target !== event.currentTarget) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const point = pointerToSlide(event);
+    const base = event.shiftKey ? selectedIds : [];
+    if (!event.shiftKey) setSelectedIds([]);
+    setEditingId(null);
+    setMarquee({
+      startX: point.x,
+      startY: point.y,
+      x: point.x,
+      y: point.y,
+      base
+    });
+  };
+
+  const moveMarquee = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!marquee) return;
+    const point = pointerToSlide(event);
+    const left = Math.min(marquee.startX, point.x);
+    const top = Math.min(marquee.startY, point.y);
+    const right = Math.max(marquee.startX, point.x);
+    const bottom = Math.max(marquee.startY, point.y);
+    const hits = activeSlide.elements
+      .filter((element) =>
+        element.x < right &&
+        element.x + element.w > left &&
+        element.y < bottom &&
+        element.y + element.h > top
+      )
+      .map((element) => element.id);
+    const expanded = expandSelectionForGroups(activeSlide.elements, hits);
+    setSelectedIds([...new Set([...marquee.base, ...expanded])]);
+    setInspectorMode(expanded.length || marquee.base.length ? "element" : "slide");
+    setMarquee({ ...marquee, x: point.x, y: point.y });
+  };
+
+  const endMarquee = () => {
+    setMarquee(null);
+  };
+
   const nudgeSelection = (dx: number, dy: number) => {
     if (!expandedSelection.length) return;
     const ids = new Set(expandedSelection);
@@ -928,7 +1099,7 @@ export default function SlidesEditorAdvanced() {
 
   const exportDeck = () => {
     const blob = new Blob(
-      [JSON.stringify({ version: 2, title: deckTitle, slides }, null, 2)],
+      [JSON.stringify({ version: 3, title: deckTitle, slides }, null, 2)],
       { type: "application/json" }
     );
     const url = URL.createObjectURL(blob);
@@ -949,7 +1120,12 @@ export default function SlidesEditorAdvanced() {
         if (!data.slides?.length) return;
         undoStack.current.push(slides);
         redoStack.current = [];
-        setSlides(data.slides.map((slide) => ({ ...slide, layout: slide.layout ?? "content" })));
+        setSlides(data.slides.map((slide) => ({
+          ...slide,
+          layout: slide.layout ?? "content",
+          section: slide.section ?? "",
+          guides: slide.guides ?? { vertical: [], horizontal: [] }
+        })));
         setActiveId(data.slides[0].id);
         setSelectedIds([]);
         if (data.title) setDeckTitle(data.title);
@@ -1094,6 +1270,12 @@ export default function SlidesEditorAdvanced() {
     transition === "slide" ? styles.slideIn :
     transition === "zoom" ? styles.zoomIn : "";
 
+  const objectAnimationClass = (animation?: ObjectAnimation) =>
+    animation === "fade" ? styles.objectFadeIn :
+    animation === "float-up" ? styles.objectFloatUp :
+    animation === "zoom" ? styles.objectZoomIn :
+    animation === "wipe" ? styles.objectWipeIn : "";
+
   const renderTable = (element: SlideElement) => {
     const data = element.tableData?.length
       ? element.tableData
@@ -1177,14 +1359,27 @@ export default function SlidesEditorAdvanced() {
     );
   };
 
-  const renderElement = (element: SlideElement, interactive: boolean) => {
+  const renderElement = (
+    element: SlideElement,
+    interactive: boolean,
+    presenting = false
+  ) => {
     const isSelected = interactive && selectedIds.includes(element.id);
     const style: CSSProperties = {
       left: element.x,
       top: element.y,
       width: element.w,
       height: element.h,
-      transform: element.rotation ? "rotate(" + element.rotation + "deg)" : undefined
+      transform: element.rotation ? "rotate(" + element.rotation + "deg)" : undefined,
+      opacity: element.opacity ?? 1,
+      animationDuration: presenting && element.animation && element.animation !== "none"
+        ? (element.animationDuration ?? 600) + "ms"
+        : undefined,
+      animationDelay: presenting && element.animation && element.animation !== "none"
+        ? (element.animationDelay ?? 0) + "ms"
+        : undefined,
+      animationFillMode: presenting ? "both" : undefined,
+      animationTimingFunction: presenting ? "cubic-bezier(.2,.8,.2,1)" : undefined
     };
 
     const content =
@@ -1208,6 +1403,10 @@ export default function SlidesEditorAdvanced() {
             color: element.color,
             fontSize: element.fontSize ?? 28,
             fontWeight: element.fontWeight ?? 500,
+            fontFamily: element.fontFamily ?? "inherit",
+            fontStyle: element.italic ? "italic" : "normal",
+            textDecoration: element.underline ? "underline" : "none",
+            letterSpacing: element.letterSpacing ?? 0,
             textAlign: element.align ?? "left",
             justifyContent: element.align === "center" ? "center" : undefined,
             alignItems: "center"
@@ -1225,12 +1424,38 @@ export default function SlidesEditorAdvanced() {
                 ? styles.rounded
                 : "")
           }
-          style={{ background: element.fill }}
+          style={{
+            background: element.fill,
+            border: (element.borderWidth ?? 0) + "px solid " + (element.borderColor ?? "#172033"),
+            boxShadow: element.shadow ? "0 14px 30px rgba(18, 25, 38, .22)" : "none"
+          }}
         />
       ) : element.type === "image" ? (
-        <img className={styles.image} src={element.src} alt="" draggable={false} />
+        <img
+          className={styles.image}
+          src={element.src}
+          alt=""
+          draggable={false}
+          style={{
+            objectFit: element.imageFit ?? "cover",
+            objectPosition: (element.imageX ?? 50) + "% " + (element.imageY ?? 50) + "%",
+            borderRadius:
+              element.imageMask === "circle"
+                ? "50%"
+                : element.imageMask === "rounded"
+                  ? "18px"
+                  : "0",
+            boxShadow: element.shadow ? "0 14px 30px rgba(18, 25, 38, .22)" : "none"
+          }}
+        />
       ) : element.type === "line" ? (
-        <div className={styles.line} style={{ background: element.fill }} />
+        <div
+          className={styles.line}
+          style={{
+            background: element.fill,
+            boxShadow: element.shadow ? "0 4px 12px rgba(18, 25, 38, .28)" : "none"
+          }}
+        />
       ) : element.type === "table" ? (
         renderTable(element)
       ) : (
@@ -1243,7 +1468,8 @@ export default function SlidesEditorAdvanced() {
         className={
           styles.element +
           (isSelected ? " " + styles.elementSelected : "") +
-          (element.groupId ? " " + styles.groupedElement : "")
+          (element.groupId ? " " + styles.groupedElement : "") +
+          (presenting ? " " + objectAnimationClass(element.animation) : "")
         }
         style={style}
         onPointerDown={interactive ? (event) => beginGesture(event, element, "move") : undefined}
@@ -1274,30 +1500,61 @@ export default function SlidesEditorAdvanced() {
     );
   };
 
-  const renderSlide = (slide: Slide, interactive = false, className = "") => (
-    <div
-      className={
-        styles.canvas +
-        (showGrid && interactive ? " " + styles.grid : "") +
-        (className ? " " + className : "")
-      }
-      style={{ background: slide.background }}
-      onClick={interactive ? clearSelection : undefined}
-    >
-      {slide.elements.map((element) => renderElement(element, interactive))}
-      {interactive && guides.x !== undefined && (
-        <div className={styles.guideVertical} style={{ left: guides.x }} />
-      )}
-      {interactive && guides.y !== undefined && (
-        <div className={styles.guideHorizontal} style={{ top: guides.y }} />
-      )}
-      {interactive && selectedIds.length > 1 && (
-        <div className={styles.multiSelectionBadge}>
-          {expandedSelection.length} selected
-        </div>
-      )}
-    </div>
-  );
+  const renderSlide = (
+    slide: Slide,
+    interactive = false,
+    className = "",
+    presenting = false
+  ) => {
+    const marqueeLeft = marquee ? Math.min(marquee.startX, marquee.x) : 0;
+    const marqueeTop = marquee ? Math.min(marquee.startY, marquee.y) : 0;
+    const marqueeWidth = marquee ? Math.abs(marquee.x - marquee.startX) : 0;
+    const marqueeHeight = marquee ? Math.abs(marquee.y - marquee.startY) : 0;
+
+    return (
+      <div
+        className={
+          styles.canvas +
+          (showGrid && interactive ? " " + styles.grid : "") +
+          (className ? " " + className : "")
+        }
+        style={{ background: slide.background }}
+        onPointerDown={interactive ? beginMarquee : undefined}
+        onPointerMove={interactive ? moveMarquee : undefined}
+        onPointerUp={interactive ? endMarquee : undefined}
+      >
+        {slide.elements.map((element) => renderElement(element, interactive, presenting))}
+        {(slide.guides?.vertical ?? []).map((x, index) => (
+          <div className={styles.manualGuideVertical} style={{ left: x }} key={"v-" + index} />
+        ))}
+        {(slide.guides?.horizontal ?? []).map((y, index) => (
+          <div className={styles.manualGuideHorizontal} style={{ top: y }} key={"h-" + index} />
+        ))}
+        {interactive && guides.x !== undefined && (
+          <div className={styles.guideVertical} style={{ left: guides.x }} />
+        )}
+        {interactive && guides.y !== undefined && (
+          <div className={styles.guideHorizontal} style={{ top: guides.y }} />
+        )}
+        {interactive && marquee && (
+          <div
+            className={styles.marquee}
+            style={{
+              left: marqueeLeft,
+              top: marqueeTop,
+              width: marqueeWidth,
+              height: marqueeHeight
+            }}
+          />
+        )}
+        {interactive && selectedIds.length > 1 && (
+          <div className={styles.multiSelectionBadge}>
+            {expandedSelection.length} selected
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const printSlides = useMemo(() => slides.map((slide) => (
     <div className={styles.printSlide} key={slide.id}>
@@ -1317,6 +1574,9 @@ export default function SlidesEditorAdvanced() {
   const chartLabels = primaryElement?.type === "chart"
     ? (primaryElement.chartLabels ?? []).join(", ")
     : "";
+  const animatedElements = activeSlide.elements.filter(
+    (element) => element.animation && element.animation !== "none"
+  );
 
   return (
     <main className={styles.shell}>
@@ -1406,20 +1666,25 @@ export default function SlidesEditorAdvanced() {
           </div>
 
           {slides.map((slide, index) => (
-            <div
-              className={styles.slideRow + (slide.id === activeId ? " " + styles.slideRowActive : "")}
-              key={slide.id}
-              onClick={() => selectSlide(slide.id)}
-            >
-              <span className={styles.slideNumber}>{index + 1}</span>
-              <div className={styles.thumbnail}>
-                <div className={styles.thumbCanvas}>{renderSlide(slide)}</div>
-              </div>
-              <div className={styles.navActions}>
-                <button className={styles.miniBtn} onClick={(event) => { event.stopPropagation(); moveSlide(slide.id, -1); }} title="Move up">↑</button>
-                <button className={styles.miniBtn} onClick={(event) => { event.stopPropagation(); moveSlide(slide.id, 1); }} title="Move down">↓</button>
-                <button className={styles.miniBtn} onClick={(event) => { event.stopPropagation(); duplicateSlide(slide.id); }} title="Duplicate">⧉</button>
-                <button className={styles.miniBtn} onClick={(event) => { event.stopPropagation(); deleteSlide(slide.id); }} title="Delete">×</button>
+            <div className={styles.slideNavBlock} key={slide.id}>
+              {slide.section &&
+                (index === 0 || slide.section !== slides[index - 1]?.section) && (
+                  <div className={styles.sectionLabel}>{slide.section}</div>
+                )}
+              <div
+                className={styles.slideRow + (slide.id === activeId ? " " + styles.slideRowActive : "")}
+                onClick={() => selectSlide(slide.id)}
+              >
+                <span className={styles.slideNumber}>{index + 1}</span>
+                <div className={styles.thumbnail}>
+                  <div className={styles.thumbCanvas}>{renderSlide(slide)}</div>
+                </div>
+                <div className={styles.navActions}>
+                  <button className={styles.miniBtn} onClick={(event) => { event.stopPropagation(); moveSlide(slide.id, -1); }} title="Move up">↑</button>
+                  <button className={styles.miniBtn} onClick={(event) => { event.stopPropagation(); moveSlide(slide.id, 1); }} title="Move down">↓</button>
+                  <button className={styles.miniBtn} onClick={(event) => { event.stopPropagation(); duplicateSlide(slide.id); }} title="Duplicate">⧉</button>
+                  <button className={styles.miniBtn} onClick={(event) => { event.stopPropagation(); deleteSlide(slide.id); }} title="Delete">×</button>
+                </div>
               </div>
             </div>
           ))}
@@ -1431,6 +1696,12 @@ export default function SlidesEditorAdvanced() {
               className={styles.stageFrame}
               style={{ width: SLIDE_W * zoom, height: SLIDE_H * zoom }}
             >
+              <div className={styles.rulerTop}>
+                {[0, 240, 480, 720, 960].map((value) => <span key={value}>{value}</span>)}
+              </div>
+              <div className={styles.rulerLeft}>
+                {[0, 135, 270, 405, 540].map((value) => <span key={value}>{value}</span>)}
+              </div>
               <div style={{ transform: "scale(" + zoom + ")", transformOrigin: "top left" }}>
                 {renderSlide(activeSlide, true)}
               </div>
@@ -1480,6 +1751,17 @@ export default function SlidesEditorAdvanced() {
                 </div>
 
                 <div className={styles.field}>
+                  <label>Section</label>
+                  <input
+                    value={activeSlide.section ?? ""}
+                    placeholder="e.g. Introduction"
+                    onChange={(event) =>
+                      mutateActive((slide) => ({ ...slide, section: event.target.value }))
+                    }
+                  />
+                </div>
+
+                <div className={styles.field}>
                   <label>Background</label>
                   <div className={styles.colorRow}>
                     <input
@@ -1515,6 +1797,57 @@ export default function SlidesEditorAdvanced() {
                     <option value="zoom">Zoom</option>
                   </select>
                 </div>
+              </div>
+
+              <div className={styles.panel}>
+                <h3 className={styles.panelTitle}>Guides & rulers</h3>
+                <div className={styles.field}>
+                  <label>Vertical guides (0–960)</label>
+                  <input
+                    value={(activeSlide.guides?.vertical ?? []).join(", ")}
+                    placeholder="240, 480, 720"
+                    onChange={(event) => updateGuideList("vertical", event.target.value)}
+                  />
+                </div>
+                <div className={styles.field}>
+                  <label>Horizontal guides (0–540)</label>
+                  <input
+                    value={(activeSlide.guides?.horizontal ?? []).join(", ")}
+                    placeholder="135, 270, 405"
+                    onChange={(event) => updateGuideList("horizontal", event.target.value)}
+                  />
+                </div>
+                <div className={styles.alignGrid}>
+                  <button className={styles.inspectorBtn} onClick={() => addGuide("vertical")}>+ Vertical</button>
+                  <button className={styles.inspectorBtn} onClick={() => addGuide("horizontal")}>+ Horizontal</button>
+                </div>
+                <button className={styles.inspectorBtn} onClick={clearManualGuides}>Clear manual guides</button>
+              </div>
+
+              <div className={styles.panel}>
+                <h3 className={styles.panelTitle}>Animation timeline</h3>
+                {animatedElements.length ? (
+                  <div className={styles.timelineList}>
+                    {animatedElements.map((element, index) => (
+                      <button
+                        key={element.id}
+                        className={styles.timelineItem}
+                        onClick={() => {
+                          setSelectedIds([element.id]);
+                          setInspectorMode("element");
+                        }}
+                      >
+                        <span>{index + 1}</span>
+                        <strong>{element.type}</strong>
+                        <small>{element.animation} · {element.animationDelay ?? 0} ms</small>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className={styles.panelHint}>Select an object and add an entrance animation.</p>
+                )}
+                <button className={styles.inspectorBtn} onClick={staggerSlideAnimations}>Stagger animations</button>
+                <button className={styles.inspectorBtn} onClick={clearSlideAnimations}>Clear slide animations</button>
               </div>
 
               <div className={styles.panel}>
@@ -1615,6 +1948,35 @@ export default function SlidesEditorAdvanced() {
               <div className={styles.panel}>
                 <h3 className={styles.panelTitle}>Appearance</h3>
 
+                <div className={styles.fieldRow}>
+                  <div className={styles.field}>
+                    <label>Opacity %</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={Math.round((primaryElement.opacity ?? 1) * 100)}
+                      onChange={(event) =>
+                        updateElement(primaryElement.id, {
+                          opacity: Math.max(0, Math.min(1, Number(event.target.value) / 100))
+                        })
+                      }
+                    />
+                  </div>
+                  <div className={styles.field}>
+                    <label>Shadow</label>
+                    <select
+                      value={primaryElement.shadow ? "on" : "off"}
+                      onChange={(event) =>
+                        updateElement(primaryElement.id, { shadow: event.target.value === "on" })
+                      }
+                    >
+                      <option value="off">Off</option>
+                      <option value="on">On</option>
+                    </select>
+                  </div>
+                </div>
+
                 {(primaryElement.type === "shape" || primaryElement.type === "line" || primaryElement.type === "chart") && (
                   <div className={styles.field}>
                     <label>Fill / accent</label>
@@ -1625,8 +1987,50 @@ export default function SlidesEditorAdvanced() {
                   </div>
                 )}
 
+                {primaryElement.type === "shape" && (
+                  <div className={styles.fieldRow}>
+                    <div className={styles.field}>
+                      <label>Border width</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="24"
+                        value={primaryElement.borderWidth ?? 0}
+                        onChange={(event) =>
+                          updateElement(primaryElement.id, { borderWidth: Number(event.target.value) })
+                        }
+                      />
+                    </div>
+                    <div className={styles.field}>
+                      <label>Border</label>
+                      <input
+                        type="color"
+                        value={primaryElement.borderColor ?? "#172033"}
+                        onChange={(event) =>
+                          updateElement(primaryElement.id, { borderColor: event.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                )}
+
                 {primaryElement.type === "text" && (
                   <>
+                    <div className={styles.field}>
+                      <label>Font family</label>
+                      <select
+                        value={primaryElement.fontFamily ?? "inherit"}
+                        onChange={(event) =>
+                          updateElement(primaryElement.id, { fontFamily: event.target.value })
+                        }
+                      >
+                        <option value="inherit">Workspace Sans</option>
+                        <option value="Georgia, serif">Georgia</option>
+                        <option value="'Trebuchet MS', sans-serif">Trebuchet</option>
+                        <option value="'Courier New', monospace">Courier</option>
+                      </select>
+                    </div>
+
                     <div className={styles.field}>
                       <label>Text color</label>
                       <div className={styles.colorRow}>
@@ -1646,6 +2050,46 @@ export default function SlidesEditorAdvanced() {
                       </div>
                     </div>
 
+                    <div className={styles.fieldRow}>
+                      <div className={styles.field}>
+                        <label>Letter spacing</label>
+                        <input
+                          type="number"
+                          step="0.5"
+                          value={primaryElement.letterSpacing ?? 0}
+                          onChange={(event) =>
+                            updateElement(primaryElement.id, { letterSpacing: Number(event.target.value) })
+                          }
+                        />
+                      </div>
+                      <div className={styles.field}>
+                        <label>Style</label>
+                        <select
+                          value={
+                            primaryElement.italic && primaryElement.underline
+                              ? "both"
+                              : primaryElement.italic
+                                ? "italic"
+                                : primaryElement.underline
+                                  ? "underline"
+                                  : "normal"
+                          }
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            updateElement(primaryElement.id, {
+                              italic: value === "italic" || value === "both",
+                              underline: value === "underline" || value === "both"
+                            });
+                          }}
+                        >
+                          <option value="normal">Normal</option>
+                          <option value="italic">Italic</option>
+                          <option value="underline">Underline</option>
+                          <option value="both">Italic + underline</option>
+                        </select>
+                      </div>
+                    </div>
+
                     <div className={styles.field}>
                       <label>Alignment</label>
                       <select
@@ -1656,6 +2100,62 @@ export default function SlidesEditorAdvanced() {
                         <option value="center">Center</option>
                         <option value="right">Right</option>
                       </select>
+                    </div>
+                  </>
+                )}
+
+                {primaryElement.type === "image" && (
+                  <>
+                    <div className={styles.fieldRow}>
+                      <div className={styles.field}>
+                        <label>Fit</label>
+                        <select
+                          value={primaryElement.imageFit ?? "cover"}
+                          onChange={(event) =>
+                            updateElement(primaryElement.id, { imageFit: event.target.value as ImageFit })
+                          }
+                        >
+                          <option value="cover">Crop / cover</option>
+                          <option value="contain">Fit / contain</option>
+                        </select>
+                      </div>
+                      <div className={styles.field}>
+                        <label>Mask</label>
+                        <select
+                          value={primaryElement.imageMask ?? "rect"}
+                          onChange={(event) =>
+                            updateElement(primaryElement.id, { imageMask: event.target.value as ImageMask })
+                          }
+                        >
+                          <option value="rect">Rectangle</option>
+                          <option value="rounded">Rounded</option>
+                          <option value="circle">Circle</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className={styles.field}>
+                      <label>Crop position X · {primaryElement.imageX ?? 50}%</label>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={primaryElement.imageX ?? 50}
+                        onChange={(event) =>
+                          updateElement(primaryElement.id, { imageX: Number(event.target.value) })
+                        }
+                      />
+                    </div>
+                    <div className={styles.field}>
+                      <label>Crop position Y · {primaryElement.imageY ?? 50}%</label>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={primaryElement.imageY ?? 50}
+                        onChange={(event) =>
+                          updateElement(primaryElement.id, { imageY: Number(event.target.value) })
+                        }
+                      />
                     </div>
                   </>
                 )}
@@ -1711,6 +2211,59 @@ export default function SlidesEditorAdvanced() {
                     </div>
                   </>
                 )}
+
+                <div className={styles.animationEditor}>
+                  <h3 className={styles.panelTitle}>Entrance animation</h3>
+                  <div className={styles.field}>
+                    <label>Effect</label>
+                    <select
+                      value={primaryElement.animation ?? "none"}
+                      onChange={(event) =>
+                        updateElement(primaryElement.id, {
+                          animation: event.target.value as ObjectAnimation
+                        })
+                      }
+                    >
+                      <option value="none">None</option>
+                      <option value="fade">Fade</option>
+                      <option value="float-up">Float up</option>
+                      <option value="zoom">Zoom</option>
+                      <option value="wipe">Wipe</option>
+                    </select>
+                  </div>
+                  <div className={styles.fieldRow}>
+                    <div className={styles.field}>
+                      <label>Duration ms</label>
+                      <input
+                        type="number"
+                        min="100"
+                        max="5000"
+                        step="50"
+                        value={primaryElement.animationDuration ?? 600}
+                        onChange={(event) =>
+                          updateElement(primaryElement.id, {
+                            animationDuration: Number(event.target.value)
+                          })
+                        }
+                      />
+                    </div>
+                    <div className={styles.field}>
+                      <label>Delay ms</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="10000"
+                        step="50"
+                        value={primaryElement.animationDelay ?? 0}
+                        onChange={(event) =>
+                          updateElement(primaryElement.id, {
+                            animationDelay: Number(event.target.value)
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
 
                 <button className={styles.inspectorBtn} onClick={() => alignSelected("center", true)}>Center on slide</button>
                 <button className={styles.inspectorBtn} onClick={() => reorderSelection("front")}>Bring to front</button>
@@ -1769,6 +2322,7 @@ export default function SlidesEditorAdvanced() {
         <span>Slide {activeIndex + 1} of {slides.length}</span>
         <span>{activeSlide.layout ?? "content"} layout</span>
         <span>{expandedSelection.length ? expandedSelection.length + " selected" : "16:9 widescreen"}</span>
+        <span>{activeSlide.section ? "Section: " + activeSlide.section : "No section"}</span>
         <span>{snap ? "Smart guides on" : "Smart guides view-only"}</span>
         <span className={styles.statusSpacer} />
         <div className={styles.zoomControl}>
@@ -1801,7 +2355,7 @@ export default function SlidesEditorAdvanced() {
               }
               style={{ transform: "scale(" + presenterScale + ")" }}
             >
-              {renderSlide(slides[presenterIndex])}
+              {renderSlide(slides[presenterIndex], false, "", true)}
             </div>
           </div>
 
