@@ -47,6 +47,12 @@ export default function DocsEditor() {
   const [selectedImageWidth, setSelectedImageWidth] = useState(320);
   const [selectedImageAlt, setSelectedImageAlt] = useState("");
   const [selectedImageLayout, setSelectedImageLayout] = useState("inline");
+  const [showFind, setShowFind] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [replaceQuery, setReplaceQuery] = useState("");
+  const [matchCase, setMatchCase] = useState(false);
+  const [wholeWord, setWholeWord] = useState(false);
+  const [findStatus, setFindStatus] = useState("");
 
   const ensureBlockIds = () => {
     const editor = editorRef.current;
@@ -377,6 +383,97 @@ export default function DocsEditor() {
     updateCounts();
   };
 
+  const findInDocument = (backwards = false) => {
+    if (!findQuery) {
+      setFindStatus("Enter text to find");
+      return;
+    }
+
+    editorRef.current?.focus();
+    const found =
+      typeof window.find === "function"
+        ? window.find(findQuery, matchCase, backwards, true, wholeWord, false, false)
+        : false;
+
+    setFindStatus(found ? "Match selected" : "No match");
+  };
+
+  const selectionMatchesFind = () => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return false;
+
+    const selected = selection.toString();
+    const expected = findQuery;
+    if (!selected || !expected) return false;
+
+    if (wholeWord && selected.length !== expected.length) return false;
+    return matchCase
+      ? selected === expected
+      : selected.toLowerCase() === expected.toLowerCase();
+  };
+
+  const replaceCurrent = () => {
+    if (!findQuery) return;
+
+    if (!selectionMatchesFind()) {
+      findInDocument(false);
+      return;
+    }
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+
+    const range = selection.getRangeAt(0);
+    if (!editorRef.current?.contains(range.commonAncestorContainer)) {
+      findInDocument(false);
+      return;
+    }
+
+    range.deleteContents();
+    const replacement = document.createTextNode(replaceQuery);
+    range.insertNode(replacement);
+    range.setStartAfter(replacement);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    updateCounts();
+    setFindStatus("Replaced");
+    requestAnimationFrame(() => findInDocument(false));
+  };
+
+  const replaceAll = () => {
+    const editor = editorRef.current;
+    if (!editor || !findQuery) return;
+
+    const escaped = findQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\  const handleExportText = () => {");
+    const expression = new RegExp(
+      wholeWord ? `\\b${escaped}\\b` : escaped,
+      matchCase ? "g" : "gi"
+    );
+
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    const nodes: Text[] = [];
+    let currentNode = walker.nextNode();
+
+    while (currentNode) {
+      nodes.push(currentNode as Text);
+      currentNode = walker.nextNode();
+    }
+
+    let replacements = 0;
+    for (const node of nodes) {
+      const original = node.nodeValue ?? "";
+      const matches = original.match(expression);
+      if (!matches?.length) continue;
+
+      replacements += matches.length;
+      node.nodeValue = original.replace(expression, replaceQuery);
+    }
+
+    updateCounts();
+    setFindStatus(replacements ? `Replaced ${replacements} match${replacements === 1 ? "" : "es"}` : "No match");
+  };
+
   const handleExportText = () => {
     const text = editorRef.current?.innerText ?? "";
     const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
@@ -428,6 +525,11 @@ td,th{border:1px solid #d0d5dd;padding:8px}
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p") {
         event.preventDefault();
         handlePrint();
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setShowFind(true);
       }
     };
 
@@ -594,9 +696,59 @@ td,th{border:1px solid #d0d5dd;padding:8px}
           <option value={150}>150%</option>
         </select>
 
+        <button className="docsExportButton" onClick={() => setShowFind((value) => !value)}>Find</button>
         <button className="docsExportButton" onClick={handleExportText}>TXT</button>
         <button className="docsExportButton" onClick={handleExportHtml}>HTML</button>
       </section>
+
+      {showFind && (
+        <section className="docsFindReplace" aria-label="Find and replace">
+          <input
+            autoFocus
+            value={findQuery}
+            onChange={(event) => {
+              setFindQuery(event.target.value);
+              setFindStatus("");
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") findInDocument(event.shiftKey);
+              if (event.key === "Escape") setShowFind(false);
+            }}
+            placeholder="Find in document"
+            aria-label="Find text"
+          />
+          <input
+            value={replaceQuery}
+            onChange={(event) => setReplaceQuery(event.target.value)}
+            placeholder="Replace with"
+            aria-label="Replacement text"
+          />
+          <button onClick={() => findInDocument(true)} title="Previous match">↑</button>
+          <button onClick={() => findInDocument(false)} title="Next match">↓</button>
+          <button onClick={replaceCurrent}>Replace</button>
+          <button onClick={replaceAll}>Replace all</button>
+          <label className="docsFindOption">
+            <input
+              type="checkbox"
+              checked={matchCase}
+              onChange={(event) => setMatchCase(event.target.checked)}
+            />
+            Match case
+          </label>
+          <label className="docsFindOption">
+            <input
+              type="checkbox"
+              checked={wholeWord}
+              onChange={(event) => setWholeWord(event.target.checked)}
+            />
+            Whole word
+          </label>
+          <span className="docsFindStatus">{findStatus}</span>
+          <button className="docsFindClose" onClick={() => setShowFind(false)} aria-label="Close find">
+            ×
+          </button>
+        </section>
+      )}
 
       <input
         ref={imageInputRef}
