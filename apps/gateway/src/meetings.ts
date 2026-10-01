@@ -486,6 +486,157 @@ export async function handleMeetingRequest(
     return true;
   }
 
+  if (request.method === "GET" && parsed.action === "attendance") {
+    const host = await findAccess(
+      meeting.roomName,
+      url.searchParams.get("accessKey")
+    );
+
+    if (!host || host.role !== "host") {
+      sendJson(
+        response,
+        403,
+        { error: "host_access_required" },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+
+    const attendance = await store.listAttendance(meeting.roomName);
+
+    sendJson(
+      response,
+      200,
+      {
+        attendance: attendance.map((entry) => ({
+          participantId: entry.participantId,
+          displayName: entry.displayName,
+          joinedAt: entry.joinedAt,
+          lastSeenAt: entry.lastSeenAt,
+          leftAt: entry.leftAt
+        }))
+      },
+      origin,
+      allowedOrigins
+    );
+    return true;
+  }
+
+  if (request.method === "POST" && parsed.action === "heartbeat") {
+    try {
+      const body = await readJson(request);
+      const participant = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
+      if (!participant) {
+        sendJson(
+          response,
+          401,
+          { error: "invalid_meeting_access" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      if (
+        meeting.status !== "live" ||
+        participant.admissionStatus !== "admitted"
+      ) {
+        sendJson(
+          response,
+          409,
+          { error: "meeting_not_enterable" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      await store.updateParticipantPresence(
+        meeting.roomName,
+        participant.id
+      );
+      const attendance = await store.heartbeatAttendance(
+        meeting.roomName,
+        participant.id
+      );
+
+      sendJson(
+        response,
+        200,
+        { ok: true, attendance },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "attendance_heartbeat_failed"
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (request.method === "POST" && parsed.action === "leave") {
+    try {
+      const body = await readJson(request);
+      const participant = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
+      if (!participant) {
+        sendJson(
+          response,
+          401,
+          { error: "invalid_meeting_access" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const attendance = await store.leaveAttendance(
+        meeting.roomName,
+        participant.id
+      );
+
+      sendJson(
+        response,
+        200,
+        { ok: true, attendance },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error ? error.message : "attendance_leave_failed"
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
   if (request.method === "POST" && parsed.action === "admission") {
     try {
       const body = await readJson(request);
