@@ -181,7 +181,12 @@ class MemoryMeetingCollaborationStore
     roomName: string,
     patch: Partial<Pick<
       MeetingControls,
-      "locked" | "chatEnabled" | "reactionsEnabled" | "handRaiseEnabled"
+      | "locked"
+      | "chatEnabled"
+      | "reactionsEnabled"
+      | "handRaiseEnabled"
+      | "participantMicrophoneEnabled"
+      | "participantCameraEnabled"
     >>
   ) {
     const current = await this.getControls(roomName);
