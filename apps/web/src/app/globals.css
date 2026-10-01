@@ -826,6 +826,60 @@ kbd {
   line-height: 1.45;
 }
 
+.docsPageSettings {
+  display: grid;
+  gap: 9px;
+}
+
+.docsSettingsRow {
+  display: grid;
+  gap: 5px;
+}
+
+.docsSettingsRow label,
+.docsMarginGrid span {
+  color: #788496;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.docsSettingsRow select,
+.docsMarginGrid input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  border: 1px solid rgba(23, 32, 51, 0.1);
+  border-radius: 9px;
+  padding: 0 8px;
+  outline: none;
+  color: #344054;
+  background: #fff;
+  font-size: 11px;
+}
+
+.docsSettingsRow select:focus,
+.docsMarginGrid input:focus {
+  border-color: rgba(49, 92, 244, 0.45);
+  box-shadow: 0 0 0 3px rgba(49, 92, 244, 0.08);
+}
+
+.docsMarginGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.docsMarginGrid label {
+  display: grid;
+  gap: 4px;
+}
+
+.docsPageDimensions {
+  padding-top: 2px;
+  color: #98a2b3;
+  font-size: 10px;
+}
+
 .docsCanvasWrap {
   min-width: 0;
   overflow: auto;
