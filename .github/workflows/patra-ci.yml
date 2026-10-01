@@ -1,0 +1,41 @@
+name: Patra Production Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Type and syntax checks
+        run: npm run check
+
+      - name: Production hosted build
+        run: npm run build:hosted
+        env:
+          WORKSPACE_BASE_PATH: /workspace
+          NEXT_PUBLIC_WORKSPACE_API_BASE: /api/workspace
+          WORKSPACE_NATIVE_API_BASE: https://tamishra.in/api/workspace
+
+      - name: Patra mailer syntax proof
+        run: npm run check:patra-mailer
