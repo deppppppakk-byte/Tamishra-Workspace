@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolveWorkspaceIdentity } from "./identity.js";
 import {
-  createPatraStore,
+  getPatraStore,
   type PatraAddress,
   type PatraFolderKind,
   type StoredPatraMailbox
@@ -10,7 +10,7 @@ import {
 
 type JsonObject = Record<string, unknown>;
 
-const store = createPatraStore();
+const store = getPatraStore();
 const MAX_BODY_BYTES = 128 * 1024;
 const PUBLIC_DOMAIN = (
   process.env.PATRA_MAIL_DOMAIN?.trim().toLowerCase() || "patra.tamishra.in"
