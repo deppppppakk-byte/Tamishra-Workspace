@@ -278,6 +278,26 @@ export default function NotesWorkspace() {
     setSelectedId(null);
   };
 
+  const restoreSelected = () => {
+    if (!selectedNote) return;
+    updateNote(selectedNote.id, { trashedAt: null });
+    mutateWorkspaceFileIndex((index) =>
+      upsertWorkspaceFile(index, {
+        id: `notes:${selectedNote.id}`,
+        title: selectedNote.title || "Untitled note",
+        kind: "notes",
+        appHref: `/apps/notes?note=${encodeURIComponent(selectedNote.id)}`,
+        nativeExtension: ".tmnt",
+        nativeMime: TMNOTE_MIME_TYPE,
+        sourceId: selectedNote.id,
+        sizeBytes: new Blob([JSON.stringify(selectedNote)]).size,
+        storage: "local"
+      })
+    );
+    setView("notes");
+    setStatus("Note restored");
+  };
+
   const permanentlyDeleteSelected = () => {
     if (!selectedNote) return;
     if (!window.confirm("Permanently delete this note?")) return;
@@ -440,9 +460,12 @@ export default function NotesWorkspace() {
                 </button>
                 <button onClick={exportNative}>Export .tmnt</button>
                 {view === "trash" ? (
-                  <button className={styles.danger} onClick={permanentlyDeleteSelected}>
-                    Delete forever
-                  </button>
+                  <>
+                    <button onClick={restoreSelected}>Restore</button>
+                    <button className={styles.danger} onClick={permanentlyDeleteSelected}>
+                      Delete forever
+                    </button>
+                  </>
                 ) : (
                   <>
                     <button onClick={archiveSelected}>
