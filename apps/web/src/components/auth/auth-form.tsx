@@ -291,14 +291,24 @@ export function AuthForm() {
             )}
 
             <label>
-              <span>{mode === "register" && isPatraSurface ? "Recovery email" : "Email"}</span>
+              <span>
+                {mode === "signin" && isPatraSurface
+                  ? "Patra address or recovery email"
+                  : mode === "register" && isPatraSurface
+                    ? "Recovery email"
+                    : "Email"}
+              </span>
               <input
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 autoComplete="email"
                 maxLength={254}
-                placeholder={isPatraSurface ? "you@domain.com" : "you@domain.com"}
+                placeholder={
+                  mode === "signin" && isPatraSurface
+                    ? "you@patra.tamishra.in"
+                    : "you@domain.com"
+                }
                 required
               />
             </label>
