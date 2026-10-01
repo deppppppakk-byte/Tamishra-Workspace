@@ -203,17 +203,14 @@ export async function decodeTmsl<TSlide>(
 }
 
 export async function downloadTmsl<TSlide>(
-  document: TamishraSlidesDocument<TSlide>
+  deckDocument: TamishraSlidesDocument<TSlide>
 ) {
-  const bytes = await encodeTmsl(document);
+  const bytes = await encodeTmsl(deckDocument);
   const blob = new Blob([bytes], { type: TMSL_MIME });
   const url = URL.createObjectURL(blob);
-  const anchor = documentObject.createElement("a");
+  const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = safeFileName(document.title) + TMSL_EXTENSION;
+  anchor.download = safeFileName(deckDocument.title) + TMSL_EXTENSION;
   anchor.click();
   URL.revokeObjectURL(url);
 }
-
-// Isolated alias prevents the generic document argument above from shadowing window.document.
-const documentObject = globalThis.document;
