@@ -324,15 +324,417 @@
   border-radius: 20px;
   overflow: hidden;
   background: #101827;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
-.conference :global(.lk-video-conference) {
+
+.collaborationToolbar {
+  min-height: 50px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #111a2a;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.toolbarButton,
+.toolbarButtonActive {
+  min-height: 32px;
+  border-radius: 10px;
+  padding: 0 10px;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.toolbarButton {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #d7dfec;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.toolbarButtonActive {
+  border: 1px solid rgba(88, 126, 255, 0.38);
+  color: #dfe7ff;
+  background: rgba(74, 108, 239, 0.28);
+}
+
+.toolbarButton:disabled,
+.toolbarButtonActive:disabled,
+.reactionButtons button:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.reactionButtons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.reactionButtons button {
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  font-size: 15px;
+}
+
+.raiseSummary {
+  margin-left: auto;
+  padding: 7px 9px;
+  border-radius: 999px;
+  color: #ffe6a7;
+  background: rgba(220, 158, 33, 0.16);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.conferenceStage {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.conferenceStage :global(.lk-video-conference) {
   height: 100%;
 }
 
+.reactionOverlay {
+  position: absolute;
+  right: 14px;
+  top: 14px;
+  z-index: 20;
+  width: min(240px, 42%);
+  display: grid;
+  gap: 7px;
+  pointer-events: none;
+}
+
+.reactionOverlay > span {
+  margin-left: auto;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 13px;
+  color: white;
+  background: rgba(17, 26, 42, 0.78);
+  backdrop-filter: blur(16px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: reactionIn 180ms ease-out;
+}
+
+.reactionOverlay strong {
+  font-size: 20px;
+}
+
+.reactionOverlay small {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #e8edf7;
+  font-size: 9px;
+}
+
+@keyframes reactionIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.sidebarTabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 8px;
+  border-bottom: 1px solid rgba(23, 32, 51, 0.07);
+  background: rgba(255, 255, 255, 0.96);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.sidebarTabs button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 10px;
+  color: #778398;
+  background: transparent;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.sidebarTabs button:hover {
+  background: #f3f6fb;
+}
+
+.sidebarTabs .sidebarTabActive {
+  color: #315cf4;
+  background: #edf2ff;
+}
+
+.chatPanel,
+.peoplePanel,
+.activityPanel {
+  min-height: 0;
+}
+
+.chatPanel {
+  height: calc(100% - 51px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.messageList {
+  min-height: 0;
+  padding: 10px 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.message,
+.ownMessage {
+  max-width: 92%;
+  padding: 9px 10px;
+  border-radius: 13px;
+}
+
+.message {
+  align-self: flex-start;
+  border: 1px solid rgba(23, 32, 51, 0.07);
+  background: #f6f8fc;
+}
+
+.ownMessage {
+  align-self: flex-end;
+  color: #20304d;
+  background: #e9efff;
+}
+
+.message > div,
+.ownMessage > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+}
+
+.message strong,
+.ownMessage strong {
+  font-size: 8px;
+}
+
+.message time,
+.ownMessage time {
+  color: #909aad;
+  font-size: 7px;
+}
+
+.message p,
+.ownMessage p {
+  margin: 5px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.chatComposer {
+  padding: 10px;
+  border-top: 1px solid rgba(23, 32, 51, 0.07);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+}
+
+.chatComposer input {
+  min-width: 0;
+  height: 38px;
+  border: 1px solid rgba(23, 32, 51, 0.1);
+  border-radius: 11px;
+  padding: 0 11px;
+  outline: none;
+  color: #172033;
+  background: white;
+  font-size: 10px;
+}
+
+.chatComposer input:focus {
+  border-color: rgba(49, 92, 244, 0.42);
+  box-shadow: 0 0 0 3px rgba(49, 92, 244, 0.08);
+}
+
+.chatComposer button {
+  min-width: 62px;
+  border: 0;
+  border-radius: 11px;
+  color: white;
+  background: #315cf4;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.chatComposer button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.emptyState {
+  margin: 18px;
+  color: #909aad;
+  text-align: center;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.policyPanel {
+  padding: 14px;
+  border-bottom: 1px solid rgba(23, 32, 51, 0.07);
+  display: grid;
+  gap: 8px;
+}
+
+.policyPanel > label {
+  padding: 9px;
+  border: 1px solid rgba(23, 32, 51, 0.06);
+  border-radius: 12px;
+  background: #f8fafe;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: start;
+  cursor: pointer;
+}
+
+.policyPanel input {
+  margin-top: 2px;
+}
+
+.policyPanel strong,
+.policyPanel small {
+  display: block;
+}
+
+.policyPanel strong {
+  font-size: 9px;
+}
+
+.policyPanel small {
+  margin-top: 2px;
+  color: #8a95a7;
+  font-size: 7px;
+  line-height: 1.4;
+}
+
+.participantControlRow {
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+}
+
+.participantControlRow:hover {
+  background: #f6f8fc;
+}
+
+.participantControlRow strong,
+.participantControlRow small {
+  display: block;
+}
+
+.participantControlRow strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9px;
+}
+
+.participantControlRow small {
+  margin-top: 2px;
+  color: #8a95a7;
+  font-size: 7px;
+}
+
+.removeButton {
+  min-height: 28px;
+  border: 1px solid rgba(180, 57, 57, 0.14);
+  border-radius: 9px;
+  padding: 0 8px;
+  color: #a13d3d;
+  background: #fff1f1;
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.removeButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.activityPanel {
+  padding-bottom: 12px;
+}
+
+.auditRow {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(23, 32, 51, 0.055);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+}
+
+.auditRow > span {
+  width: 7px;
+  height: 7px;
+  margin-top: 3px;
+  border-radius: 999px;
+  background: #315cf4;
+  box-shadow: 0 0 0 4px rgba(49, 92, 244, 0.08);
+}
+
+.auditRow strong,
+.auditRow small {
+  display: block;
+}
+
+.auditRow strong {
+  font-size: 9px;
+  text-transform: capitalize;
+}
+
+.auditRow small {
+  margin-top: 3px;
+  color: #8b96a8;
+  font-size: 7px;
+  line-height: 1.35;
+}
+
+
 .hostPanel {
-  width: 330px;
-  min-width: 300px;
+  width: 360px;
+  min-width: 320px;
   border: 1px solid rgba(23, 32, 51, 0.08);
   border-radius: 20px;
   overflow-y: auto;
@@ -519,8 +921,8 @@
 
 @media (max-width: 900px) {
   .hostPanel {
-    width: 280px;
-    min-width: 260px;
+    width: 320px;
+    min-width: 280px;
   }
 }
 
@@ -554,6 +956,23 @@
   .compactCode {
     display: none;
   }
+
+  .collaborationToolbar {
+    padding-right: 8px;
+  }
+
+  .raiseSummary {
+    margin-left: 0;
+  }
+
+  .reactionButtons {
+    order: 3;
+    width: 100%;
+  }
+
+  .hostPanel {
+    background: rgba(255, 255, 255, 0.98);
+  }
 }
 
 @media (max-width: 520px) {
@@ -578,5 +997,25 @@
 
   .endButton {
     padding: 0 9px;
+  }
+
+  .liveLayout {
+    padding: 6px;
+  }
+
+  .hostPanel {
+    right: 6px;
+    top: 6px;
+    bottom: 6px;
+    width: calc(100vw - 12px);
+  }
+
+  .collaborationToolbar {
+    gap: 5px;
+  }
+
+  .toolbarButton,
+  .toolbarButtonActive {
+    padding: 0 8px;
   }
 }
