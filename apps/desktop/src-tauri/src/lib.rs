@@ -1,5 +1,6 @@
 use serde::Serialize;
 use std::{
+    env,
     fs,
     path::{Path, PathBuf},
     sync::Mutex,
@@ -28,6 +29,52 @@ fn is_tmsl(path: &Path) -> bool {
         .and_then(|value| value.to_str())
         .map(|value| value.eq_ignore_ascii_case("tmsl"))
         .unwrap_or(false)
+}
+
+const MAX_SIMPLE_NATIVE_FILE_BYTES: u64 = 64 * 1024 * 1024;
+
+fn startup_text_file(extension_name: &str) -> Result<Option<String>, String> {
+    let path = env::args()
+        .skip(1)
+        .map(PathBuf::from)
+        .find(|path| {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .map(|extension| extension.eq_ignore_ascii_case(extension_name))
+                .unwrap_or(false)
+        });
+
+    let Some(path) = path else {
+        return Ok(None);
+    };
+
+    let metadata = fs::metadata(&path)
+        .map_err(|error| format!("Could not inspect startup .{extension_name}: {error}"))?;
+
+    if metadata.len() > MAX_SIMPLE_NATIVE_FILE_BYTES {
+        return Err(format!(
+            "Startup .{extension_name} exceeds the 64 MB safety limit."
+        ));
+    }
+
+    fs::read_to_string(&path)
+        .map(Some)
+        .map_err(|error| format!("Could not read startup .{extension_name}: {error}"))
+}
+
+#[tauri::command]
+fn startup_tmdoc() -> Result<Option<String>, String> {
+    startup_text_file("tmdoc")
+}
+
+#[tauri::command]
+fn startup_tmsh() -> Result<Option<String>, String> {
+    startup_text_file("tmsh")
+}
+
+#[tauri::command]
+fn startup_tmnt() -> Result<Option<String>, String> {
+    startup_text_file("tmnt")
 }
 
 fn normalize_candidate(path: PathBuf) -> Option<PathBuf> {
@@ -291,6 +338,9 @@ pub fn run() {
     builder
         .invoke_handler(tauri::generate_handler![
             take_pending_tmsl,
+            startup_tmdoc,
+            startup_tmsh,
+            startup_tmnt,
             open_tmsl_path,
             current_tmsl_path,
             save_tmsl_current,
