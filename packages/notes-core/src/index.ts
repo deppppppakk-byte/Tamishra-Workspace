@@ -18,6 +18,7 @@ export type NotesSnapshot = {
   version: 1;
   notes: TamishraNote[];
   notebooks: string[];
+  deleted: Record<string, string>;
 };
 
 export const TMNOTE_EXTENSION = ".tmnt";
@@ -39,7 +40,8 @@ export function createNotesSnapshot(): NotesSnapshot {
   return {
     version: 1,
     notes: [],
-    notebooks: ["Notes"]
+    notebooks: ["Notes"],
+    deleted: {}
   };
 }
 
@@ -96,16 +98,29 @@ export function normalizeNotesSnapshot(value: unknown): NotesSnapshot {
       )
     : [];
 
+  const deleted =
+    candidate.deleted &&
+    typeof candidate.deleted === "object" &&
+    !Array.isArray(candidate.deleted)
+      ? Object.fromEntries(
+          Object.entries(candidate.deleted).filter(
+            ([id, deletedAt]) =>
+              id.length > 0 && typeof deletedAt === "string"
+          )
+        )
+      : {};
+
   return {
     version: 1,
-    notes,
+    notes: notes.filter((note) => !(note.id in deleted)),
     notebooks: Array.from(
       new Set([
         "Notes",
         ...notebooks,
         ...notes.map((note) => note.notebook).filter(Boolean)
       ])
-    ).sort()
+    ).sort(),
+    deleted
   };
 }
 
@@ -113,9 +128,21 @@ export function mergeNotesSnapshots(
   local: NotesSnapshot,
   remote: NotesSnapshot
 ): NotesSnapshot {
+  const deleted: Record<string, string> = {
+    ...remote.deleted,
+    ...local.deleted
+  };
+  for (const [id, deletedAt] of Object.entries(remote.deleted)) {
+    const localDeletedAt = deleted[id];
+    if (!localDeletedAt || deletedAt.localeCompare(localDeletedAt) > 0) {
+      deleted[id] = deletedAt;
+    }
+  }
+
   const byId = new Map<string, TamishraNote>();
 
   for (const note of [...remote.notes, ...local.notes]) {
+    if (deleted[note.id]) continue;
     const current = byId.get(note.id);
     if (!current || note.updatedAt.localeCompare(current.updatedAt) >= 0) {
       byId.set(note.id, note);
@@ -134,7 +161,8 @@ export function mergeNotesSnapshots(
     ).sort(),
     notes: Array.from(byId.values()).sort((left, right) =>
       right.updatedAt.localeCompare(left.updatedAt)
-    )
+    ),
+    deleted
   };
 }
 
