@@ -38,6 +38,7 @@ const targetApps = {
   ],
   visual: [{ id: "slides", label: "Slides" }],
   table: [
+    { id: "sheets", label: "Sheets" },
     { id: "slides", label: "Slides" },
     { id: "docs", label: "Docs" }
   ],
