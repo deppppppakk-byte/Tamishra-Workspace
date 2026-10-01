@@ -77,7 +77,7 @@
 - presence
 - voice/video escalation into Tamishra Meet
 
-## 7. Mail
+## 7. Patra
 
 - inbox
 - compose
@@ -90,7 +90,7 @@
 - drafts
 - signatures
 - spam/trash architecture
-- external mail-provider integration layer
+- external mail-server interoperability layer
 
 ## 8. Meet
 
