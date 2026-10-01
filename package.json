@@ -10,8 +10,13 @@
   "scripts": {
     "dev": "npm run dev:web",
     "dev:web": "npm run dev --workspace @tamishra/web",
+    "dev:gateway": "npm run dev --workspace @tamishra/gateway",
     "build": "npm run build:web",
     "build:web": "npm run build --workspace @tamishra/web",
+    "build:gateway": "npm run build --workspace @tamishra/gateway",
+    "check:web": "npm run check --workspace @tamishra/web",
+    "check:gateway": "npm run check --workspace @tamishra/gateway",
+    "check:meet": "npm run check:gateway && npm run check:web",
     "desktop:dev": "npm run tauri:dev --workspace @tamishra/desktop",
     "desktop:build": "npm run tauri:build --workspace @tamishra/desktop",
     "mobile:sync": "npm run sync --workspace @tamishra/mobile",
