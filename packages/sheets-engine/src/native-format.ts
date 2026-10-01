@@ -3,14 +3,14 @@ import {
   type Workbook
 } from "./index";
 
-export const TMSHEET_EXTENSION = ".tmsheet";
+export const TMSHEET_EXTENSION = ".tmsh";
 export const TMSHEET_MIME_TYPE = "application/vnd.tamishra.spreadsheet";
 export const TMSHEET_FORMAT_VERSION = 1;
 export const TMSHEET_MAGIC = "TMSHEET\n";
 
 export type TamishraSheetManifest = {
   format: "Tamishra Sheet";
-  extension: ".tmsheet";
+  extension: ".tmsh";
   mimeType: typeof TMSHEET_MIME_TYPE;
   formatVersion: typeof TMSHEET_FORMAT_VERSION;
   producer: "Tamishra Sheets";
@@ -101,7 +101,7 @@ export function parseTamishraSheet(
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 
   if (!text.startsWith(TMSHEET_MAGIC)) {
-    throw new Error("This is not a Tamishra .tmsheet file.");
+    throw new Error("This is not a Tamishra .tmsh file.");
   }
 
   let envelope: TamishraSheetEnvelope;
@@ -130,7 +130,7 @@ export function parseTamishraSheet(
 
   if (manifest.formatVersion > TMSHEET_FORMAT_VERSION) {
     throw new Error(
-      `This .tmsheet file uses format version ${manifest.formatVersion}, but this Tamishra Sheets build supports up to version ${TMSHEET_FORMAT_VERSION}.`
+      `This .tmsh file uses format version ${manifest.formatVersion}, but this Tamishra Sheets build supports up to version ${TMSHEET_FORMAT_VERSION}.`
     );
   }
 
