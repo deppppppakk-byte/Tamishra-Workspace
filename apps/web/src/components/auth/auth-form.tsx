@@ -1,34 +1,92 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { workspaceApi, type WorkspaceSessionResponse } from "../../lib/workspace-api";
 import styles from "./auth.module.css";
 
 type Mode = "signin" | "register";
 
+type PatraAvailability = {
+  username: string;
+  address: string;
+  available: boolean;
+};
+
+type PatraMailbox = {
+  id: string;
+  address: string;
+};
+
 const errorText: Record<string, string> = {
   invalid_credentials: "The email or password is incorrect.",
   invalid_email: "Enter a valid email address.",
   invalid_display_name: "Enter your name.",
+  invalid_mailbox_username: "Use 3–64 letters, numbers, dots, underscores or hyphens.",
+  mailbox_username_reserved: "That Patra username is reserved.",
+  mailbox_address_taken: "That Patra address is already taken.",
+  public_mailbox_already_exists: "A Patra mailbox already exists for this account.",
   password_too_short: "Use at least 10 characters for your password.",
   password_too_long: "The password is too long.",
   email_already_registered: "An account already exists for this email.",
   too_many_attempts: "Too many attempts. Try again later.",
   identity_store_unavailable: "The account service is currently unavailable.",
+  patra_store_unavailable: "The Patra mailbox service is currently unavailable.",
   origin_not_allowed: "This sign-in request was rejected by the Workspace security policy."
 };
 
 export function AuthForm() {
   const router = useRouter();
+  const isPatraSurface = process.env.NEXT_PUBLIC_WORKSPACE_SURFACE === "patra";
   const [mode, setMode] = useState<Mode>("signin");
   const [displayName, setDisplayName] = useState("");
+  const [patraUsername, setPatraUsername] = useState("");
+  const [availability, setAvailability] = useState<PatraAvailability | null>(null);
+  const [checkingUsername, setCheckingUsername] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const proposedPatraAddress = useMemo(() => {
+    const username = patraUsername.trim().toLowerCase();
+    return username ? username + "@patra.tamishra.in" : "";
+  }, [patraUsername]);
+
+  async function checkPatraAvailability() {
+    const username = patraUsername.trim().toLowerCase();
+    if (!username) {
+      setAvailability(null);
+      setStatus("Choose your Patra username.");
+      return false;
+    }
+
+    setCheckingUsername(true);
+    setStatus("");
+
+    try {
+      const result = await workspaceApi<PatraAvailability>(
+        `/v1/patra/availability?username=${encodeURIComponent(username)}`
+      );
+      setAvailability(result);
+      if (!result.available) {
+        setStatus("That Patra address is already taken.");
+      }
+      return result.available;
+    } catch (error) {
+      const code =
+        error && typeof error === "object" && "code" in error
+          ? String((error as { code?: unknown }).code ?? "")
+          : "invalid_mailbox_username";
+      setAvailability(null);
+      setStatus(errorText[code] ?? "Unable to check Patra username availability.");
+      return false;
+    } finally {
+      setCheckingUsername(false);
+    }
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -38,6 +96,15 @@ export function AuthForm() {
     setStatus("");
 
     try {
+      if (mode === "register" && isPatraSurface) {
+        const normalized = patraUsername.trim().toLowerCase();
+        const stillValid =
+          availability?.username === normalized && availability.available;
+        if (!stillValid && !(await checkPatraAvailability())) {
+          return;
+        }
+      }
+
       const result = await workspaceApi<WorkspaceSessionResponse>(
         mode === "signin" ? "/v1/auth/sign-in" : "/v1/auth/register",
         {
@@ -52,6 +119,17 @@ export function AuthForm() {
 
       if (!result.authenticated) {
         throw new Error("authentication_failed");
+      }
+
+      if (mode === "register" && isPatraSurface) {
+        const mailbox = await workspaceApi<{ mailbox: PatraMailbox }>(
+          "/v1/patra/mailboxes",
+          {
+            method: "POST",
+            body: JSON.stringify({ username: patraUsername.trim().toLowerCase() })
+          }
+        );
+        setStatus(mailbox.mailbox.address + " is ready.");
       }
 
       router.push("/");
@@ -72,26 +150,36 @@ export function AuthForm() {
   function switchMode(next: Mode) {
     setMode(next);
     setStatus("");
+    setAvailability(null);
   }
 
   return (
     <main className={styles.page}>
       <section className={styles.brandPanel}>
-        <Link className={styles.mark} href="/" aria-label="Tamishra Workspace home">
-          T
+        <Link className={styles.mark} href="/" aria-label={isPatraSurface ? "Tamishra Patra home" : "Tamishra Workspace home"}>
+          {isPatraSurface ? "P" : "T"}
         </Link>
         <div>
-          <p className={styles.eyebrow}>TAMISHRA WORKSPACE</p>
-          <h1>Your work belongs in one secure workspace.</h1>
+          <p className={styles.eyebrow}>
+            {isPatraSurface ? "TAMISHRA PATRA" : "TAMISHRA WORKSPACE"}
+          </p>
+          <h1>
+            {isPatraSurface
+              ? "Your Patra inbox starts with your own address."
+              : "Your work belongs in one secure workspace."}
+          </h1>
           <p className={styles.intro}>
-            Tamishra-native identity for Mail, Meet, Docs, Sheets, Slides,
-            Notes, Forms, Chat and Files. No Google or Microsoft account is required.
+            {isPatraSurface
+              ? "Create a Tamishra identity and choose your personal @patra.tamishra.in address in one registration flow."
+              : "Tamishra-native identity for Patra, Meet, Docs, Sheets, Slides, Notes, Forms, Chat and Files."}
           </p>
         </div>
         <div className={styles.securityNote}>
           <strong>First-party account</strong>
           <span>
-            Password credentials and sessions are handled by the Tamishra Workspace gateway.
+            {isPatraSurface
+              ? "Your Patra mailbox and Tamishra account are provisioned together."
+              : "Password credentials and sessions are handled by the Tamishra Workspace gateway."}
           </span>
         </div>
       </section>
@@ -116,12 +204,30 @@ export function AuthForm() {
           </div>
 
           <div className={styles.heading}>
-            <span>{mode === "signin" ? "WELCOME BACK" : "NEW WORKSPACE ACCOUNT"}</span>
-            <h2>{mode === "signin" ? "Sign in to Workspace" : "Create your Tamishra account"}</h2>
+            <span>
+              {mode === "signin"
+                ? "WELCOME BACK"
+                : isPatraSurface
+                  ? "NEW PATRA ACCOUNT"
+                  : "NEW WORKSPACE ACCOUNT"}
+            </span>
+            <h2>
+              {mode === "signin"
+                ? isPatraSurface
+                  ? "Sign in to Patra"
+                  : "Sign in to Workspace"
+                : isPatraSurface
+                  ? "Create your Patra account"
+                  : "Create your Tamishra account"}
+            </h2>
             <p>
               {mode === "signin"
-                ? "Continue to your Workspace apps and files."
-                : "A personal Workspace organization will be created automatically."}
+                ? isPatraSurface
+                  ? "Continue to your Patra inbox."
+                  : "Continue to your Workspace apps and files."
+                : isPatraSurface
+                  ? "Choose your Patra address and create your Tamishra identity together."
+                  : "A personal Workspace organization will be created automatically."}
             </p>
           </div>
 
@@ -140,15 +246,59 @@ export function AuthForm() {
               </label>
             )}
 
+            {mode === "register" && isPatraSurface && (
+              <label>
+                <span>Patra address</span>
+                <div className={styles.addressField}>
+                  <input
+                    value={patraUsername}
+                    onChange={(event) => {
+                      setPatraUsername(event.target.value.toLowerCase());
+                      setAvailability(null);
+                    }}
+                    onBlur={() => {
+                      if (patraUsername.trim()) void checkPatraAvailability();
+                    }}
+                    autoComplete="username"
+                    minLength={3}
+                    maxLength={64}
+                    placeholder="yourname"
+                    required
+                  />
+                  <b>@patra.tamishra.in</b>
+                  <button
+                    type="button"
+                    disabled={checkingUsername || !patraUsername.trim()}
+                    onClick={() => void checkPatraAvailability()}
+                  >
+                    {checkingUsername ? "Checking…" : "Check"}
+                  </button>
+                </div>
+                {availability && (
+                  <small
+                    className={
+                      availability.available
+                        ? styles.available
+                        : styles.unavailable
+                    }
+                  >
+                    {availability.available
+                      ? availability.address + " is available."
+                      : availability.address + " is already taken."}
+                  </small>
+                )}
+              </label>
+            )}
+
             <label>
-              <span>Email</span>
+              <span>{mode === "register" && isPatraSurface ? "Recovery email" : "Email"}</span>
               <input
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 autoComplete="email"
                 maxLength={254}
-                placeholder="you@domain.com"
+                placeholder={isPatraSurface ? "you@domain.com" : "you@domain.com"}
                 required
               />
             </label>
@@ -180,17 +330,21 @@ export function AuthForm() {
 
             {status && <div className={styles.error} role="alert">{status}</div>}
 
-            <button className={styles.submit} type="submit" disabled={busy}>
+            <button className={styles.submit} type="submit" disabled={busy || checkingUsername}>
               {busy
                 ? "Working…"
                 : mode === "signin"
                   ? "Sign in"
-                  : "Create Workspace account"}
+                  : isPatraSurface
+                    ? `Create ${proposedPatraAddress || "Patra account"}`
+                    : "Create Workspace account"}
             </button>
           </form>
 
           <p className={styles.footerText}>
-            Tamishra Workspace uses its own account and session system.
+            {isPatraSurface
+              ? "Public Patra mailboxes use the @patra.tamishra.in namespace."
+              : "Tamishra Workspace uses its own account and session system."}
           </p>
         </div>
       </section>
