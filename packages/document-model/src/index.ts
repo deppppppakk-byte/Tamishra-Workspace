@@ -149,9 +149,15 @@ export type PageNumberPosition =
   | "footer-center"
   | "footer-right";
 
+export type HeaderFooterAlignment = "left" | "center" | "right";
+
 export type HeaderFooterSettings = {
   headerEnabled: boolean;
   footerEnabled: boolean;
+  headerAlignment: HeaderFooterAlignment;
+  footerAlignment: HeaderFooterAlignment;
+  headerDistanceMm: number;
+  footerDistanceMm: number;
   hideOnFirstPage: boolean;
   pageNumberEnabled: boolean;
   pageNumberFormat: PageNumberFormat;
@@ -162,6 +168,10 @@ export type HeaderFooterSettings = {
 export const defaultHeaderFooterSettings: HeaderFooterSettings = {
   headerEnabled: false,
   footerEnabled: false,
+  headerAlignment: "left",
+  footerAlignment: "left",
+  headerDistanceMm: 12.7,
+  footerDistanceMm: 12.7,
   hideOnFirstPage: false,
   pageNumberEnabled: true,
   pageNumberFormat: "number",
