@@ -297,6 +297,141 @@ export default function DocsEditor() {
     return true;
   };
 
+  const renderWorkspaceChartBlock = (
+    container: HTMLElement,
+    block: TamishraBlock
+  ) => {
+    if (block.kind !== "chart" || !block.payload || typeof block.payload !== "object") {
+      return false;
+    }
+
+    const payload = block.payload as {
+      labels?: string[];
+      values?: number[];
+      chartKind?: "bar" | "line" | "donut";
+      sourceLabel?: string;
+    };
+    if (
+      !Array.isArray(payload.labels) ||
+      !Array.isArray(payload.values) ||
+      payload.values.length === 0
+    ) {
+      return false;
+    }
+
+    const labels = payload.labels.map((label) => String(label));
+    const values = payload.values.map((value) =>
+      Number.isFinite(Number(value)) ? Number(value) : 0
+    );
+    const kind = payload.chartKind ?? "bar";
+
+    container.dataset.workspaceBlockId = block.id;
+    container.dataset.workspaceBlockVersion = String(block.version);
+    container.dataset.workspaceBlockMode =
+      block.binding?.mode === "live" ? "live" : "snapshot";
+    container.dataset.workspaceBlockKind = "chart";
+    container.className = "docsWorkspaceBlock docsWorkspaceChartBlock";
+    container.contentEditable = "false";
+
+    const badge = document.createElement("div");
+    badge.className = "docsWorkspaceBlockBadge";
+    badge.contentEditable = "false";
+    badge.textContent =
+      block.binding?.mode === "live"
+        ? "Live Chart · " + (payload.sourceLabel || block.title)
+        : "Workspace Chart · " + block.title;
+
+    const chart = document.createElement("div");
+    chart.className = "docsWorkspaceChart";
+    chart.dataset.chartKind = kind;
+
+    if (kind === "line") {
+      const max = Math.max(1, ...values.map((value) => Math.abs(value)));
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 100 100");
+      svg.setAttribute("preserveAspectRatio", "none");
+      svg.setAttribute("class", "docsWorkspaceChartSvg");
+
+      const polyline = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "polyline"
+      );
+      const divisor = Math.max(1, values.length - 1);
+      const points = values
+        .map(
+          (value, index) =>
+            `${(index / divisor) * 100},${92 - (Math.abs(value) / max) * 78}`
+        )
+        .join(" ");
+      polyline.setAttribute("points", points);
+      polyline.setAttribute("fill", "none");
+      polyline.setAttribute("stroke", "currentColor");
+      polyline.setAttribute("stroke-width", "2.5");
+      polyline.setAttribute("vector-effect", "non-scaling-stroke");
+      svg.appendChild(polyline);
+      chart.appendChild(svg);
+    } else if (kind === "donut") {
+      const total = values.reduce((sum, value) => sum + Math.abs(value), 0) || 1;
+      const palette = ["#6554de", "#2f80ed", "#12a594", "#e09f3e", "#d45b7a", "#6f7c91"];
+      let offset = 0;
+      const stops = values.map((value, index) => {
+        const start = offset;
+        offset += (Math.abs(value) / total) * 360;
+        const color = palette[index % palette.length];
+        return `${color} ${start}deg ${offset}deg`;
+      });
+      const donut = document.createElement("div");
+      donut.className = "docsWorkspaceChartDonut";
+      donut.style.background = `conic-gradient(${stops.join(",")})`;
+      const hole = document.createElement("div");
+      hole.className = "docsWorkspaceChartDonutHole";
+      hole.textContent = String(
+        values.reduce((sum, value) => sum + value, 0)
+      );
+      donut.appendChild(hole);
+      chart.appendChild(donut);
+    } else {
+      const max = Math.max(1, ...values.map((value) => Math.abs(value)));
+      const bars = document.createElement("div");
+      bars.className = "docsWorkspaceChartBars";
+      values.forEach((value, index) => {
+        const group = document.createElement("div");
+        group.className = "docsWorkspaceChartBarGroup";
+        const bar = document.createElement("div");
+        bar.className = "docsWorkspaceChartBar";
+        bar.style.height =
+          Math.max(4, (Math.abs(value) / max) * 100) + "%";
+        bar.title = String(value);
+        const label = document.createElement("span");
+        label.textContent = labels[index] ?? "Item " + (index + 1);
+        group.append(bar, label);
+        bars.appendChild(group);
+      });
+      chart.appendChild(bars);
+    }
+
+    const legend = document.createElement("div");
+    legend.className = "docsWorkspaceChartLegend";
+    labels.slice(0, 12).forEach((label, index) => {
+      const item = document.createElement("span");
+      item.textContent = `${label}: ${values[index] ?? 0}`;
+      legend.appendChild(item);
+    });
+
+    container.replaceChildren(badge, chart, legend);
+    return true;
+  };
+
+  const renderWorkspaceStructuredBlock = (
+    container: HTMLElement,
+    block: TamishraBlock
+  ) =>
+    block.kind === "table"
+      ? renderWorkspaceTableBlock(container, block)
+      : block.kind === "chart"
+        ? renderWorkspaceChartBlock(container, block)
+        : false;
+
   const insertWorkspaceBlock = (block: TamishraBlock) => {
     if (block.kind === "rich-text" && block.payload && typeof block.payload === "object") {
       const payload = block.payload as { html?: string; plainText?: string };
@@ -314,12 +449,12 @@ export default function DocsEditor() {
       return true;
     }
 
-    if (block.kind !== "table") return false;
+    if (block.kind !== "table" && block.kind !== "chart") return false;
 
     focusEditor();
     const container = document.createElement("div");
     container.dataset.tamishraId = createId("workspace-block");
-    if (!renderWorkspaceTableBlock(container, block)) return false;
+    if (!renderWorkspaceStructuredBlock(container, block)) return false;
 
     const selection = window.getSelection();
     if (
@@ -373,7 +508,7 @@ export default function DocsEditor() {
       const currentVersion = Number(node.dataset.workspaceBlockVersion || "0");
       if (block.version <= currentVersion) return;
 
-      if (renderWorkspaceTableBlock(node, block)) {
+      if (renderWorkspaceStructuredBlock(node, block)) {
         changed = true;
       }
     });
@@ -395,6 +530,7 @@ export default function DocsEditor() {
     node.removeAttribute("data-workspace-block-id");
     node.removeAttribute("data-workspace-block-version");
     node.removeAttribute("data-workspace-block-mode");
+    node.removeAttribute("data-workspace-block-kind");
     node.contentEditable = "true";
     node.classList.remove("docsWorkspaceBlock");
     node.querySelector(".docsWorkspaceBlockBadge")?.remove();
