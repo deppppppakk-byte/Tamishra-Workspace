@@ -15,7 +15,13 @@ if (!["hosted", "native"].includes(target)) {
 
 const env = {
   ...process.env,
-  WORKSPACE_BASE_PATH: target === "hosted" ? "/workspace" : "/"
+  WORKSPACE_BASE_PATH: target === "hosted" ? "/workspace" : "/",
+  NEXT_PUBLIC_WORKSPACE_API_BASE:
+    process.env.NEXT_PUBLIC_WORKSPACE_API_BASE ||
+    (target === "hosted"
+      ? "/api/workspace"
+      : process.env.WORKSPACE_NATIVE_API_BASE ||
+        "https://tamishra.in/api/workspace")
 };
 
 const npmExecPath = process.env.npm_execpath;
