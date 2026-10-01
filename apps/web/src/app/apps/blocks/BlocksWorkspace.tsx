@@ -41,7 +41,10 @@ const targetApps = {
     { id: "slides", label: "Slides" },
     { id: "docs", label: "Docs" }
   ],
-  chart: [] as Array<{ id: string; label: string }>,
+  chart: [
+    { id: "slides", label: "Slides" },
+    { id: "docs", label: "Docs" }
+  ],
   form: [] as Array<{ id: string; label: string }>,
   reference: [] as Array<{ id: string; label: string }>,
   custom: [] as Array<{ id: string; label: string }>
