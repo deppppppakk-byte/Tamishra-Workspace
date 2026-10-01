@@ -62,11 +62,9 @@ export async function exportDeckToPptx(deck: ExportDeck) {
   pptx.company = "Tamishra";
   pptx.subject = "Presentation created in Tamishra Slides";
   pptx.title = deck.title;
-  pptx.lang = "en-IN";
   pptx.theme = {
     headFontFace: "Arial",
-    bodyFontFace: "Arial",
-    lang: "en-IN"
+    bodyFontFace: "Arial"
   };
 
   for (const sourceSlide of deck.slides) {
@@ -112,7 +110,7 @@ export async function exportDeckToPptx(deck: ExportDeck) {
           underline: element.underline ? { style: "sng" } : undefined,
           color: normalizeColor(element.color, "172033"),
           align: element.align ?? "left",
-          valign: "mid",
+          valign: "middle",
           transparency: objectTransparency,
           shadow
         });
@@ -185,7 +183,9 @@ export async function exportDeckToPptx(deck: ExportDeck) {
         const rows = element.tableData?.length
           ? element.tableData
           : [["A", "B", "C"], ["1", "2", "3"]];
-        slide.addTable(rows, {
+        slide.addTable(
+          rows.map((row) => row.map((text) => ({ text }))),
+          {
           x,
           y,
           w,
@@ -201,7 +201,8 @@ export async function exportDeckToPptx(deck: ExportDeck) {
           fontSize: 12,
           margin: 0.05,
           autoFit: false
-        });
+          }
+        );
         continue;
       }
 
@@ -233,8 +234,6 @@ export async function exportDeckToPptx(deck: ExportDeck) {
             showTitle: false,
             showValue: false,
             chartColors: [normalizeColor(element.fill, "6F5DF5")],
-            showCatName: false,
-            showSerName: false,
             catAxisLabelFontFace: "Arial",
             valAxisLabelFontFace: "Arial",
             border: { color: "D5D9E1", pt: 1 }
