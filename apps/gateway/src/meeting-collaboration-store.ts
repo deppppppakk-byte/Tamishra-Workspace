@@ -6,6 +6,8 @@ export type MeetingControls = {
   chatEnabled: boolean;
   reactionsEnabled: boolean;
   handRaiseEnabled: boolean;
+  participantMicrophoneEnabled: boolean;
+  participantCameraEnabled: boolean;
   updatedAt: string;
 };
 
@@ -46,7 +48,12 @@ export interface MeetingCollaborationStore {
     roomName: string,
     patch: Partial<Pick<
       MeetingControls,
-      "locked" | "chatEnabled" | "reactionsEnabled" | "handRaiseEnabled"
+      | "locked"
+      | "chatEnabled"
+      | "reactionsEnabled"
+      | "handRaiseEnabled"
+      | "participantMicrophoneEnabled"
+      | "participantCameraEnabled"
     >>
   ): Promise<MeetingControls>;
   addMessage(
@@ -93,6 +100,10 @@ function toControls(row: Record<string, unknown>): MeetingControls {
     chatEnabled: row.chat_enabled !== false,
     reactionsEnabled: row.reactions_enabled !== false,
     handRaiseEnabled: row.hand_raise_enabled !== false,
+    participantMicrophoneEnabled:
+      row.participant_microphone_enabled !== false,
+    participantCameraEnabled:
+      row.participant_camera_enabled !== false,
     updatedAt: row.updated_at
       ? new Date(String(row.updated_at)).toISOString()
       : nowIso()
@@ -154,6 +165,8 @@ class MemoryMeetingCollaborationStore
         chatEnabled: true,
         reactionsEnabled: true,
         handRaiseEnabled: true,
+        participantMicrophoneEnabled: true,
+        participantCameraEnabled: true,
         updatedAt: nowIso()
       });
     }
@@ -285,6 +298,8 @@ class PostgresMeetingCollaborationStore
         chat_enabled boolean not null default true,
         reactions_enabled boolean not null default true,
         hand_raise_enabled boolean not null default true,
+        participant_microphone_enabled boolean not null default true,
+        participant_camera_enabled boolean not null default true,
         updated_at timestamptz not null default now()
       )
     `;
@@ -354,7 +369,8 @@ class PostgresMeetingCollaborationStore
     await this.ensureRoom(roomName);
     const rows = await this.sql`
       select locked, chat_enabled, reactions_enabled,
-        hand_raise_enabled, updated_at
+        hand_raise_enabled, participant_microphone_enabled,
+        participant_camera_enabled, updated_at
       from workspace_meeting_controls
       where room_name=${roomName}
       limit 1
@@ -376,6 +392,12 @@ class PostgresMeetingCollaborationStore
       patch.reactionsEnabled ?? current.reactionsEnabled;
     const handRaiseEnabled =
       patch.handRaiseEnabled ?? current.handRaiseEnabled;
+    const participantMicrophoneEnabled =
+      patch.participantMicrophoneEnabled ??
+      current.participantMicrophoneEnabled;
+    const participantCameraEnabled =
+      patch.participantCameraEnabled ??
+      current.participantCameraEnabled;
 
     const rows = await this.sql`
       update workspace_meeting_controls
@@ -384,10 +406,13 @@ class PostgresMeetingCollaborationStore
         chat_enabled=${chatEnabled},
         reactions_enabled=${reactionsEnabled},
         hand_raise_enabled=${handRaiseEnabled},
+        participant_microphone_enabled=${participantMicrophoneEnabled},
+        participant_camera_enabled=${participantCameraEnabled},
         updated_at=now()
       where room_name=${roomName}
       returning locked, chat_enabled, reactions_enabled,
-        hand_raise_enabled, updated_at
+        hand_raise_enabled, participant_microphone_enabled,
+        participant_camera_enabled, updated_at
     `;
     return toControls(rows[0] as Record<string, unknown>);
   }
