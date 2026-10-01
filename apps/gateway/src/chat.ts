@@ -608,6 +608,13 @@ export async function handleChatRequest(
         createdBy: authorization.user.id,
         memberIds: requestedMemberIds
       });
+      await emitChatEvent({
+        organizationId,
+        conversationId: conversation.id,
+        actorId: authorization.user.id,
+        type: "conversation.created",
+        payload: { conversationId: conversation.id, kind: conversation.kind }
+      });
 
       sendJson(response, 201, { conversation }, origin, allowedOrigins);
       return true;
@@ -660,6 +667,13 @@ export async function handleChatRequest(
         throw Object.assign(new Error("conversation_member_outside_organization"), { status: 400 });
       }
       const member = await store.addMember(conversationId, userId, role);
+      await emitChatEvent({
+        organizationId: conversation.organizationId,
+        conversationId,
+        actorId: authorization.user.id,
+        type: "member.changed",
+        payload: { action: "added", userId, role }
+      });
       sendJson(response, 201, { member }, origin, allowedOrigins);
       return true;
     }
@@ -691,7 +705,145 @@ export async function handleChatRequest(
       }
 
       const removed = await store.removeMember(conversationId, targetUserId);
+      if (removed) {
+        await emitChatEvent({
+          organizationId: conversation.organizationId,
+          conversationId,
+          actorId: authorization.user.id,
+          type: "member.changed",
+          payload: { action: "removed", userId: targetUserId }
+        });
+      }
       sendJson(response, removed ? 200 : 404, { removed }, origin, allowedOrigins);
+      return true;
+    }
+
+    const conversationSettingsMatch = url.pathname.match(
+      /^\/v1\/chat\/conversations\/([^/]+)\/settings$/
+    );
+    if (conversationSettingsMatch && request.method === "PATCH") {
+      const conversationId = decodeSegment(conversationSettingsMatch[1]);
+      const conversation = await store.getConversationForUser(
+        conversationId,
+        authorization.user.id
+      );
+      if (!conversation) {
+        throw Object.assign(new Error("conversation_not_found"), { status: 404 });
+      }
+      const body = await readJson(request);
+      const settings = {
+        ...(typeof body.muted === "boolean" ? { muted: body.muted } : {}),
+        ...(typeof body.pinned === "boolean" ? { pinned: body.pinned } : {})
+      };
+      if (!Object.keys(settings).length) {
+        throw Object.assign(new Error("settings_required"), { status: 400 });
+      }
+      const member = await store.updateMemberSettings(
+        conversationId,
+        authorization.user.id,
+        settings
+      );
+      if (!member) {
+        throw Object.assign(new Error("conversation_not_found"), { status: 404 });
+      }
+      await emitChatEvent({
+        organizationId: conversation.organizationId,
+        conversationId,
+        actorId: authorization.user.id,
+        targetUserId: authorization.user.id,
+        type: "settings.changed",
+        payload: settings
+      });
+      sendJson(response, 200, { member }, origin, allowedOrigins);
+      return true;
+    }
+
+    const conversationFileMatch = url.pathname.match(
+      /^\/v1\/chat\/conversations\/([^/]+)\/files$/
+    );
+    if (conversationFileMatch && request.method === "POST") {
+      const conversationId = decodeSegment(conversationFileMatch[1]);
+      const conversation = await store.getConversationForUser(
+        conversationId,
+        authorization.user.id
+      );
+      if (!conversation) {
+        throw Object.assign(new Error("conversation_not_found"), { status: 404 });
+      }
+      const membership = membershipForOrganization(
+        authorization,
+        conversation.organizationId
+      );
+      if (!membership) {
+        throw Object.assign(new Error("organization_access_denied"), { status: 403 });
+      }
+      requireWorkspacePermission(membership.membership.role, "chat.send");
+
+      const name = cleanText(url.searchParams.get("name"), 255);
+      if (!name) throw Object.assign(new Error("file_name_required"), { status: 400 });
+      const rawContentType = Array.isArray(request.headers["content-type"])
+        ? request.headers["content-type"][0]
+        : request.headers["content-type"];
+      const mimeType =
+        cleanText(String(rawContentType ?? "").split(";")[0], 120) ||
+        "application/octet-stream";
+      const bytes = await readBinary(request);
+      const attachment = await store.createFile({
+        organizationId: conversation.organizationId,
+        conversationId,
+        uploaderId: authorization.user.id,
+        name,
+        mimeType,
+        bytes
+      });
+      sendJson(response, 201, { attachment }, origin, allowedOrigins);
+      return true;
+    }
+
+    const conversationTypingMatch = url.pathname.match(
+      /^\/v1\/chat\/conversations\/([^/]+)\/typing$/
+    );
+    if (conversationTypingMatch && request.method === "GET") {
+      const conversationId = decodeSegment(conversationTypingMatch[1]);
+      const conversation = await store.getConversationForUser(
+        conversationId,
+        authorization.user.id
+      );
+      if (!conversation) {
+        throw Object.assign(new Error("conversation_not_found"), { status: 404 });
+      }
+      const typing = (await store.listTyping(conversationId)).filter(
+        (item) => item.userId !== authorization.user.id
+      );
+      sendJson(response, 200, { typing }, origin, allowedOrigins);
+      return true;
+    }
+
+    if (conversationTypingMatch && request.method === "POST") {
+      const conversationId = decodeSegment(conversationTypingMatch[1]);
+      const conversation = await store.getConversationForUser(
+        conversationId,
+        authorization.user.id
+      );
+      if (!conversation) {
+        throw Object.assign(new Error("conversation_not_found"), { status: 404 });
+      }
+      const body = await readJson(request);
+      const active = body.active === true;
+      const typing = await store.setTyping(
+        conversationId,
+        authorization.user.id,
+        authorization.user.displayName,
+        active
+      );
+      await emitChatEvent({
+        organizationId: conversation.organizationId,
+        conversationId,
+        actorId: authorization.user.id,
+        type: "typing.changed",
+        payload: { userId: authorization.user.id, active }
+      });
+      sendJson(response, 200, { typing }, origin, allowedOrigins);
       return true;
     }
 
