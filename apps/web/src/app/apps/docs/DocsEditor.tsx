@@ -445,7 +445,7 @@ export default function DocsEditor() {
     const editor = editorRef.current;
     if (!editor || !findQuery) return;
 
-    const escaped = findQuery.replace(/[.*+?^\${}()|[\]\\\\]/g, "\\\\    const escaped = findQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\  const handleExportText = () => {");");
+    const escaped = findQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const expression = new RegExp(
       wholeWord ? `\\b${escaped}\\b` : escaped,
       matchCase ? "g" : "gi"
