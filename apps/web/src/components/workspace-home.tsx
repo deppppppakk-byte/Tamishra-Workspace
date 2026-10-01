@@ -201,7 +201,7 @@ export function WorkspaceHomeClient() {
               ref={fileInputRef}
               hidden
               type="file"
-              accept=".tmdoc,.tmsh,.tmsl,.docx,.csv,.json"
+              accept=".tmdoc,.tmsh,.tmsl,.docx,.csv,.json,.pdf"
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 event.target.value = "";
