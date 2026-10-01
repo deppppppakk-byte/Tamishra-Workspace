@@ -76,6 +76,7 @@ export function MeetRoomClient() {
   const [audit, setAudit] = useState<MeetingAuditEvent[]>([]);
   const [chatDraft, setChatDraft] = useState("");
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("chat");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [collaborationBusy, setCollaborationBusy] = useState(false);
   const [choices, setChoices] = useState<JoinChoices | null>(null);
   const [token, setToken] = useState("");
@@ -88,6 +89,12 @@ export function MeetRoomClient() {
   const [connected, setConnected] = useState(false);
 
   const isHost = context?.role === "host";
+
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 720px)").matches) {
+      setSidebarOpen(false);
+    }
+  }, []);
 
   const loadContext = useCallback(
     async (room: string, key: string) => {
@@ -160,6 +167,7 @@ export function MeetRoomClient() {
     void loadContext(room, access.accessKey)
       .then((result) => {
         if (result.role === "host") {
+          setSidebarTab("people");
           return Promise.all([
             loadParticipants(room, access.accessKey).catch(() => undefined),
             loadAttendance(room, access.accessKey).catch(() => undefined)
@@ -742,7 +750,10 @@ export function MeetRoomClient() {
 
             <button
               className={styles.toolbarButton}
-              onClick={() => setSidebarTab("chat")}
+              onClick={() => {
+                setSidebarTab("chat");
+                setSidebarOpen(true);
+              }}
             >
               Chat {messages.length > 0 ? "· " + messages.length : ""}
             </button>
@@ -750,7 +761,10 @@ export function MeetRoomClient() {
             {isHost && (
               <button
                 className={styles.toolbarButton}
-                onClick={() => setSidebarTab("people")}
+                onClick={() => {
+                  setSidebarTab("people");
+                  setSidebarOpen(true);
+                }}
               >
                 People · {participants.length}
               </button>
@@ -778,7 +792,13 @@ export function MeetRoomClient() {
           </div>
         </section>
 
-        <aside className={styles.hostPanel}>
+        <aside
+          className={
+            sidebarOpen
+              ? styles.hostPanel
+              : styles.hostPanelHidden
+          }
+        >
           <div className={styles.sidebarTabs}>
             <button
               className={sidebarTab === "chat" ? styles.sidebarTabActive : ""}
@@ -800,6 +820,13 @@ export function MeetRoomClient() {
                 Activity
               </button>
             )}
+            <button
+              className={styles.sidebarClose}
+              aria-label="Close meeting sidebar"
+              onClick={() => setSidebarOpen(false)}
+            >
+              ×
+            </button>
           </div>
 
           {sidebarTab === "chat" && (
