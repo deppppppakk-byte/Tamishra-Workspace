@@ -594,6 +594,18 @@ export default function SlidesEditorAdvanced() {
     const byId = new Map(shelf.blocks.map((block) => [block.id, block]));
     const targetResourceId = nativePath ?? "slides:local";
 
+    if (nativePath) {
+      unregisterWorkspaceConsumerLink({
+        targetApp: "slides",
+        targetResourceId: "slides:local"
+      });
+    }
+
+    unregisterWorkspaceConsumerLink({
+      targetApp: "slides",
+      targetResourceId
+    });
+
     slides.forEach((slide) => {
       slide.elements.forEach((element) => {
         if (
