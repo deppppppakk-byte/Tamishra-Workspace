@@ -1,0 +1,515 @@
+.app {
+  --sheet-green: #14875c;
+  --sheet-green-dark: #0d6d49;
+  --sheet-border: #d9e0e7;
+  min-height: 100vh;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  color: #172033;
+  background: #f4f6f8;
+}
+
+.topbar {
+  min-height: 68px;
+  padding: 8px 14px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid rgba(23, 32, 51, 0.08);
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(18px);
+}
+
+.logo {
+  width: 43px;
+  height: 43px;
+  border-radius: 13px;
+  display: grid;
+  place-items: center;
+  color: white;
+  background: linear-gradient(145deg, #0d6d49, #1ca473);
+  font-weight: 900;
+  box-shadow: 0 9px 22px rgba(20, 135, 92, 0.23);
+}
+
+.identity {
+  min-width: 0;
+}
+
+.titleLine {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.titleInput {
+  width: min(46vw, 500px);
+  min-width: 160px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 3px 6px;
+  outline: none;
+  background: transparent;
+  color: #172033;
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.titleInput:hover,
+.titleInput:focus {
+  border-color: rgba(20, 135, 92, 0.2);
+  background: rgba(20, 135, 92, 0.035);
+}
+
+.saveState {
+  color: #798597;
+  font-size: 10px;
+}
+
+.menuRow {
+  margin-top: 4px;
+  display: flex;
+  gap: 1px;
+}
+
+.menuRow button {
+  border: 0;
+  border-radius: 7px;
+  padding: 3px 7px;
+  color: #5a6576;
+  background: transparent;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.menuRow button:hover {
+  color: #172033;
+  background: #f0f4f3;
+}
+
+.topActions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.topActions button {
+  height: 37px;
+  border-radius: 11px;
+  cursor: pointer;
+}
+
+.iconButton {
+  width: 37px;
+  border: 1px solid rgba(23, 32, 51, 0.09);
+  background: #f7f9fb;
+}
+
+.shareButton {
+  padding: 0 15px;
+  border: 0;
+  color: white;
+  background: var(--sheet-green);
+  font-weight: 750;
+}
+
+.profile {
+  width: 39px;
+  border: 0;
+  border-radius: 50% !important;
+  color: white;
+  background: #172033;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.toolbar {
+  min-height: 48px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  border-bottom: 1px solid rgba(23, 32, 51, 0.08);
+  background: #f8fafb;
+  scrollbar-width: thin;
+}
+
+.toolGroup {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.toolbar button,
+.formatSelect,
+.zoomSelect,
+.colorControl {
+  min-height: 32px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #425066;
+  background: transparent;
+}
+
+.toolbar button {
+  min-width: 32px;
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.toolbar button:hover,
+.formatSelect:hover,
+.zoomSelect:hover,
+.colorControl:hover {
+  border-color: rgba(23, 32, 51, 0.08);
+  background: white;
+}
+
+.activeTool {
+  color: var(--sheet-green-dark) !important;
+  border-color: rgba(20, 135, 92, 0.16) !important;
+  background: rgba(20, 135, 92, 0.09) !important;
+}
+
+.divider {
+  width: 1px;
+  height: 23px;
+  flex: 0 0 auto;
+  margin: 0 2px;
+  background: rgba(23, 32, 51, 0.1);
+}
+
+.formatSelect,
+.zoomSelect {
+  padding: 0 27px 0 9px;
+  outline: none;
+  cursor: pointer;
+}
+
+.colorControl {
+  position: relative;
+  min-width: 32px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.colorControl input {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.actionButton {
+  color: var(--sheet-green-dark) !important;
+  border-color: rgba(20, 135, 92, 0.13) !important;
+  background: rgba(20, 135, 92, 0.055) !important;
+  font-weight: 700;
+}
+
+.toolbarSpacer {
+  flex: 1 0 20px;
+}
+
+.hiddenInput {
+  display: none;
+}
+
+.formulaBar {
+  min-height: 36px;
+  display: grid;
+  grid-template-columns: 76px 42px minmax(0, 1fr);
+  border-bottom: 1px solid var(--sheet-border);
+  background: white;
+}
+
+.nameBox,
+.fx {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid var(--sheet-border);
+  color: #556274;
+  font-size: 11px;
+}
+
+.nameBox {
+  font-weight: 750;
+}
+
+.fx {
+  font-style: italic;
+  font-weight: 700;
+}
+
+.formulaBar input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  padding: 0 11px;
+  color: #1e293b;
+  background: white;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.sheetArea {
+  min-height: 0;
+  overflow: hidden;
+  background: white;
+}
+
+.gridScroller {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  outline: none;
+  background: white;
+  scrollbar-color: #c0c8d2 #eef1f4;
+}
+
+.gridInner {
+  position: relative;
+  min-height: 100%;
+  background: white;
+}
+
+.columnHeader {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  height: 30px;
+  display: grid;
+  grid-template-columns: 54px repeat(52, 112px);
+  border-bottom: 1px solid #cfd7df;
+  background: #f4f6f8;
+}
+
+.cornerCell,
+.columnCell,
+.rowNumber {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #5e6979;
+  background: #f4f6f8;
+  font-size: 10px;
+  font-weight: 700;
+  user-select: none;
+}
+
+.cornerCell,
+.columnCell {
+  border-right: 1px solid #d9e0e7;
+}
+
+.rowsLayer {
+  position: relative;
+  width: 100%;
+}
+
+.gridRow {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 30px;
+  display: grid;
+  grid-template-columns: 54px repeat(52, 112px);
+}
+
+.rowNumber {
+  position: sticky;
+  left: 0;
+  z-index: 8;
+  border-right: 1px solid #cfd7df;
+  border-bottom: 1px solid #e1e6eb;
+}
+
+.cellWrap {
+  position: relative;
+  min-width: 0;
+  height: 30px;
+  border-right: 1px solid #e2e7ec;
+  border-bottom: 1px solid #e2e7ec;
+  background: white;
+  overflow: hidden;
+}
+
+.cell,
+.cellSelected {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  display: block;
+  overflow: hidden;
+  border: 0;
+  padding: 0 7px;
+  color: inherit;
+  background: transparent;
+  text-align: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: cell;
+  font: inherit;
+  font-size: 11px;
+}
+
+.cellSelected {
+  position: relative;
+  z-index: 3;
+  outline: 2px solid var(--sheet-green);
+  outline-offset: -2px;
+}
+
+.cellSelected::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 5px;
+  height: 5px;
+  border: 1px solid white;
+  background: var(--sheet-green);
+}
+
+.cellEditor {
+  position: absolute;
+  inset: -1px;
+  z-index: 6;
+  width: calc(100% + 2px);
+  height: calc(100% + 2px);
+  border: 2px solid var(--sheet-green);
+  outline: 0;
+  padding: 0 6px;
+  background: white;
+  color: #172033;
+  font: inherit;
+  font-size: 11px;
+}
+
+.footer {
+  min-height: 39px;
+  display: flex;
+  align-items: center;
+  border-top: 1px solid var(--sheet-border);
+  background: #f8fafb;
+}
+
+.sheetTabs {
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+}
+
+.sheetTabs button {
+  height: 38px;
+  border: 0;
+  border-right: 1px solid rgba(23, 32, 51, 0.07);
+  background: transparent;
+  color: #5c6879;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.addSheet,
+.deleteSheet {
+  width: 39px;
+  flex: 0 0 39px;
+  font-size: 18px;
+}
+
+.sheetTab,
+.activeTab {
+  min-width: 105px;
+  padding: 0 15px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.activeTab {
+  position: relative;
+  color: var(--sheet-green-dark) !important;
+  background: white !important;
+}
+
+.activeTab::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--sheet-green);
+}
+
+.deleteSheet:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.status {
+  margin-left: auto;
+  padding: 0 11px;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  color: #778395;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    min-height: 58px;
+    padding-inline: 9px;
+  }
+
+  .logo {
+    width: 38px;
+    height: 38px;
+    border-radius: 11px;
+  }
+
+  .menuRow,
+  .saveState,
+  .iconButton,
+  .profile {
+    display: none;
+  }
+
+  .titleInput {
+    width: 100%;
+    min-width: 100px;
+    font-size: 13px;
+  }
+
+  .shareButton {
+    padding-inline: 11px;
+  }
+
+  .toolbar {
+    min-height: 44px;
+    padding-inline: 6px;
+  }
+
+  .actionButton {
+    display: none;
+  }
+
+  .formulaBar {
+    grid-template-columns: 58px 34px minmax(0, 1fr);
+  }
+
+  .status span:nth-child(2) {
+    display: none;
+  }
+}
