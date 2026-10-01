@@ -1421,22 +1421,46 @@ export default function FormsWorkspace() {
               </div>
             )}
 
-            {mode === "preview" && (
+            {mode === "preview" && previewPage && (
               <div className={styles.previewArea}>
                 <div
                   className={styles.previewCard}
                   data-surface={selectedForm.theme.surface}
                   style={{ "--form-accent": selectedForm.theme.accent } as React.CSSProperties}
                 >
+                  <div className={styles.previewProgress}>
+                    <span>
+                      Page {selectedForm.pages.findIndex((page) => page.id === previewPage.id) + 1} of {selectedForm.pages.length}
+                    </span>
+                    <div>
+                      <i
+                        style={{
+                          width:
+                            ((selectedForm.pages.findIndex((page) => page.id === previewPage.id) + 1) /
+                              Math.max(1, selectedForm.pages.length)) *
+                              100 +
+                            "%"
+                        }}
+                      />
+                    </div>
+                  </div>
+
                   <div className={styles.previewHeader}>
                     <span>LIVE PREVIEW</span>
                     <h1>{selectedForm.title || "Untitled form"}</h1>
                     {selectedForm.description && <p>{selectedForm.description}</p>}
+                    {selectedForm.pages.length > 1 && (
+                      <div className={styles.previewPageHeading}>
+                        <strong>{previewPage.title}</strong>
+                        {previewPage.description && <small>{previewPage.description}</small>}
+                      </div>
+                    )}
                     {selectedForm.status === "closed" && <div className={styles.closedBanner}>This form is closed.</div>}
                   </div>
 
                   <div className={styles.previewFields}>
-                    {selectedForm.settings.collectEmail && (
+                    {selectedForm.settings.collectEmail &&
+                      previewPage.id === selectedForm.pages[0]?.id && (
                       <label className={styles.previewField}>
                         <div><strong>Respondent email</strong><em>*</em></div>
                         <input
@@ -1451,7 +1475,7 @@ export default function FormsWorkspace() {
                         {errors.__respondentEmail && <small>{errors.__respondentEmail}</small>}
                       </label>
                     )}
-                    {selectedForm.fields.filter((field) => isFieldVisible(field, answers)).map((field) => (
+                    {previewFields.map((field) => (
                       <label className={styles.previewField} key={field.id}>
                         <div>
                           <strong>{field.label}</strong>
@@ -1471,13 +1495,24 @@ export default function FormsWorkspace() {
                     ))}
                   </div>
 
-                  <button
-                    className={styles.submitButton}
-                    disabled={selectedForm.status === "closed"}
-                    onClick={submitPreview}
-                  >
-                    Submit response
-                  </button>
+                  <div className={styles.previewActions}>
+                    <button
+                      className={styles.previewBack}
+                      disabled={!previewHistory.length || selectedForm.status === "closed"}
+                      onClick={backPreview}
+                    >
+                      Back
+                    </button>
+                    <button
+                      className={styles.submitButton}
+                      disabled={selectedForm.status === "closed"}
+                      onClick={advancePreview}
+                    >
+                      {getNextPageId(selectedForm, previewPage.id, answers)
+                        ? "Continue"
+                        : "Submit response"}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -1505,7 +1540,12 @@ export default function FormsWorkspace() {
                     <strong>Response table</strong>
                     <span>Rows are submissions. Columns are form fields.</span>
                   </div>
-                  <button onClick={exportCsv} disabled={!formResponses.length}>Export CSV</button>
+                  <div className={styles.responseActions}>
+                    {selectedForm.status !== "draft" && (
+                      <button onClick={() => void loadCloudResponses()}>Refresh cloud</button>
+                    )}
+                    <button onClick={exportCsv} disabled={!formResponses.length}>Export CSV</button>
+                  </div>
                 </div>
 
                 {formResponses.length ? (
