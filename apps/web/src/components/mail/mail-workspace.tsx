@@ -121,7 +121,7 @@ export function MailWorkspace() {
   const [checked, setChecked] = useState<string[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
   const [providerPanelOpen, setProviderPanelOpen] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState("google");
+  const [selectedProvider, setSelectedProvider] = useState("tamishra");
   const [mobileReading, setMobileReading] = useState(false);
   const [compose, setCompose] = useState({ to: "", subject: "", body: "" });
   const [notice, setNotice] = useState("");
@@ -625,7 +625,7 @@ export function MailWorkspace() {
                     <span>{provider.name.slice(0, 1)}</span>
                     <div>
                       <strong>{provider.name}</strong>
-                      <small>{provider.connectionMethod === "oauth" ? "OAuth" : provider.connectionMethod === "native" ? "Native" : "Mail server"}</small>
+                      <small>{provider.connectionMethod === "native" ? "Tamishra native" : "Mail server"}</small>
                     </div>
                     {provider.recommended && <b>Recommended</b>}
                   </button>
@@ -672,10 +672,10 @@ export function MailWorkspace() {
                       </div>
                     ) : (
                       <div className={styles.oauthNotice}>
-                        <strong>Secure connection required</strong>
+                        <strong>Tamishra-native account</strong>
                         <p>
-                          Tamishra will start this provider’s authorization flow through a server/native gateway.
-                          OAuth tokens will never be written to browser local storage.
+                          This mailbox uses the Tamishra Workspace identity and secure gateway.
+                          No Google or Microsoft account is required.
                         </p>
                       </div>
                     )}
@@ -688,7 +688,7 @@ export function MailWorkspace() {
                           setProviderPanelOpen(false);
                           setNotice(
                             provider.key === "tamishra"
-                              ? "Tamishra Mail service is reserved for the first-party mailbox backend"
+                              ? "Tamishra Mail selected — first-party mailbox setup will use the Workspace gateway"
                               : `${provider.name} selected — secure gateway credentials are required to complete connection`
                           );
                           window.setTimeout(() => setNotice(""), 3600);
