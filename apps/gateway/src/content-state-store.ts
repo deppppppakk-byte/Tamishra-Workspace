@@ -120,31 +120,60 @@ class PostgresWorkspaceContentStore implements WorkspaceContentStore {
   ): Promise<StoredWorkspaceContent> {
     await this.ready();
 
-    if (expectedRevision !== undefined && expectedRevision !== null) {
-      const current = await this.get(userId, namespace);
-      if ((current?.revision ?? 0) !== expectedRevision) {
-        throw Object.assign(new Error("revision_conflict"), {
-          status: 409,
-          currentRevision: current?.revision ?? 0
-        });
-      }
+    const serialized = JSON.stringify(payload);
+    let rows;
+
+    if (expectedRevision === 0) {
+      rows = await this.sql`
+        INSERT INTO workspace_content_state (
+          user_id, namespace, revision, payload, updated_at
+        )
+        VALUES (
+          ${userId}, ${namespace}, 1, ${serialized}::jsonb, NOW()
+        )
+        ON CONFLICT (user_id, namespace) DO NOTHING
+        RETURNING user_id, namespace, revision, payload, updated_at
+      `;
+    } else if (
+      expectedRevision !== undefined &&
+      expectedRevision !== null
+    ) {
+      rows = await this.sql`
+        UPDATE workspace_content_state
+        SET
+          revision = revision + 1,
+          payload = ${serialized}::jsonb,
+          updated_at = NOW()
+        WHERE
+          user_id = ${userId}
+          AND namespace = ${namespace}
+          AND revision = ${expectedRevision}
+        RETURNING user_id, namespace, revision, payload, updated_at
+      `;
+    } else {
+      rows = await this.sql`
+        INSERT INTO workspace_content_state (
+          user_id, namespace, revision, payload, updated_at
+        )
+        VALUES (
+          ${userId}, ${namespace}, 1, ${serialized}::jsonb, NOW()
+        )
+        ON CONFLICT (user_id, namespace)
+        DO UPDATE SET
+          revision = workspace_content_state.revision + 1,
+          payload = EXCLUDED.payload,
+          updated_at = NOW()
+        RETURNING user_id, namespace, revision, payload, updated_at
+      `;
     }
 
-    const serialized = JSON.stringify(payload);
-    const rows = await this.sql`
-      INSERT INTO workspace_content_state (
-        user_id, namespace, revision, payload, updated_at
-      )
-      VALUES (
-        ${userId}, ${namespace}, 1, ${serialized}::jsonb, NOW()
-      )
-      ON CONFLICT (user_id, namespace)
-      DO UPDATE SET
-        revision = workspace_content_state.revision + 1,
-        payload = EXCLUDED.payload,
-        updated_at = NOW()
-      RETURNING user_id, namespace, revision, payload, updated_at
-    `;
+    if (!rows.length) {
+      const current = await this.get(userId, namespace);
+      throw Object.assign(new Error("revision_conflict"), {
+        status: 409,
+        currentRevision: current?.revision ?? 0
+      });
+    }
 
     const row = rows[0] as Record<string, unknown>;
     return {
