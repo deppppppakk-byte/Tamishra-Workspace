@@ -113,3 +113,34 @@ https://patra.in/api/*
 That API may reverse-proxy to the same Tamishra-owned gateway/service internally, but browser cookies and security headers should remain first-party to `patra.in`.
 
 The internal code may retain `mail` and `mail-core` naming for protocol/domain stability. User-facing branding is **Tamishra Patra** or simply **Patra**.
+
+
+## Mailbox domain policy
+
+Patra has two native mailbox namespaces.
+
+### Public Patra accounts
+
+Public registration creates addresses under:
+
+```text
+username@patra.in
+```
+
+This namespace is intended for normal public self-service signup.
+
+### Tamishra company accounts
+
+Tamishra company mailboxes use:
+
+```text
+name@tamishra.in
+```
+
+The `tamishra.in` mailbox namespace is reserved for authorized Tamishra company users.
+
+Public registration must **never** be allowed to claim a `@tamishra.in` address.
+
+Company addresses are provisioned only after Tamishra organization/admin authorization. They may use the same Patra client and delivery engine, but the address namespace and provisioning policy remain protected.
+
+The shared domain policy is implemented in `@tamishra/mail-core/domain-policy`.
