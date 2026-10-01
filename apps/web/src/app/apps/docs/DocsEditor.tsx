@@ -22,6 +22,7 @@ import {
   extractDocsOutline,
   importDocsDocx,
   loadDocsWorkspace,
+  mergeDocsWorkspaces,
   migrateLegacyDraft,
   mmToCssPx,
   moveDocsRecordToFolder,
@@ -48,6 +49,10 @@ import HeaderFooterSettingsPanel from "./HeaderFooterSettings";
 import PageSettings from "./PageSettings";
 import DocsProductionPanel, { type DocsPanelTab } from "./DocsProductionPanel";
 import { browserDocsDocxAdapter } from "./docx-browser";
+import {
+  pullDocsCloudWorkspace,
+  pushDocsCloudWorkspace
+} from "./docs-cloud";
 
 const STORAGE_KEY = "tamishra.docs.current.v2";
 const LEGACY_STORAGE_KEY = "tamishra.docs.current";
@@ -97,6 +102,9 @@ export default function DocsEditor() {
   const currentDocumentIdRef = useRef<string | null>(null);
   const collaborationChannelRef = useRef<BroadcastChannel | null>(null);
   const collaborationClientIdRef = useRef(createId("client"));
+  const cloudRevisionRef = useRef<number | null>(null);
+  const cloudHydratedRef = useRef(false);
+  const cloudAuthenticatedRef = useRef(false);
   const pageHistoryRef = useRef(new TransactionHistory<PageConfig>(100));
   const [title, setTitle] = useState("Untitled document");
   const [page, setPage] = useState<PageConfig>(() => createPageConfig());
@@ -135,6 +143,7 @@ export default function DocsEditor() {
   const [spellcheck, setSpellcheck] = useState(true);
   const [tableActive, setTableActive] = useState(false);
   const [collaborators, setCollaborators] = useState<string[]>([]);
+  const [cloudStatus, setCloudStatus] = useState("Local");
 
   const commitWorkspace = (next: DocsWorkspaceSnapshot) => {
     workspaceRef.current = next;
@@ -566,6 +575,75 @@ export default function DocsEditor() {
   useEffect(() => {
     registerDocsDocxAdapter(browserDocsDocxAdapter);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void pullDocsCloudWorkspace()
+      .then((remote) => {
+        if (cancelled) return;
+
+        cloudHydratedRef.current = true;
+        if (!remote) {
+          cloudAuthenticatedRef.current = false;
+          setCloudStatus("Local");
+          return;
+        }
+
+        cloudAuthenticatedRef.current = true;
+        cloudRevisionRef.current = remote.revision;
+        const merged = mergeDocsWorkspaces(workspaceRef.current, remote.workspace);
+        commitWorkspace(merged);
+        setCloudStatus("Cloud synced");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        cloudHydratedRef.current = true;
+        cloudAuthenticatedRef.current = false;
+        setCloudStatus("Offline");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!cloudHydratedRef.current || !cloudAuthenticatedRef.current) return;
+
+    setCloudStatus("Cloud saving…");
+    const timer = window.setTimeout(() => {
+      void pushDocsCloudWorkspace(workspace, cloudRevisionRef.current)
+        .then((saved) => {
+          if (!saved) {
+            cloudAuthenticatedRef.current = false;
+            setCloudStatus("Local");
+            return;
+          }
+          cloudRevisionRef.current = saved.revision;
+          setCloudStatus("Cloud synced");
+        })
+        .catch(async (error) => {
+          if ((error as { status?: number }).status === 409) {
+            try {
+              const remote = await pullDocsCloudWorkspace();
+              if (remote) {
+                cloudRevisionRef.current = remote.revision;
+                const merged = mergeDocsWorkspaces(workspaceRef.current, remote.workspace);
+                commitWorkspace(merged);
+                setCloudStatus("Cloud merged");
+                return;
+              }
+            } catch {
+              // Fall through to offline state.
+            }
+          }
+          setCloudStatus("Offline");
+        });
+    }, 1200);
+
+    return () => window.clearTimeout(timer);
+  }, [workspace]);
 
   useEffect(() => {
     collaborationChannelRef.current?.close();
@@ -2445,6 +2523,7 @@ td,th{border:1px solid #d0d5dd;padding:8px}
         <span>{editingMode}</span>
         <span className="docsStatusSpacer" />
         <span>{savedState}</span>
+        <span>{cloudStatus}</span>
         <span>{zoom}%</span>
       </footer>
     </main>
