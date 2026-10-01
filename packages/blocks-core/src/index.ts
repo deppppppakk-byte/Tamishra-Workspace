@@ -16,6 +16,18 @@ export type TamishraBlockSourceApp =
   | "files"
   | "workspace";
 
+export type TamishraBlockBinding = {
+  mode: "snapshot" | "live";
+  source: {
+    app: TamishraBlockSourceApp;
+    resourceId: string;
+    subresourceId?: string;
+    locator?: string;
+    revision?: string | number;
+  };
+  lastSyncedAt: string;
+};
+
 export type TamishraBlock<TPayload = unknown> = {
   id: string;
   title: string;
@@ -26,6 +38,7 @@ export type TamishraBlock<TPayload = unknown> = {
   createdAt: string;
   updatedAt: string;
   version: number;
+  binding?: TamishraBlockBinding;
 };
 
 export type TamishraBlockShelf = {
@@ -59,6 +72,8 @@ export function createBlock<TPayload>(input: {
   sourceApp: TamishraBlockSourceApp;
   payload: TPayload;
   tags?: string[];
+  binding?: Omit<TamishraBlockBinding, "lastSyncedAt"> &
+    Partial<Pick<TamishraBlockBinding, "lastSyncedAt">>;
 }): TamishraBlock<TPayload> {
   const now = new Date().toISOString();
   return {
@@ -70,7 +85,14 @@ export function createBlock<TPayload>(input: {
     tags: uniqueStrings(input.tags ?? []),
     createdAt: now,
     updatedAt: now,
-    version: 1
+    version: 1,
+    binding: input.binding
+      ? {
+          ...input.binding,
+          source: { ...input.binding.source },
+          lastSyncedAt: input.binding.lastSyncedAt ?? now
+        }
+      : undefined
   };
 }
 
@@ -120,6 +142,63 @@ export function upsertBlock(
     deleted,
     blocks: [next, ...shelf.blocks.filter((item) => item.id !== block.id)]
   };
+}
+
+export function refreshLiveBlock<TPayload>(
+  shelf: TamishraBlockShelf,
+  id: string,
+  payload: TPayload,
+  sourceRevision?: string | number
+): TamishraBlockShelf {
+  const now = new Date().toISOString();
+  let changed = false;
+
+  const blocks = shelf.blocks.map((block) => {
+    if (
+      block.id !== id ||
+      block.binding?.mode !== "live" ||
+      (sourceRevision !== undefined &&
+        block.binding.source.revision === sourceRevision)
+    ) {
+      return block;
+    }
+
+    changed = true;
+    return {
+      ...block,
+      payload,
+      updatedAt: now,
+      version: block.version + 1,
+      binding: {
+        ...block.binding,
+        source: {
+          ...block.binding.source,
+          revision: sourceRevision ?? block.binding.source.revision
+        },
+        lastSyncedAt: now
+      }
+    };
+  });
+
+  return changed ? { ...shelf, blocks } : shelf;
+}
+
+export function liveBlocksForSource(
+  shelf: TamishraBlockShelf,
+  source: {
+    app: TamishraBlockSourceApp;
+    resourceId: string;
+    subresourceId?: string;
+  }
+) {
+  return shelf.blocks.filter(
+    (block) =>
+      block.binding?.mode === "live" &&
+      block.binding.source.app === source.app &&
+      block.binding.source.resourceId === source.resourceId &&
+      (source.subresourceId === undefined ||
+        block.binding.source.subresourceId === source.subresourceId)
+  );
 }
 
 export function deleteBlock(
