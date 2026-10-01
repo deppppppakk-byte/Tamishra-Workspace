@@ -106,6 +106,40 @@ export function upsertForm(snapshot: FormsSnapshot, form: TamishraForm) {
   };
 }
 
+export function mergeFormsSnapshots(
+  local: FormsSnapshot,
+  remote: FormsSnapshot
+): FormsSnapshot {
+  const forms = new Map<string, TamishraForm>();
+  for (const form of [...remote.forms, ...local.forms]) {
+    const current = forms.get(form.id);
+    if (!current || form.updatedAt.localeCompare(current.updatedAt) >= 0) {
+      forms.set(form.id, form);
+    }
+  }
+
+  const responses = new Map<string, FormResponse>();
+  for (const response of [...remote.responses, ...local.responses]) {
+    const current = responses.get(response.id);
+    if (
+      !current ||
+      response.submittedAt.localeCompare(current.submittedAt) >= 0
+    ) {
+      responses.set(response.id, response);
+    }
+  }
+
+  return {
+    version: 1,
+    forms: Array.from(forms.values()).sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt)
+    ),
+    responses: Array.from(responses.values()).sort((left, right) =>
+      right.submittedAt.localeCompare(left.submittedAt)
+    )
+  };
+}
+
 export function addResponse(
   snapshot: FormsSnapshot,
   formId: string,
