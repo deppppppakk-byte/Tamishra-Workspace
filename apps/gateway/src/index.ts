@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { handleMeetingRequest } from "./meetings.js";
 import { handleIdentityRequest } from "./identity.js";
+import { handlePatraRequest } from "./patra.js";
 
 const port = Number(process.env.WORKSPACE_GATEWAY_PORT ?? process.env.PORT ?? 4100);
 
@@ -83,7 +84,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       {
         service: "tamishra-workspace-gateway",
         status: "ok",
-        version: "0.7.0"
+        version: "0.8.0"
       },
       origin
     );
@@ -115,31 +116,15 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     return;
   }
 
-  if (request.method === "GET" && url.pathname === "/v1/mail/providers") {
-    json(
+  if (
+    await handlePatraRequest(
+      request,
       response,
-      200,
-      {
-        providers: [
-          {
-            key: "tamishra",
-            name: "Tamishra Patra",
-            domains: [
-              { domain: "patra.in", audience: "public", selfRegistration: true },
-              { domain: "tamishra.in", audience: "company", selfRegistration: false }
-            ],
-            method: "native",
-            status: "primary"
-          },
-          {
-            key: "imap-smtp",
-            method: "gateway-secret",
-            status: "optional"
-          }
-        ]
-      },
-      origin
-    );
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
     return;
   }
 
