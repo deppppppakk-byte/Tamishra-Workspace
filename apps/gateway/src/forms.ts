@@ -78,7 +78,7 @@ function ruleMatches(
   rule: Record<string, unknown>,
   answers: Record<string, unknown>
 ) {
-  const sourceId = String(rule.fieldId ?? "");
+  const sourceId = String(rule.fieldId ?? rule.sourceFieldId ?? "");
   const raw = answers[sourceId];
   const value = Array.isArray(raw) ? raw.map(String).join(", ") : String(raw ?? "");
   const expected = String(rule.value ?? "");
@@ -97,11 +97,70 @@ function ruleMatches(
   }
 }
 
+function reachableFieldIds(
+  form: Record<string, unknown>,
+  answers: Record<string, unknown>
+) {
+  const rawPages = Array.isArray(form.pages)
+    ? form.pages.filter((page) => page && typeof page === "object") as Record<string, unknown>[]
+    : [];
+  if (!rawPages.length) return null;
+
+  const pages = rawPages.map((page) => ({
+    id: String(page.id ?? ""),
+    fieldIds: stringArray(page.fieldIds),
+    branchRules: Array.isArray(page.branchRules)
+      ? page.branchRules.filter((rule) => rule && typeof rule === "object") as Record<string, unknown>[]
+      : [],
+    defaultNextPageId:
+      typeof page.defaultNextPageId === "string" ? page.defaultNextPageId : null
+  }));
+
+  const byId = new Map(pages.map((page) => [page.id, page]));
+  const reachable = new Set<string>();
+  const visited = new Set<string>();
+  let current = pages[0]?.id ?? "";
+  let guard = 0;
+
+  while (current && !visited.has(current) && guard <= pages.length) {
+    guard += 1;
+    visited.add(current);
+    const page = byId.get(current);
+    if (!page) break;
+    page.fieldIds.forEach((fieldId) => reachable.add(fieldId));
+
+    let next: string | null = null;
+    for (const rule of page.branchRules) {
+      if (ruleMatches(rule, answers)) {
+        const target = String(rule.targetPageId ?? "");
+        if (target && byId.has(target)) {
+          next = target;
+          break;
+        }
+      }
+    }
+
+    if (!next && page.defaultNextPageId && byId.has(page.defaultNextPageId)) {
+      next = page.defaultNextPageId;
+    }
+
+    if (!next) {
+      const index = pages.findIndex((candidate) => candidate.id === current);
+      next = pages[index + 1]?.id ?? null;
+    }
+
+    current = next ?? "";
+  }
+
+  return reachable;
+}
+
 function validateSubmission(
   form: Record<string, unknown>,
   answers: Record<string, unknown>
 ) {
   const errors: Record<string, string> = {};
+  const allowedFieldIds = reachableFieldIds(form, answers);
   const settings =
     form.settings && typeof form.settings === "object"
       ? form.settings as Record<string, unknown>
@@ -121,6 +180,7 @@ function validateSubmission(
   for (const field of fields) {
     const id = String(field.id ?? "");
     if (!id) continue;
+    if (allowedFieldIds && !allowedFieldIds.has(id)) continue;
 
     const visibility =
       field.visibility && typeof field.visibility === "object"
