@@ -195,7 +195,7 @@ export default function DocsEditor() {
         }
 
         const afterBreak: Node[] = [];
-        let node = manualBreak.nextSibling;
+        let node: ChildNode | null = manualBreak.nextSibling;
         while (node) {
           const next = node.nextSibling;
           afterBreak.push(node);
@@ -745,10 +745,32 @@ export default function DocsEditor() {
     }
 
     focusEditor();
-    const found =
-      typeof window.find === "function"
-        ? window.find(findQuery, matchCase, backwards, true, wholeWord, false, false)
-        : false;
+    const nativeFind = (
+      window as Window & {
+        find?: (
+          searchString: string,
+          caseSensitive?: boolean,
+          backwards?: boolean,
+          wrapAround?: boolean,
+          wholeWord?: boolean,
+          searchInFrames?: boolean,
+          showDialog?: boolean
+        ) => boolean;
+      }
+    ).find;
+
+    const found = nativeFind
+      ? nativeFind.call(
+          window,
+          findQuery,
+          matchCase,
+          backwards,
+          true,
+          wholeWord,
+          false,
+          false
+        )
+      : false;
 
     setFindStatus(found ? "Match selected" : "No match");
   };
