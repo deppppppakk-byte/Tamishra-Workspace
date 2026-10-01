@@ -59,7 +59,9 @@ Every module should share:
 Persistent message store with threads, reactions, attachments and presence.
 
 ### Mail
-Provider-agnostic mail abstraction. External accounts should connect through adapters rather than becoming part of the internal data model.
+Tamishra Mail is the primary first-party mailbox service.
+
+The mail abstraction remains provider-neutral internally so open standards can be supported, but the Workspace product does not use Google or Microsoft mail APIs, OAuth providers or proprietary mail SDKs. Optional external interoperability is limited to standards-based IMAP/SMTP servers.
 
 ### Meet
 `@tamishra/meet-core` is the provider-neutral meeting boundary.
@@ -137,3 +139,21 @@ Allowed integration:
 - shared third-party infrastructure only when credentials, tenancy and access control are independently scoped for Workspace
 
 All production-critical services must remain operational even if the original Tamishra website is offline.
+
+
+## Vendor independence
+
+Tamishra Workspace must not depend on Google or Microsoft productivity platforms for its core runtime.
+
+Do not introduce:
+
+- Google account requirements
+- Microsoft account requirements
+- Google Mail APIs
+- Microsoft Graph Mail
+- Google Drive or Microsoft OneDrive as core storage
+- Google Docs/Sheets/Slides or Microsoft Office web runtimes
+- Google Meet or Microsoft Teams dependencies
+- vendor-specific branding, terminology or cloned UI
+
+Prefer Tamishra-owned services and open standards/protocols.
