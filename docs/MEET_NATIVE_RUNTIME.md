@@ -135,3 +135,51 @@ The next persistence block should extend the same database boundary for:
 Production Workspace Meet must not redirect to or call the original Tamishra training/services website.
 
 LiveKit may be self-hosted or otherwise provisioned for Workspace, but its credentials and token issuance remain entirely server-side in the Workspace gateway/service boundary.
+
+
+## Advanced collaboration runtime
+
+Workspace Meet now includes a persistent collaboration and moderation layer.
+
+### Persistent meeting chat
+
+- messages are stored in Workspace persistence
+- participants can send chat only while admitted to a live meeting
+- host can enable or pause chat for the room
+- the client polls the shared Workspace meeting contract, so web, desktop and mobile use the same history
+
+### Hand raise and reactions
+
+- hand raise persists until the participant lowers it or the host clears it
+- reactions are transient and expire after eight seconds
+- host can disable reactions or hand raise independently
+- signals are stored separately from LiveKit media state
+
+### Room security and moderation
+
+- host can lock new code-based joins
+- host can admit or deny waiting-room participants
+- host can remove an admitted participant
+- participant removal updates Workspace admission state
+- participant removal closes attendance state
+- LiveKit removal is issued server-side with token revocation
+- ending a meeting also closes the LiveKit media room
+
+### Audit history
+
+Major meeting events are persisted in `workspace_meeting_audit`, including:
+
+- meeting creation
+- meeting start / end
+- join requests
+- participant admission / denial
+- participant removal
+- room policy changes
+- host-cleared hand raises
+
+### Database migrations
+
+- `apps/gateway/db/001_workspace_meet.sql` — base meetings, membership and attendance
+- `apps/gateway/db/002_meet_collaboration.sql` — controls, chat, signals and audit
+
+The runtime still uses the same `@tamishra/meet-core` client contract across browser, Tauri desktop and Capacitor mobile clients.
