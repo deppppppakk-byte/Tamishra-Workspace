@@ -7,6 +7,9 @@ const nextConfig: NextConfig = {
   },
   transpilePackages: [
     "@tamishra/workspace-core",
+    "@tamishra/document-model",
+    "@tamishra/docs-engine",
+    "@tamishra/history",
     "@tamishra/mail-core",
     "@tamishra/sheets-engine",
     "@tamishra/meet-core"
