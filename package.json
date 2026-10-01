@@ -33,7 +33,8 @@
     "build:web:patra": "node scripts/run-web.mjs build patra",
     "build:runtime-packages": "npm run build --workspace @tamishra/identity && npm run build --workspace @tamishra/permissions",
     "check:runtime-packages": "npm run check --workspace @tamishra/identity && npm run check --workspace @tamishra/permissions",
-    "production:check": "npm run check && npm audit --omit=dev --audit-level=high"
+    "production:check": "npm run check && npm audit --omit=dev --audit-level=high",
+    "start:gateway": "npm run start --workspace @tamishra/gateway"
   },
   "engines": {
     "node": ">=22"

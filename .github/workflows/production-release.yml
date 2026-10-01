@@ -86,14 +86,17 @@ jobs:
           WORKSPACE_BASE_PATH: /workspace
           NEXT_PUBLIC_WORKSPACE_API_BASE: /api/workspace
         run: npm run build:web
-      - name: Create checksums
+      - name: Package web release
+        shell: bash
         run: |
-          find apps/web/out -type f -print0 | sort -z | xargs -0 sha256sum > tamishra-workspace-web-${{ needs.resolve.outputs.version }}.sha256
+          VERSION="${{ needs.resolve.outputs.version }}"
+          tar -czf "tamishra-workspace-web-$VERSION.tar.gz" -C apps/web/out .
+          sha256sum "tamishra-workspace-web-$VERSION.tar.gz" > "tamishra-workspace-web-$VERSION.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: tamishra-workspace-web-${{ needs.resolve.outputs.version }}
           path: |
-            apps/web/out
+            tamishra-workspace-web-${{ needs.resolve.outputs.version }}.tar.gz
             tamishra-workspace-web-${{ needs.resolve.outputs.version }}.sha256
           if-no-files-found: error
 
