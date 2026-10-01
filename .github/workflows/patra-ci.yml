@@ -39,7 +39,7 @@ jobs:
       - name: Public Patra root build
         run: npm run build:web:patra
         env:
-          PATRA_API_BASE: https://api.patra.in
+          PATRA_API_BASE: https://api.patra.tamishra.in
 
       - name: Patra mailer syntax proof
         run: npm run check:patra-mailer
