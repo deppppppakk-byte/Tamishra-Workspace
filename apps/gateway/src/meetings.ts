@@ -202,7 +202,8 @@ export async function handleMeetingRequest(
   }
 
   try {
-    await Promise.all([store.ready(), collaboration.ready()]);
+    await store.ready();
+    await collaboration.ready();
   } catch (error) {
     console.error("Workspace meeting store initialization failed", error);
     sendJson(
