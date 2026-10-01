@@ -140,12 +140,42 @@ export type DocumentBlock =
   | ImageBlock
   | LegacyRichTextBlock;
 
+export type PageNumberFormat = "number" | "page-number" | "page-number-of-total";
+export type PageNumberPosition =
+  | "header-left"
+  | "header-center"
+  | "header-right"
+  | "footer-left"
+  | "footer-center"
+  | "footer-right";
+
+export type HeaderFooterSettings = {
+  headerEnabled: boolean;
+  footerEnabled: boolean;
+  hideOnFirstPage: boolean;
+  pageNumberEnabled: boolean;
+  pageNumberFormat: PageNumberFormat;
+  pageNumberPosition: PageNumberPosition;
+  pageNumberStart: number;
+};
+
+export const defaultHeaderFooterSettings: HeaderFooterSettings = {
+  headerEnabled: false,
+  footerEnabled: false,
+  hideOnFirstPage: false,
+  pageNumberEnabled: true,
+  pageNumberFormat: "number",
+  pageNumberPosition: "footer-center",
+  pageNumberStart: 1
+};
+
 export type DocumentSection = {
   id: string;
   page: PageConfig;
   blocks: DocumentBlock[];
   header?: DocumentBlock[];
   footer?: DocumentBlock[];
+  headerFooter: HeaderFooterSettings;
 };
 
 export type TamishraDocument = {
@@ -219,7 +249,8 @@ export function createDocument(title = "Untitled document"): TamishraDocument {
       {
         id: createId("section"),
         page: createPageConfig(),
-        blocks: []
+        blocks: [],
+        headerFooter: { ...defaultHeaderFooterSettings }
       }
     ]
   };
