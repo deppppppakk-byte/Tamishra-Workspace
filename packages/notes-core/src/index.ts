@@ -70,6 +70,45 @@ export function upsertNote(snapshot: NotesSnapshot, note: TamishraNote): NotesSn
   };
 }
 
+export function normalizeNotesSnapshot(value: unknown): NotesSnapshot {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return createNotesSnapshot();
+  }
+
+  const candidate = value as Partial<NotesSnapshot>;
+  const notes = Array.isArray(candidate.notes)
+    ? candidate.notes.filter((note): note is TamishraNote =>
+        Boolean(
+          note &&
+          typeof note === "object" &&
+          typeof note.id === "string" &&
+          typeof note.title === "string" &&
+          typeof note.html === "string" &&
+          typeof note.updatedAt === "string"
+        )
+      )
+    : [];
+
+  const notebooks = Array.isArray(candidate.notebooks)
+    ? candidate.notebooks.filter(
+        (notebook): notebook is string =>
+          typeof notebook === "string" && notebook.trim().length > 0
+      )
+    : [];
+
+  return {
+    version: 1,
+    notes,
+    notebooks: Array.from(
+      new Set([
+        "Notes",
+        ...notebooks,
+        ...notes.map((note) => note.notebook).filter(Boolean)
+      ])
+    ).sort()
+  };
+}
+
 export function mergeNotesSnapshots(
   local: NotesSnapshot,
   remote: NotesSnapshot
