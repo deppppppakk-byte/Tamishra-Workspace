@@ -393,12 +393,15 @@
   top: 0;
   z-index: 3;
   display: flex;
+  overflow-x: auto;
   border-bottom: 1px solid var(--line);
   background: rgba(250,251,253,.96);
+  scrollbar-width: thin;
 }
 
 .inspectorTab {
-  flex: 1;
+  flex: 0 0 auto;
+  min-width: 56px;
   border: 0;
   padding: 12px 8px;
   background: transparent;
@@ -1041,6 +1044,187 @@
   }
 
   .sectionLabel {
+    display: none;
+  }
+}
+
+
+.layerList,
+.commentList,
+.historyList,
+.componentList {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.layerItem {
+  display: grid;
+  grid-template-columns: 1fr 30px 30px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #e0e4eb;
+  border-radius: 9px;
+  padding: 5px;
+  background: white;
+}
+
+.layerItemActive {
+  border-color: #b9b1fa;
+  background: #f5f3ff;
+}
+
+.layerSelect {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  padding: 5px;
+  background: transparent;
+  color: #343b4b;
+  cursor: pointer;
+  text-align: left;
+}
+
+.layerSelect span {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: #f0f2f6;
+  color: #6a7282;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.layerSelect strong {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.layerIcon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #e1e4eb;
+  border-radius: 7px;
+  background: #fafbfc;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.commentCard,
+.historyCard,
+.componentCard {
+  border: 1px solid #e0e4eb;
+  border-radius: 10px;
+  padding: 10px;
+  background: white;
+}
+
+.commentResolved {
+  opacity: .62;
+  background: #f7f8fa;
+}
+
+.commentMeta,
+.historyCard > div:first-child,
+.componentCard > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.commentMeta {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+.commentMeta strong,
+.historyCard strong,
+.componentCard strong {
+  color: #3c4353;
+  font-size: 11px;
+}
+
+.commentMeta span,
+.historyCard span,
+.historyCard small,
+.componentCard span {
+  color: #7a8292;
+  font-size: 9px;
+}
+
+.commentCard p {
+  margin: 8px 0;
+  color: #4d5566;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.commentActions,
+.historyActions,
+.componentActions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.commentActions button,
+.historyActions button,
+.componentActions button {
+  flex: 1;
+  border: 1px solid #dfe3ea;
+  border-radius: 7px;
+  padding: 6px 7px;
+  background: #fafbfc;
+  color: #4f5768;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.commentActions button:hover,
+.historyActions button:hover,
+.componentActions button:hover {
+  border-color: #b9b1fa;
+  background: #f4f2ff;
+  color: #5543db;
+}
+
+.presenterBlackout {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: #000;
+}
+
+.presenterTimer {
+  min-width: 58px;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  letter-spacing: .04em;
+}
+
+.presenterNext {
+  max-width: 220px;
+  overflow: hidden;
+  color: rgba(255,255,255,.72);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1050px) {
+  .presenterNext {
     display: none;
   }
 }
