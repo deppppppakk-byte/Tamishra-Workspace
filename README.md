@@ -9,7 +9,7 @@ Tamishra Workspace is an independent productivity and collaboration suite.
 - **Tamishra Slides** — presentations, presenter tools and export
 - **Tamishra PDF** — view, annotate, merge, split, fill and export
 - **Tamishra Chat** — direct messages, group chat, channels and file sharing
-- **Tamishra Mail** — email inbox, compose, threads, folders and search
+- **Tamishra Patra** — email inbox, compose, threads, folders and search
 - **Tamishra Meet** — video meetings, screen sharing, chat and recording hooks
 - **Tamishra Notes** — quick notes, notebooks, rich blocks and task notes
 - **Tamishra Forms** — surveys, registrations, quizzes and response analytics
@@ -62,7 +62,7 @@ Workspace owns its own:
 - identity and organization model
 - file/storage layer
 - collaboration and sync services
-- mail provider gateway
+- Patra provider gateway
 - meeting service
 - notification service
 - deployment configuration
