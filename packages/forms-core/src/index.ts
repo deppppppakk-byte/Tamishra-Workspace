@@ -389,6 +389,7 @@ export function responsesToCsv(form: TamishraForm, responses: FormResponse[]) {
   const header = [
     "Response ID",
     "Submitted at",
+    ...(form.settings.collectEmail ? ["Respondent email"] : []),
     ...form.fields.map((field) => field.label || "Question")
   ];
   const rows = responses
@@ -396,6 +397,7 @@ export function responsesToCsv(form: TamishraForm, responses: FormResponse[]) {
     .map((response) => [
       response.id,
       response.submittedAt,
+      ...(form.settings.collectEmail ? [String(response.answers.__respondentEmail ?? "")] : []),
       ...form.fields.map((field) => {
         const value = response.answers[field.id];
         return Array.isArray(value) ? value.join("; ") : String(value ?? "");
