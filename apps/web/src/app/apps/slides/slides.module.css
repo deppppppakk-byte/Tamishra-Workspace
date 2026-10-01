@@ -820,3 +820,229 @@
     display: none;
   }
 }
+
+
+.slideNavBlock {
+  min-width: 0;
+}
+
+.sectionLabel {
+  margin: 14px 8px 7px 28px;
+  color: #5b6374;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.rulerTop,
+.rulerLeft {
+  position: absolute;
+  z-index: 14;
+  pointer-events: none;
+  color: #737b8c;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.rulerTop {
+  left: 0;
+  right: 0;
+  top: -27px;
+  height: 22px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0 2px 3px;
+  border-bottom: 1px solid rgba(72, 82, 102, .2);
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent calc(12.5% - 1px),
+      rgba(72, 82, 102, .24) calc(12.5% - 1px),
+      rgba(72, 82, 102, .24) 12.5%
+    );
+}
+
+.rulerLeft {
+  top: 0;
+  bottom: 0;
+  left: -34px;
+  width: 28px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 2px 4px 2px 0;
+  border-right: 1px solid rgba(72, 82, 102, .2);
+  background:
+    repeating-linear-gradient(
+      180deg,
+      transparent 0,
+      transparent calc(25% - 1px),
+      rgba(72, 82, 102, .24) calc(25% - 1px),
+      rgba(72, 82, 102, .24) 25%
+    );
+}
+
+.manualGuideVertical,
+.manualGuideHorizontal {
+  position: absolute;
+  z-index: 12;
+  pointer-events: none;
+  background: rgba(14, 165, 233, .62);
+}
+
+.manualGuideVertical {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.manualGuideHorizontal {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+.marquee {
+  position: absolute;
+  z-index: 24;
+  pointer-events: none;
+  border: 1.5px solid #6f5df5;
+  background: rgba(111, 93, 245, .1);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .45);
+}
+
+.timelineList {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.timelineItem {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 2px 8px;
+  align-items: center;
+  border: 1px solid #dfe3ea;
+  border-radius: 9px;
+  padding: 8px 9px;
+  background: white;
+  color: #404757;
+  cursor: pointer;
+  text-align: left;
+}
+
+.timelineItem:hover {
+  border-color: #b9b1fa;
+  background: #f6f4ff;
+}
+
+.timelineItem > span {
+  grid-row: 1 / span 2;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--accentSoft);
+  color: #5543db;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.timelineItem strong {
+  min-width: 0;
+  font-size: 11px;
+  text-transform: capitalize;
+}
+
+.timelineItem small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panelHint {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.animationEditor {
+  margin: 14px 0 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.objectFadeIn {
+  animation-name: objectFadeIn;
+}
+
+.objectFloatUp {
+  animation-name: objectFloatUp;
+}
+
+.objectZoomIn {
+  animation-name: objectZoomIn;
+}
+
+.objectWipeIn {
+  animation-name: objectWipeIn;
+}
+
+@keyframes objectFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes objectFloatUp {
+  from {
+    opacity: 0;
+    transform: translateY(34px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes objectZoomIn {
+  from {
+    opacity: 0;
+    transform: scale(.72);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes objectWipeIn {
+  from {
+    clip-path: inset(0 100% 0 0);
+    opacity: .4;
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 760px) {
+  .rulerTop,
+  .rulerLeft {
+    display: none;
+  }
+
+  .sectionLabel {
+    display: none;
+  }
+}
