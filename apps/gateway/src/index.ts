@@ -4,6 +4,8 @@ import { handleIdentityRequest } from "./identity.js";
 import { handlePatraRequest } from "./patra.js";
 import { handleDocsRequest } from "./docs.js";
 import { handleFilesRequest } from "./files.js";
+import { handleContentRequest } from "./content.js";
+import { handleAssetsRequest } from "./assets.js";
 import { handleChatRequest } from "./chat.js";
 
 const port = Number(process.env.WORKSPACE_GATEWAY_PORT ?? process.env.PORT ?? 4100);
@@ -196,6 +198,30 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
 
   if (
     await handleFilesRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return;
+  }
+
+  if (
+    await handleContentRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return;
+  }
+
+  if (
+    await handleAssetsRequest(
       request,
       response,
       url,
