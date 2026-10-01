@@ -2813,7 +2813,7 @@ export default function SlidesEditorAdvanced() {
       <input
         ref={importInput}
         type="file"
-        accept=".tmsl,.json,application/vnd.tamishra.slides,application/json"
+        accept=".tmsl,.json,application/x-tamishra-slides,application/json"
         hidden
         onChange={importDeck}
       />
