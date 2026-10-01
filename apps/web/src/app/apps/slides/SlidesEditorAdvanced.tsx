@@ -1524,10 +1524,10 @@ export default function SlidesEditorAdvanced() {
         onPointerUp={interactive ? endMarquee : undefined}
       >
         {slide.elements.map((element) => renderElement(element, interactive, presenting))}
-        {(slide.guides?.vertical ?? []).map((x, index) => (
+        {interactive && (slide.guides?.vertical ?? []).map((x, index) => (
           <div className={styles.manualGuideVertical} style={{ left: x }} key={"v-" + index} />
         ))}
-        {(slide.guides?.horizontal ?? []).map((y, index) => (
+        {interactive && (slide.guides?.horizontal ?? []).map((y, index) => (
           <div className={styles.manualGuideHorizontal} style={{ top: y }} key={"h-" + index} />
         ))}
         {interactive && guides.x !== undefined && (
