@@ -545,6 +545,668 @@ export default function DocsEditor() {
     };
   }, []);
 
+  useEffect(() => {
+    registerDocsDocxAdapter(browserDocsDocxAdapter);
+  }, []);
+
+  const applyDraftToEditor = (
+    draft: PersistedDocsDraft,
+    documentId: string | null,
+    status = "Document opened"
+  ) => {
+    const editors = getEditors();
+    editors.forEach((editor) => {
+      editor.innerHTML = "";
+    });
+
+    const firstEditor = pageEditorsRef.current[0];
+    if (firstEditor) {
+      firstEditor.innerHTML = draft.editorHtml || "<p><br></p>";
+    }
+
+    draftRef.current = draft;
+    selectDocumentId(documentId);
+    setTitle(draft.document.title || "Untitled document");
+    const section = draft.document.sections[0];
+    setPage(section?.page ?? createPageConfig());
+    setHeaderText(chromeHtmlToText(draft.headerHtml));
+    setFooterText(chromeHtmlToText(draft.footerHtml));
+    setHeaderFooter({
+      ...defaultHeaderFooterSettings,
+      ...(section?.headerFooter ?? {})
+    });
+    setPageCount(1);
+    activePageRef.current = 0;
+    setActivePage(1);
+    setSelectedImageId(null);
+    selectedTableCellRef.current = null;
+    setTableActive(false);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
+    ensureBlockIds();
+    updateCounts();
+    setSavedState(status);
+    scheduleReflow();
+  };
+
+  const handleNewDocument = () => {
+    if (draftRef.current || getDocumentText().trim()) {
+      saveDocument();
+    }
+
+    const draft = createDraftFromHtml(
+      "Untitled document",
+      "<h1>Untitled document</h1><p><br></p>",
+      createPageConfig(),
+      {
+        headerHtml: "",
+        footerHtml: "",
+        headerFooter: { ...defaultHeaderFooterSettings }
+      }
+    );
+    applyDraftToEditor(draft, null, "New document");
+    setActivePanel("files");
+  };
+
+  const handleSaveAs = () => {
+    const source = saveDocument();
+    const requested = window.prompt(
+      "Save document as",
+      title.trim() ? `${title.trim()} copy` : "Untitled document copy"
+    );
+    if (!requested?.trim()) return;
+
+    const draft = updateDraft(source, { title: requested.trim() });
+    const result = upsertDocsRecord(workspaceRef.current, {
+      title: requested.trim(),
+      draft
+    });
+    commitWorkspace(result.snapshot);
+    applyDraftToEditor(draft, result.record.id, "Saved as new document");
+  };
+
+  const handleOpenRecord = (record: DocsLibraryRecord) => {
+    if (currentDocumentIdRef.current !== record.id) {
+      saveDocument();
+    }
+
+    const next = {
+      ...workspaceRef.current,
+      records: workspaceRef.current.records.map((item) =>
+        item.id === record.id
+          ? { ...item, lastOpenedAt: new Date().toISOString() }
+          : item
+      )
+    };
+    commitWorkspace(next);
+    applyDraftToEditor(record.draft, record.id);
+  };
+
+  const handleDuplicateRecord = (id: string) => {
+    const result = duplicateDocsRecord(workspaceRef.current, id);
+    commitWorkspace(result.snapshot);
+    if (result.record) applyDraftToEditor(result.record.draft, result.record.id, "Document duplicated");
+  };
+
+  const handleTrashRecord = (id: string) => {
+    const next = trashDocsRecord(workspaceRef.current, id);
+    commitWorkspace(next);
+
+    if (currentDocumentIdRef.current === id) {
+      handleNewDocument();
+    }
+  };
+
+  const handleRestoreRecord = (id: string) => {
+    commitWorkspace(restoreDocsRecord(workspaceRef.current, id));
+  };
+
+  const handleDeleteRecordForever = (id: string) => {
+    if (!window.confirm("Permanently delete this document and its versions/comments?")) return;
+    commitWorkspace(permanentlyDeleteDocsRecord(workspaceRef.current, id));
+  };
+
+  const createVersionSnapshot = (label?: string) => {
+    const draft = saveDocument();
+    const documentId = currentDocumentIdRef.current;
+    if (!documentId) return;
+
+    const result = addDocsVersion(workspaceRef.current, {
+      documentId,
+      authorId: "local-user",
+      authorName: "You",
+      label: label || null,
+      reason: "manual-save",
+      draft
+    });
+    commitWorkspace(result.snapshot);
+    setSavedState("Version saved");
+  };
+
+  const restoreVersionSnapshot = (version: DocsVersion) => {
+    if (!window.confirm("Restore this version as the current document?")) return;
+
+    const before = saveDocument();
+    const documentId = currentDocumentIdRef.current;
+    if (documentId) {
+      const backup = addDocsVersion(workspaceRef.current, {
+        documentId,
+        authorId: "local-user",
+        authorName: "You",
+        label: "Before restore",
+        reason: "restore",
+        draft: before
+      });
+      commitWorkspace(backup.snapshot);
+    }
+
+    applyDraftToEditor(version.draft, version.documentId, "Version restored");
+    saveDocument();
+  };
+
+  const handleDocxInput = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    try {
+      setSavedState("Importing DOCX…");
+      const result = await importDocsDocx(await file.arrayBuffer());
+      const name = file.name.replace(/\.docx$/i, "") || "Imported document";
+      const draft = createDraftFromHtml(name, result.html, page, {
+        headerHtml: "",
+        footerHtml: "",
+        headerFooter
+      });
+      const recordResult = upsertDocsRecord(workspaceRef.current, {
+        title: name,
+        draft
+      });
+      commitWorkspace(recordResult.snapshot);
+      applyDraftToEditor(
+        draft,
+        recordResult.record.id,
+        result.warnings.length
+          ? `Imported with ${result.warnings.length} warning${result.warnings.length === 1 ? "" : "s"}`
+          : "DOCX imported"
+      );
+
+      const versionResult = addDocsVersion(workspaceRef.current, {
+        documentId: recordResult.record.id,
+        authorId: "local-user",
+        authorName: "You",
+        label: "DOCX import",
+        reason: "import",
+        draft
+      });
+      commitWorkspace(versionResult.snapshot);
+    } catch (error) {
+      setSavedState("DOCX import failed");
+      window.alert(error instanceof Error ? error.message : "Could not import DOCX.");
+    }
+  };
+
+  const handleExportDocx = async () => {
+    try {
+      saveDocument();
+      setSavedState("Creating DOCX…");
+      const blob = await exportDocsDocx({
+        title: title.trim() || "Untitled document",
+        html: getDocumentHtml(),
+        headerText,
+        footerText
+      });
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = `${(title.trim() || "document").replace(/[^a-z0-9-_]+/gi, "-")}.docx`;
+      anchor.click();
+      URL.revokeObjectURL(href);
+      setSavedState("DOCX exported");
+    } catch (error) {
+      setSavedState("DOCX export failed");
+      window.alert(error instanceof Error ? error.message : "Could not export DOCX.");
+    }
+  };
+
+  const selectionContext = () => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return null;
+    const range = selection.getRangeAt(0);
+    const editor = getEditors().find((item) => item.contains(range.commonAncestorContainer));
+    if (!editor) return null;
+
+    const parent =
+      range.commonAncestorContainer instanceof HTMLElement
+        ? range.commonAncestorContainer
+        : range.commonAncestorContainer.parentElement;
+    const block = parent?.closest<HTMLElement>("[data-tamishra-id]") ?? null;
+
+    return {
+      selection,
+      range,
+      text: selection.toString(),
+      blockId: block?.dataset.tamishraId ?? null
+    };
+  };
+
+  const handleAddComment = () => {
+    const documentId = currentDocumentIdRef.current;
+    if (!documentId) {
+      saveDocument();
+    }
+    const id = currentDocumentIdRef.current;
+    if (!id) return;
+
+    const context = selectionContext();
+    const body = window.prompt("Comment");
+    if (!body?.trim()) return;
+
+    const result = addDocsComment(workspaceRef.current, {
+      documentId: id,
+      blockId: context?.blockId ?? null,
+      quotedText: context?.text ?? "",
+      body: body.trim(),
+      authorId: "local-user",
+      authorName: "You"
+    });
+    commitWorkspace(result.snapshot);
+
+    if (context && !context.range.collapsed) {
+      const marker = document.createElement("span");
+      marker.dataset.commentId = result.comment.id;
+      marker.className = "docsCommentAnchor";
+      try {
+        context.range.surroundContents(marker);
+      } catch {
+        const contents = context.range.extractContents();
+        marker.appendChild(contents);
+        context.range.insertNode(marker);
+      }
+      context.selection.removeAllRanges();
+      updateCounts();
+    }
+  };
+
+  const handleReplyComment = (commentId: string, body: string) => {
+    const next = updateDocsComment(workspaceRef.current, commentId, (comment) => {
+      comment.replies.push({
+        id: createId("reply"),
+        authorId: "local-user",
+        authorName: "You",
+        body,
+        createdAt: new Date().toISOString()
+      });
+    });
+    commitWorkspace(next);
+  };
+
+  const handleToggleResolveComment = (commentId: string) => {
+    const next = updateDocsComment(workspaceRef.current, commentId, (comment) => {
+      comment.resolvedAt = comment.resolvedAt ? null : new Date().toISOString();
+    });
+    commitWorkspace(next);
+  };
+
+  const handleAddGrant = (
+    principal: string,
+    role: "editor" | "commenter" | "viewer"
+  ) => {
+    const documentId = currentDocumentIdRef.current;
+    if (!documentId) return;
+    commitWorkspace(
+      addDocsShareGrant(workspaceRef.current, {
+        documentId,
+        principal,
+        role
+      })
+    );
+  };
+
+  const handleRemoveGrant = (grantId: string) => {
+    commitWorkspace(removeDocsShareGrant(workspaceRef.current, grantId));
+  };
+
+  const refreshDocumentMetadata = () => {
+    const editors = getEditors();
+    const nextOutline = editors.flatMap((editor) => extractDocsOutline(editor));
+    setOutline(nextOutline);
+
+    const text = getDocumentText();
+    const stats = calculateDocsProofingStats(text);
+    setProofing({
+      ...stats,
+      paragraphs: queryDocumentAll("p, li, blockquote").length,
+      headings: queryDocumentAll("h1, h2, h3, h4").length
+    });
+  };
+
+  const handleGoToOutline = (entry: DocsOutlineEntry) => {
+    const target = queryDocument<HTMLElement>(
+      `[data-tamishra-id="${CSS.escape(entry.blockId)}"]`
+    );
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.focus?.();
+  };
+
+  const selectedParagraphBlock = () => {
+    const selection = window.getSelection();
+    const anchor = selection?.anchorNode;
+    if (!anchor) return null;
+    const element = anchor instanceof HTMLElement ? anchor : anchor.parentElement;
+    return element?.closest<HTMLElement>(
+      "p, div, blockquote, h1, h2, h3, h4, li, td, th"
+    ) ?? null;
+  };
+
+  const applyInlineSelectionStyle = (property: string, value: string) => {
+    const context = selectionContext();
+    if (!context || context.range.collapsed) {
+      setSavedState("Select text to format");
+      return;
+    }
+
+    const span = document.createElement("span");
+    span.style.setProperty(property, value);
+    try {
+      context.range.surroundContents(span);
+    } catch {
+      const contents = context.range.extractContents();
+      span.appendChild(contents);
+      context.range.insertNode(span);
+    }
+    context.selection.removeAllRanges();
+    updateCounts();
+    scheduleReflow();
+  };
+
+  const applyFontFamily = (family: string) => {
+    applyInlineSelectionStyle("font-family", family);
+  };
+
+  const applyExactFontSize = (points: number) => {
+    if (!Number.isFinite(points)) return;
+    applyInlineSelectionStyle("font-size", `${Math.max(6, Math.min(96, points))}pt`);
+  };
+
+  const applyLineHeight = (value: number) => {
+    const block = selectedParagraphBlock();
+    if (!block) return;
+    block.style.lineHeight = String(value);
+    updateCounts();
+    scheduleReflow();
+  };
+
+  const applyParagraphSpacing = (before: number, after: number) => {
+    const block = selectedParagraphBlock();
+    if (!block) return;
+    block.style.marginTop = `${before}px`;
+    block.style.marginBottom = `${after}px`;
+    updateCounts();
+    scheduleReflow();
+  };
+
+  const applyIndent = (
+    kind: "first-line" | "hanging" | "left" | "right",
+    value: number
+  ) => {
+    const block = selectedParagraphBlock();
+    if (!block) return;
+
+    if (kind === "first-line") block.style.textIndent = `${value}px`;
+    if (kind === "hanging") {
+      block.style.paddingLeft = `${value}px`;
+      block.style.textIndent = `-${value}px`;
+    }
+    if (kind === "left") {
+      const current = Number.parseFloat(block.style.marginLeft || "0") || 0;
+      block.style.marginLeft = `${current + value}px`;
+    }
+    if (kind === "right") {
+      const current = Number.parseFloat(block.style.marginRight || "0") || 0;
+      block.style.marginRight = `${current + value}px`;
+    }
+
+    updateCounts();
+    scheduleReflow();
+  };
+
+  const handleTableAction = (
+    action:
+      | "row-above"
+      | "row-below"
+      | "column-left"
+      | "column-right"
+      | "delete-row"
+      | "delete-column"
+      | "delete-table"
+      | "merge-right"
+      | "split-cell"
+      | "header-row"
+      | "distribute-columns"
+  ) => {
+    const cell = selectedTableCellRef.current;
+    const table = cell?.closest("table");
+    const row = cell?.parentElement as HTMLTableRowElement | null;
+    if (!cell || !table || !row) return;
+
+    const rowIndex = row.rowIndex;
+    const cellIndex = cell.cellIndex;
+
+    if (action === "row-above" || action === "row-below") {
+      const targetIndex = action === "row-above" ? rowIndex : rowIndex + 1;
+      const nextRow = table.insertRow(targetIndex);
+      const count = Math.max(1, row.cells.length);
+      for (let index = 0; index < count; index += 1) {
+        const nextCell = nextRow.insertCell();
+        nextCell.innerHTML = "Cell";
+        nextCell.dataset.tamishraId = createId("cell");
+      }
+    }
+
+    if (action === "column-left" || action === "column-right") {
+      const targetIndex = action === "column-left" ? cellIndex : cellIndex + 1;
+      Array.from(table.rows).forEach((tableRow) => {
+        const nextCell = tableRow.insertCell(Math.min(targetIndex, tableRow.cells.length));
+        nextCell.innerHTML = "Cell";
+        nextCell.dataset.tamishraId = createId("cell");
+      });
+    }
+
+    if (action === "delete-row") {
+      table.deleteRow(rowIndex);
+      if (!table.rows.length) table.remove();
+    }
+
+    if (action === "delete-column") {
+      Array.from(table.rows).forEach((tableRow) => {
+        if (cellIndex < tableRow.cells.length) tableRow.deleteCell(cellIndex);
+      });
+      if (!table.rows[0]?.cells.length) table.remove();
+    }
+
+    if (action === "delete-table") {
+      table.remove();
+      selectedTableCellRef.current = null;
+      setTableActive(false);
+    }
+
+    if (action === "merge-right") {
+      const next = cell.nextElementSibling as HTMLTableCellElement | null;
+      if (next) {
+        cell.innerHTML = `${cell.innerHTML} ${next.innerHTML}`;
+        cell.colSpan = (cell.colSpan || 1) + (next.colSpan || 1);
+        next.remove();
+      }
+    }
+
+    if (action === "split-cell" && cell.colSpan > 1) {
+      const count = cell.colSpan;
+      cell.colSpan = 1;
+      for (let index = 1; index < count; index += 1) {
+        const next = document.createElement(cell.tagName.toLowerCase());
+        next.textContent = "Cell";
+        next.dataset.tamishraId = createId("cell");
+        cell.insertAdjacentElement("afterend", next);
+      }
+    }
+
+    if (action === "header-row") {
+      const first = table.rows[0];
+      if (first) {
+        Array.from(first.cells).forEach((source) => {
+          if (source.tagName.toLowerCase() === "th") return;
+          const th = document.createElement("th");
+          th.innerHTML = source.innerHTML;
+          th.dataset.tamishraId = source.dataset.tamishraId || createId("cell");
+          source.replaceWith(th);
+        });
+      }
+    }
+
+    if (action === "distribute-columns") {
+      table.style.tableLayout = "fixed";
+      const maxCells = Math.max(...Array.from(table.rows).map((item) => item.cells.length), 1);
+      Array.from(table.rows).forEach((tableRow) => {
+        Array.from(tableRow.cells).forEach((tableCell) => {
+          (tableCell as HTMLElement).style.width = `${100 / maxCells}%`;
+        });
+      });
+    }
+
+    ensureBlockIds();
+    updateCounts();
+    scheduleReflow();
+  };
+
+  const handleInsertAction = (
+    action:
+      | "toc"
+      | "footnote"
+      | "endnote"
+      | "equation"
+      | "symbol"
+      | "date"
+      | "bookmark"
+      | "section-break"
+      | "columns-1"
+      | "columns-2"
+      | "columns-3"
+  ) => {
+    focusEditor();
+
+    if (action === "toc") {
+      refreshDocumentMetadata();
+      const entries = getEditors().flatMap((editor) => extractDocsOutline(editor));
+      const html = entries.length
+        ? entries.map((entry) => {
+            const target = queryDocument<HTMLElement>(
+              `[data-tamishra-id="${CSS.escape(entry.blockId)}"]`
+            );
+            if (target) target.id = entry.blockId;
+            return `<p class="docsTocLevel${entry.level}"><a href="#${entry.blockId}">${escapeHtml(entry.text)}</a></p>`;
+          }).join("")
+        : "<p>No headings found.</p>";
+      applyCommand(
+        "insertHTML",
+        `<div class="docsToc" data-tamishra-id="${createId("toc")}"><h2>Table of contents</h2>${html}</div><p><br></p>`
+      );
+    }
+
+    if (action === "footnote" || action === "endnote") {
+      const note = window.prompt(action === "footnote" ? "Footnote text" : "Endnote text");
+      if (!note?.trim()) return;
+      const number = queryDocumentAll(
+        action === "footnote" ? "[data-footnote-ref]" : "[data-endnote-ref]"
+      ).length + 1;
+      const attr = action === "footnote" ? "data-footnote-ref" : "data-endnote-ref";
+      applyCommand(
+        "insertHTML",
+        `<sup ${attr}="${number}">[${number}]</sup>`
+      );
+      const lastEditor = getEditors().at(-1);
+      if (lastEditor) {
+        const className = action === "footnote" ? "docsFootnotes" : "docsEndnotes";
+        let container = lastEditor.querySelector<HTMLElement>(`.${className}`);
+        if (!container) {
+          container = document.createElement("section");
+          container.className = className;
+          container.dataset.tamishraId = createId(action);
+          container.innerHTML = `<hr><strong>${action === "footnote" ? "Footnotes" : "Endnotes"}</strong>`;
+          lastEditor.appendChild(container);
+        }
+        const paragraph = document.createElement("p");
+        paragraph.textContent = `[${number}] ${note.trim()}`;
+        container.appendChild(paragraph);
+      }
+    }
+
+    if (action === "equation") {
+      const equation = window.prompt("Equation or formula");
+      if (!equation?.trim()) return;
+      applyCommand(
+        "insertHTML",
+        `<span class="docsEquation" data-equation="${escapeHtml(equation.trim())}">${escapeHtml(equation.trim())}</span>`
+      );
+    }
+
+    if (action === "symbol") {
+      const symbol = window.prompt("Insert symbol", "°");
+      if (symbol) applyCommand("insertText", symbol);
+    }
+
+    if (action === "date") {
+      applyCommand(
+        "insertText",
+        new Intl.DateTimeFormat(language, { dateStyle: "long", timeStyle: "short" }).format(new Date())
+      );
+    }
+
+    if (action === "bookmark") {
+      const block = selectedParagraphBlock();
+      if (!block) return;
+      const name = window.prompt("Bookmark name");
+      if (!name?.trim()) return;
+      const bookmarkId = `bookmark-${name.trim().replace(/[^a-z0-9-_]+/gi, "-")}`;
+      block.dataset.bookmark = name.trim();
+      block.id = bookmarkId;
+      setSavedState("Bookmark added");
+    }
+
+    if (action === "section-break") {
+      const id = createId("section-break");
+      applyCommand(
+        "insertHTML",
+        `<div data-section-break="true" data-page-break="true" data-tamishra-id="${id}" contenteditable="false" class="docsSectionBreak"><span>Section break</span></div><p><br></p>`
+      );
+    }
+
+    if (action.startsWith("columns-")) {
+      const count = Number(action.split("-")[1]);
+      const context = selectionContext();
+      const wrapper = document.createElement("div");
+      wrapper.dataset.columns = String(count);
+      wrapper.dataset.tamishraId = createId("columns");
+      wrapper.className = "docsColumns";
+      wrapper.style.columnCount = String(count);
+      wrapper.style.columnGap = "32px";
+
+      if (context && !context.range.collapsed) {
+        const contents = context.range.extractContents();
+        wrapper.appendChild(contents);
+        context.range.insertNode(wrapper);
+        context.selection.removeAllRanges();
+      } else {
+        wrapper.innerHTML = "<p>Column content</p>";
+        applyCommand("insertHTML", wrapper.outerHTML);
+      }
+    }
+
+    ensureBlockIds();
+    updateCounts();
+    scheduleReflow();
+  };
+
   const updateCounts = () => {
     const text = getDocumentText();
     const trimmed = text.trim();
