@@ -36,5 +36,10 @@ jobs:
           NEXT_PUBLIC_WORKSPACE_API_BASE: /api/workspace
           WORKSPACE_NATIVE_API_BASE: https://tamishra.in/api/workspace
 
+      - name: Public Patra root build
+        run: npm run build:web:patra
+        env:
+          PATRA_API_BASE: https://api.patra.in
+
       - name: Patra mailer syntax proof
         run: npm run check:patra-mailer
