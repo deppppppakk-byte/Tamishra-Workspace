@@ -9,10 +9,10 @@
   ],
   "scripts": {
     "dev": "npm run dev:web",
-    "dev:web": "npm run dev --workspace @tamishra/web",
+    "dev:web": "node scripts/run-web.mjs dev hosted",
     "dev:gateway": "npm run dev --workspace @tamishra/gateway",
     "build": "npm run build:web",
-    "build:web": "npm run build --workspace @tamishra/web",
+    "build:web": "node scripts/run-web.mjs build hosted",
     "build:gateway": "npm run build --workspace @tamishra/gateway",
     "check:web": "npm run check --workspace @tamishra/web",
     "check:gateway": "npm run check --workspace @tamishra/gateway",
@@ -21,7 +21,11 @@
     "desktop:build": "npm run tauri:build --workspace @tamishra/desktop",
     "mobile:sync": "npm run sync --workspace @tamishra/mobile",
     "mobile:add:android": "npm run android:add --workspace @tamishra/mobile",
-    "mobile:add:ios": "npm run ios:add --workspace @tamishra/mobile"
+    "mobile:add:ios": "npm run ios:add --workspace @tamishra/mobile",
+    "dev:web:native": "node scripts/run-web.mjs dev native",
+    "build:web:native": "node scripts/run-web.mjs build native",
+    "build:hosted": "npm run build:web && npm run build:gateway",
+    "check": "npm run check:web && npm run check:gateway"
   },
   "engines": {
     "node": ">=22"
