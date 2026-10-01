@@ -1,66 +1,72 @@
 # Tamishra Mail backend boundary
 
-Tamishra Mail is intentionally split into a reusable client and a secure mail gateway.
+Tamishra Mail is a first-party Workspace service with an optional open-standards mail-server bridge.
+
+## Product rule
+
+Tamishra Mail must not depend on Google Mail, Microsoft Outlook, Microsoft Graph, Google APIs, Microsoft APIs or vendor OAuth services.
+
+The primary mailbox is **Tamishra Mail**.
+
+Optional interoperability is limited to standards-based mail protocols such as IMAP and SMTP for independently operated mail servers.
 
 ## Client responsibilities
 
-The web, desktop and mobile clients may:
+Web, desktop and mobile may:
 
 - show folders, threads, messages and attachments
 - compose and edit drafts
-- request provider connection
-- request synchronization
+- synchronize through the Tamishra Workspace gateway
 - display account health
-- submit new credentials only over an authenticated encrypted channel
+- configure an optional custom IMAP/SMTP server
 
-Clients must **not** persist OAuth refresh tokens, IMAP passwords, SMTP passwords or app passwords in browser local storage, IndexedDB, source files or public environment variables.
+Clients must never persist mailbox passwords or gateway secrets in browser local storage, IndexedDB, source files or public environment variables.
 
 ## Secure gateway responsibilities
 
-The gateway must:
+The Workspace gateway must:
 
-1. own OAuth client secrets
-2. validate OAuth state and redirect URIs
-3. exchange authorization codes server-side
-4. encrypt provider refresh tokens at rest
-5. store IMAP/SMTP secrets in a secret store or encrypted credential table
-6. create short-lived provider sessions for mail operations
-7. apply per-user authorization and account ownership checks
-8. enforce rate limits and connection limits
-9. scan or quarantine unsafe attachments before serving downloads
-10. record security-sensitive actions in audit logs
-11. normalize provider errors into MailProviderError
-12. support incremental sync cursors
+1. authenticate the Tamishra Workspace user
+2. authorize mailbox ownership
+3. encrypt custom mail-server credentials at rest
+4. create short-lived mail sessions
+5. enforce rate limits and connection limits
+6. scan or quarantine unsafe attachments
+7. record security-sensitive actions in audit logs
+8. normalize provider errors into MailProviderError
+9. support incremental synchronization
+10. prevent raw credentials from being returned to clients
 
-## Provider adapters
+## Mail adapters
 
 Initial adapters:
 
-- Google Mail API via OAuth
-- Microsoft Graph Mail via OAuth
-- standards-based IMAP + SMTP
-- LocalMailProvider for offline/demo development
-- future Tamishra-hosted mailbox adapter
+- Tamishra Mail — primary first-party mailbox
+- standards-based IMAP + SMTP — optional custom-server bridge
+- LocalMailProvider — offline/demo development
 
-All adapters implement `MailProvider`. The UI must not import provider SDKs directly.
+All adapters implement `MailProvider`.
 
-## OAuth flow
+The UI must not import external mail-provider SDKs directly.
 
-1. Client asks `MailGateway.beginOAuth`.
-2. Gateway creates a signed/expiring state value.
-3. User authorizes at the provider.
-4. Provider returns an authorization code to the gateway callback.
-5. Gateway validates state, exchanges the code and stores encrypted tokens.
-6. Gateway returns only sanitized account metadata to the client.
-7. The client refreshes folders/messages using the account ID.
+## Tamishra-native mailbox flow
 
-## IMAP/SMTP flow
+1. User signs in to Tamishra Workspace.
+2. The Workspace gateway resolves the user's Tamishra Mail account.
+3. The mail client requests folders/messages through the authenticated gateway.
+4. Drafts and outgoing messages are submitted to Tamishra Mail.
+5. Tamishra Mail performs delivery and synchronization.
+6. Clients receive only mailbox data and sanitized account metadata.
 
-The user can enter server settings in the client, but credentials are sent only to the authenticated gateway over TLS. The gateway validates the connection and stores an encrypted secret reference. Raw passwords must never be returned to any client.
+## Custom IMAP/SMTP flow
+
+The user may configure an independent mail server.
+
+Credentials are submitted only to the authenticated Workspace gateway over TLS. The gateway validates the server connection and stores an encrypted secret reference. Raw passwords must never be returned to any client.
 
 ## Attachment safety
 
-Attachments should have:
+Attachments require:
 
 - declared and detected MIME type
 - file-size limits
@@ -70,6 +76,8 @@ Attachments should have:
 - content-disposition controls
 - HTML/SVG sanitization where previewed
 
-## Static web build
+## Deployment
 
-The current web app uses Next.js static export for portability to desktop/mobile packaging. For real external mail, deploy a separate authenticated gateway/API service or switch the hosted web build to a server-capable Next.js deployment. Do not add provider secrets to the static bundle.
+Tamishra Workspace is deployed under `tamishra.in/workspace`.
+
+Workspace APIs are served under the Tamishra domain through the Workspace-owned backend boundary. The product must not depend on Google or Microsoft services for its core runtime.
