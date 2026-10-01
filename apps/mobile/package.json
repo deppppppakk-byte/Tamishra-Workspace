@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "prepare:web": "npm --prefix ../.. run build:web",
+    "prepare:web": "npm --prefix ../.. run build:web:native",
     "android:add": "cap add android",
     "ios:add": "cap add ios",
     "sync": "npm run prepare:web && cap sync",
