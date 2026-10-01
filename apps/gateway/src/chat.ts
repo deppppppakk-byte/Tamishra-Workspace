@@ -508,9 +508,7 @@ export async function handleChatRequest(
       const file = await store.getFileForUser(fileId, authorization.user.id);
       if (!file) throw Object.assign(new Error("file_not_found"), { status: 404 });
 
-      const contentType = /^[a-z0-9!#  try {
-    if (request.method === "GET" && url.pathname === "/v1/chat/conversations") {^_.+-]+\/[a-z0-9!#  try {
-    if (request.method === "GET" && url.pathname === "/v1/chat/conversations") {^_.+-]+$/i.test(
+      const contentType = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(
         file.mimeType
       )
         ? file.mimeType
