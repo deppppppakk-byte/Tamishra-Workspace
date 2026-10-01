@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AccountButton } from "../components/account-button";
 import { workspaceApps } from "@tamishra/workspace-core";
 
 const recentFiles = [
@@ -47,7 +48,7 @@ export default function HomePage() {
           <div className="topActions">
             <button aria-label="Help">?</button>
             <button aria-label="Notifications">◦</button>
-            <button className="avatar" aria-label="Profile">DK</button>
+            <AccountButton />
           </div>
         </header>
 
