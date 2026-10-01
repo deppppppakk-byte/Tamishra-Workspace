@@ -18,11 +18,26 @@ const env = {
   WORKSPACE_BASE_PATH: target === "hosted" ? "/workspace" : "/"
 };
 
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-const result = spawnSync(
-  npmCommand,
-  ["run", mode, "--workspace", "@tamishra/web"],
-  { stdio: "inherit", env }
-);
+const npmExecPath = process.env.npm_execpath;
+const args = ["run", mode, "--workspace", "@tamishra/web"];
+
+const result = npmExecPath
+  ? spawnSync(process.execPath, [npmExecPath, ...args], {
+      stdio: "inherit",
+      env
+    })
+  : spawnSync(
+      process.platform === "win32" ? "npm.cmd" : "npm",
+      args,
+      {
+        stdio: "inherit",
+        env,
+        shell: process.platform === "win32"
+      }
+    );
+
+if (result.error) {
+  console.error("Unable to launch Workspace web build:", result.error);
+}
 
 process.exit(result.status ?? 1);

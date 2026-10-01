@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { normalizeMeetingCode } from "@tamishra/meet-core";
 import {
+  listMeetingAccesses,
   saveMeetingAccess,
+  type MeetingHistoryItem,
   WorkspaceMeetingGateway
 } from "@tamishra/meet-core/workspace-gateway";
 import styles from "./meet-workspace.module.css";
@@ -14,6 +16,7 @@ const GATEWAY_ORIGIN =
 type RuntimeState = {
   status: "checking" | "ready" | "offline";
   mediaConfigured: boolean;
+  recordingConfigured: boolean;
   persistence: string;
 };
 
@@ -26,6 +29,7 @@ export function MeetWorkspace() {
   const [runtime, setRuntime] = useState<RuntimeState>({
     status: "checking",
     mediaConfigured: false,
+    recordingConfigured: false,
     persistence: "unknown"
   });
   const [displayName, setDisplayName] = useState("");
@@ -36,6 +40,8 @@ export function MeetWorkspace() {
   const [joinCode, setJoinCode] = useState("");
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
+  const [history, setHistory] = useState<MeetingHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
 
   useEffect(() => {
     let active = true;
@@ -46,6 +52,7 @@ export function MeetWorkspace() {
         setRuntime({
           status: "ready",
           mediaConfigured: result.mediaConfigured,
+          recordingConfigured: result.recordingConfigured,
           persistence: result.persistence
         });
       })
@@ -54,9 +61,46 @@ export function MeetWorkspace() {
         setRuntime({
           status: "offline",
           mediaConfigured: false,
+          recordingConfigured: false,
           persistence: "unavailable"
         });
       });
+    return () => {
+      active = false;
+    };
+  }, [gateway]);
+
+  useEffect(() => {
+    let active = true;
+    const accesses = listMeetingAccesses();
+
+    if (accesses.length === 0) {
+      setHistory([]);
+      setHistoryLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    gateway
+      .listHistory(
+        accesses.map(({ roomName, accessKey }) => ({
+          roomName,
+          accessKey
+        }))
+      )
+      .then((items) => {
+        if (!active) return;
+        setHistory(items.slice(0, 12));
+      })
+      .catch(() => {
+        if (!active) return;
+        setHistory([]);
+      })
+      .finally(() => {
+        if (active) setHistoryLoading(false);
+      });
+
     return () => {
       active = false;
     };
@@ -141,6 +185,69 @@ export function MeetWorkspace() {
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "Unable to join meeting."
+      );
+    } finally {
+      setBusy("");
+    }
+  }
+
+  function csvCell(value: string | number | null) {
+    const text = value === null ? "" : String(value);
+    return '"' + text.replaceAll('"', '""') + '"';
+  }
+
+  async function exportAttendance(item: MeetingHistoryItem) {
+    const access = listMeetingAccesses().find(
+      (entry) => entry.roomName === item.roomName
+    );
+    if (!access) {
+      setMessage("Meeting access is no longer available on this device.");
+      return;
+    }
+
+    setBusy("report:" + item.roomName);
+    setMessage("");
+    try {
+      const report = await gateway.getAttendanceReport(
+        item.roomName,
+        access.accessKey
+      );
+      const lines = [
+        [
+          "Participant",
+          "Joined at",
+          "Last seen",
+          "Left at",
+          "Duration minutes"
+        ].map(csvCell).join(","),
+        ...report.rows.map((row) =>
+          [
+            row.displayName,
+            row.joinedAt,
+            row.lastSeenAt,
+            row.leftAt,
+            (row.durationMs / 60000).toFixed(2)
+          ].map(csvCell).join(",")
+        )
+      ];
+      const blob = new Blob([lines.join("\n")], {
+        type: "text/csv;charset=utf-8"
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download =
+        item.title.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") +
+        "-attendance.csv";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to export attendance."
       );
     } finally {
       setBusy("");
@@ -280,7 +387,7 @@ export function MeetWorkspace() {
             <p className={styles.eyebrow}>MEETING SETUP</p>
             <h2>Configure the room before you start.</h2>
           </div>
-          <span className={styles.runtimeTag}>Gateway v0.2</span>
+          <span className={styles.runtimeTag}>Gateway v0.6</span>
         </div>
 
         <div className={styles.builderGrid}>
@@ -352,6 +459,14 @@ export function MeetWorkspace() {
               </strong>
             </div>
             <div>
+              <span>Recording storage</span>
+              <strong>
+                {runtime.recordingConfigured
+                  ? "Configured"
+                  : "Optional storage setup required"}
+              </strong>
+            </div>
+            <div>
               <span>Current persistence</span>
               <strong>{runtime.persistence}</strong>
             </div>
@@ -361,6 +476,94 @@ export function MeetWorkspace() {
             </div>
           </div>
         </div>
+      </section>
+
+      <section className={styles.historySection}>
+        <div className={styles.sectionHeading}>
+          <div>
+            <p className={styles.eyebrow}>RECENT MEETINGS</p>
+            <h2>Resume rooms and export attendance.</h2>
+          </div>
+          <span className={styles.runtimeTag}>
+            {historyLoading ? "Loading" : history.length + " available"}
+          </span>
+        </div>
+
+        {historyLoading ? (
+          <div className={styles.historyEmpty}>Loading meeting history…</div>
+        ) : history.length === 0 ? (
+          <div className={styles.historyEmpty}>
+            Meetings created or joined on this device will appear here.
+          </div>
+        ) : (
+          <div className={styles.historyGrid}>
+            {history.map((item) => (
+              <article className={styles.historyCard} key={item.roomName}>
+                <div className={styles.historyCardTop}>
+                  <span className={styles.historyStatus}>
+                    {item.status}
+                  </span>
+                  <span>{item.role === "cohost" ? "Co-host" : item.role}</span>
+                </div>
+                <h3>{item.title}</h3>
+                <p>
+                  {new Intl.DateTimeFormat(undefined, {
+                    dateStyle: "medium",
+                    timeStyle: "short"
+                  }).format(
+                    new Date(
+                      item.startedAt ??
+                        item.scheduledStartAt ??
+                        item.createdAt
+                    )
+                  )}
+                </p>
+
+                <div className={styles.historyMetrics}>
+                  <span>
+                    <strong>{item.participantCount}</strong>
+                    people
+                  </span>
+                  <span>
+                    <strong>{item.attendanceCount}</strong>
+                    attendance
+                  </span>
+                  <span>
+                    <strong>{item.recordingCount}</strong>
+                    recordings
+                  </span>
+                </div>
+
+                {item.role === "host" && item.joinCode && (
+                  <div className={styles.historyCode}>
+                    Private code <strong>{item.joinCode}</strong>
+                  </div>
+                )}
+
+                <div className={styles.historyActions}>
+                  <a
+                    href={
+                      "/apps/meet/room?room=" +
+                      encodeURIComponent(item.roomName)
+                    }
+                  >
+                    {item.status === "ended" ? "View room" : "Open meeting"}
+                  </a>
+                  {(item.role === "host" || item.role === "cohost") && (
+                    <button
+                      disabled={busy !== ""}
+                      onClick={() => void exportAttendance(item)}
+                    >
+                      {busy === "report:" + item.roomName
+                        ? "Exporting…"
+                        : "Attendance CSV"}
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className={styles.runtime}>
@@ -401,15 +604,14 @@ export function MeetWorkspace() {
 
       <section className={styles.migrationNote}>
         <div>
-          <p className={styles.eyebrow}>HARDENING NEXT</p>
-          <h2>Native runtime is established; persistence comes next.</h2>
+          <p className={styles.eyebrow}>WORKSPACE MEET</p>
+          <h2>Meeting operations are now durable and reportable.</h2>
         </div>
         <p>
-          The current native gateway keeps meeting state in an ephemeral
-          in-memory store so the room lifecycle can be exercised end to end
-          while the Workspace database layer is being built. The next hardening
-          block is durable meeting, membership, attendance, chat and recording
-          persistence behind the same <code>@tamishra/meet-core</code> contract.
+          Meeting lifecycle, memberships, collaboration, audit, attendance and
+          recording metadata share the same Workspace gateway boundary.
+          Recording uses server-side LiveKit Egress with Workspace-configured
+          S3-compatible object storage and participant consent enforcement.
         </p>
       </section>
     </main>
