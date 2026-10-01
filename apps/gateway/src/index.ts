@@ -69,7 +69,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       );
       response.setHeader(
         "access-control-allow-headers",
-        "content-type,authorization"
+        "content-type,authorization,x-patra-company-provisioning-secret"
       );
       response.setHeader("vary", "origin");
     }
