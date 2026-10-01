@@ -520,13 +520,23 @@ export function MeetRoomClient() {
     if (!roomName || !accessKey || joining) return;
     setJoining(true);
     setError("");
-    setChoices(values);
     try {
       const result = await gateway.issueToken(
         roomName,
         accessKey,
         values.username?.trim() || displayName
       );
+      setChoices({
+        ...values,
+        audioEnabled:
+          values.audioEnabled &&
+          (result.role !== "participant" ||
+            result.participantMicrophoneEnabled),
+        videoEnabled:
+          values.videoEnabled &&
+          (result.role !== "participant" ||
+            result.participantCameraEnabled)
+      });
       setToken(result.token);
       setServerUrl(result.url);
     } catch (reason) {
