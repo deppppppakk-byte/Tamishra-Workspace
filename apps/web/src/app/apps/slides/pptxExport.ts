@@ -199,8 +199,7 @@ export async function exportDeckToPptx(deck: ExportDeck) {
           fill: { color: "FFFFFF" },
           fontFace: "Arial",
           fontSize: 12,
-          margin: 0.05,
-          autoFit: false
+          margin: 0.05
           }
         );
         continue;
