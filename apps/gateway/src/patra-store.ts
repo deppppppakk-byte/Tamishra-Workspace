@@ -502,6 +502,18 @@ class PostgresPatraStore implements PatraStore {
 
   private async initialize() {
     await this.sql`
+      create table if not exists workspace_users (
+        id text primary key,
+        email text not null unique,
+        display_name text not null,
+        email_verified boolean not null default false,
+        disabled boolean not null default false,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      )
+    `;
+
+    await this.sql`
       create table if not exists patra_mailboxes (
         id text primary key,
         user_id text not null references workspace_users(id) on delete cascade,
