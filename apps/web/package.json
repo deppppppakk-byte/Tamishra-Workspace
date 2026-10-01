@@ -32,7 +32,8 @@
     "pdf-lib": "1.17.1",
     "@tamishra/notes-core": "0.1.0",
     "@tamishra/forms-core": "0.1.0",
-    "@tamishra/blocks-core": "0.1.0"
+    "@tamishra/blocks-core": "0.1.0",
+    "@tamishra/link-core": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
