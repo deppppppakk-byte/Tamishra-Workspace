@@ -404,13 +404,13 @@ export default function FormsWorkspace() {
   };
 
   const moveField = (fieldId: string, direction: -1 | 1) => {
-    if (!selectedForm) return;
-    const index = selectedForm.fields.findIndex((field) => field.id === fieldId);
+    if (!selectedForm || !selectedPage) return;
+    const index = selectedPage.fieldIds.indexOf(fieldId);
     const target = index + direction;
-    if (index < 0 || target < 0 || target >= selectedForm.fields.length) return;
-    const fields = [...selectedForm.fields];
-    [fields[index], fields[target]] = [fields[target], fields[index]];
-    updateForm(selectedForm.id, { fields });
+    if (index < 0 || target < 0 || target >= selectedPage.fieldIds.length) return;
+    const fieldIds = [...selectedPage.fieldIds];
+    [fieldIds[index], fieldIds[target]] = [fieldIds[target], fieldIds[index]];
+    updatePage(selectedPage.id, { fieldIds });
   };
 
   const duplicateField = (fieldId: string) => {
