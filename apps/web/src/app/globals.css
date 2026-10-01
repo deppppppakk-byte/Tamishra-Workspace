@@ -1025,18 +1025,41 @@ kbd {
   min-height: 100%;
   padding: 30px 36px 80px;
   display: flex;
-  justify-content: center;
-  align-items: flex-start;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 30px;
 }
 
 .docsPage {
+  position: relative;
   width: 794px;
-  min-height: 1123px;
+  min-height: 0;
   flex: 0 0 auto;
+  overflow: hidden;
   border: 1px solid rgba(23, 32, 51, 0.08);
   background: white;
   box-shadow: 0 20px 55px rgba(39, 50, 77, 0.13);
-  transition: transform 120ms ease;
+  transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.docsPage.active {
+  border-color: rgba(49, 92, 244, 0.34);
+  box-shadow:
+    0 20px 55px rgba(39, 50, 77, 0.13),
+    0 0 0 2px rgba(49, 92, 244, 0.06);
+}
+
+.docsPageNumber {
+  position: absolute;
+  right: 20px;
+  bottom: 12px;
+  z-index: 2;
+  pointer-events: none;
+  color: #98a2b3;
+  font-size: 9px;
+  font-weight: 700;
+  user-select: none;
 }
 
 .docsEditor {
@@ -1048,6 +1071,27 @@ kbd {
   font-size: 15px;
   line-height: 1.62;
   overflow-wrap: break-word;
+}
+
+.docsPageEditor {
+  min-height: 0;
+  outline: none;
+  overflow: hidden;
+}
+
+.docsPageEditor [data-pagination-overflow="true"] {
+  outline: 1px dashed rgba(180, 83, 9, 0.45);
+  outline-offset: 3px;
+}
+
+.docsPageEditor .docsManualPageBreak {
+  height: 0;
+  margin: 0;
+  border: 0;
+}
+
+.docsPageEditor .docsManualPageBreak span {
+  display: none;
 }
 
 .docsEditor h1 {
@@ -1294,8 +1338,13 @@ kbd {
     padding: 14px 0 64px;
   }
 
+  .docsPageStage {
+    gap: 14px;
+  }
+
   .docsPage {
-    width: 100%;
+    width: 100% !important;
+    height: auto !important;
     min-height: calc(100vh - 155px);
     border-left: 0;
     border-right: 0;
@@ -1303,9 +1352,12 @@ kbd {
     transform: none !important;
   }
 
-  .docsEditor {
+  .docsPageEditor {
+    width: 100% !important;
+    height: auto !important;
     min-height: calc(100vh - 155px);
-    padding: 34px 24px 72px;
+    overflow: visible !important;
+    padding: 34px 24px 72px !important;
     font-size: 15px;
   }
 
@@ -1340,16 +1392,31 @@ kbd {
   }
 
   .docsPage {
-    width: auto;
+    width: auto !important;
+    height: auto !important;
     min-height: 0;
+    overflow: visible;
     border: 0;
     box-shadow: none;
     transform: none !important;
+    break-after: page;
+    page-break-after: always;
   }
 
-  .docsEditor {
+  .docsPage:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  .docsPageNumber {
+    display: none !important;
+  }
+
+  .docsPageEditor {
+    width: auto !important;
+    height: auto !important;
     min-height: 0;
-    padding: 0;
+    overflow: visible !important;
   }
 
   .docsManualPageBreak {
