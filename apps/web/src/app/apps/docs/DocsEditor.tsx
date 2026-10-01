@@ -1,8 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  createPageConfig,
+  type PageConfig
+} from "@tamishra/document-model";
+import {
+  createDraftFromHtml,
+  migrateLegacyDraft,
+  mmToCssPx,
+  updateDraft,
+  type PersistedDocsDraft
+} from "@tamishra/docs-engine";
+import { TransactionHistory } from "@tamishra/history";
+import PageSettings from "./PageSettings";
 
-const STORAGE_KEY = "tamishra.docs.current";
+const STORAGE_KEY = "tamishra.docs.current.v2";
+const LEGACY_STORAGE_KEY = "tamishra.docs.current";
 
 type SavedDocument = {
   title: string;
@@ -16,7 +30,10 @@ function applyCommand(command: string, value?: string) {
 
 export default function DocsEditor() {
   const editorRef = useRef<HTMLDivElement>(null);
+  const draftRef = useRef<PersistedDocsDraft | null>(null);
+  const pageHistoryRef = useRef(new TransactionHistory<PageConfig>(100));
   const [title, setTitle] = useState("Untitled document");
+  const [page, setPage] = useState<PageConfig>(() => createPageConfig());
   const [savedState, setSavedState] = useState("Saved locally");
   const [zoom, setZoom] = useState(100);
   const [wordCount, setWordCount] = useState(0);
@@ -26,32 +43,55 @@ export default function DocsEditor() {
 
   const saveDocument = () => {
     const html = editorRef.current?.innerHTML ?? "";
-    const payload: SavedDocument = {
-      title: title.trim() || "Untitled document",
-      html,
-      updatedAt: new Date().toISOString()
-    };
+    const safeTitle = title.trim() || "Untitled document";
+    const nextDraft = draftRef.current
+      ? updateDraft(draftRef.current, {
+          title: safeTitle,
+          editorHtml: html,
+          page
+        })
+      : createDraftFromHtml(safeTitle, html, page);
 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    draftRef.current = nextDraft;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextDraft));
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
     setSavedState("Saved locally");
   };
 
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      updateCounts();
-      return;
-    }
+    const legacyRaw = localStorage.getItem(LEGACY_STORAGE_KEY);
 
     try {
-      const saved = JSON.parse(raw) as SavedDocument;
-      setTitle(saved.title || "Untitled document");
-      if (editorRef.current && saved.html) {
-        editorRef.current.innerHTML = saved.html;
+      let draft: PersistedDocsDraft | null = null;
+
+      if (raw) {
+        draft = JSON.parse(raw) as PersistedDocsDraft;
+      } else if (legacyRaw) {
+        const legacy = JSON.parse(legacyRaw) as SavedDocument;
+        draft = migrateLegacyDraft(legacy);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
       }
+
+      if (!draft) {
+        updateCounts();
+        return;
+      }
+
+      draftRef.current = draft;
+      setTitle(draft.document.title || "Untitled document");
+      setPage(draft.document.sections[0]?.page ?? createPageConfig());
+
+      if (editorRef.current && draft.editorHtml) {
+        editorRef.current.innerHTML = draft.editorHtml;
+      }
+
       updateCounts();
+      setSavedState("Recovered local draft");
     } catch {
       localStorage.removeItem(STORAGE_KEY);
+      updateCounts();
     }
   }, []);
 
@@ -61,7 +101,7 @@ export default function DocsEditor() {
     }, 700);
 
     return () => window.clearTimeout(timer);
-  }, [title, wordCount, charCount]);
+  }, [title, wordCount, charCount, page]);
 
   const updateCounts = () => {
     const text = editorRef.current?.innerText ?? "";
@@ -95,6 +135,36 @@ export default function DocsEditor() {
 
   const clearFormatting = () => {
     command("removeFormat");
+  };
+
+  const updatePageConfig = (next: PageConfig, label: string) => {
+    pageHistoryRef.current.push(label, page, next);
+    setPage(next);
+    setSavedState("Saving…");
+  };
+
+  const undoAction = () => {
+    const previousPage = pageHistoryRef.current.undo();
+
+    if (previousPage) {
+      setPage(previousPage);
+      setSavedState("Saving…");
+      return;
+    }
+
+    command("undo");
+  };
+
+  const redoAction = () => {
+    const nextPage = pageHistoryRef.current.redo();
+
+    if (nextPage) {
+      setPage(nextPage);
+      setSavedState("Saving…");
+      return;
+    }
+
+    command("redo");
   };
 
   const insertTable = () => {
@@ -168,9 +238,25 @@ td,th{border:1px solid #d0d5dd;padding:8px}
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [title]);
 
-  const zoomStyle = useMemo(
-    () => ({ transform: `scale(${zoom / 100})`, transformOrigin: "top center" }),
-    [zoom]
+  const pageStyle = useMemo(
+    () => ({
+      width: mmToCssPx(page.widthMm),
+      minHeight: mmToCssPx(page.heightMm),
+      transform: `scale(${zoom / 100})`,
+      transformOrigin: "top center"
+    }),
+    [page, zoom]
+  );
+
+  const editorStyle = useMemo(
+    () => ({
+      minHeight: mmToCssPx(page.heightMm),
+      paddingTop: mmToCssPx(page.margins.topMm),
+      paddingRight: mmToCssPx(page.margins.rightMm),
+      paddingBottom: mmToCssPx(page.margins.bottomMm),
+      paddingLeft: mmToCssPx(page.margins.leftMm)
+    }),
+    [page]
   );
 
   return (
@@ -211,8 +297,8 @@ td,th{border:1px solid #d0d5dd;padding:8px}
 
       <section className="docsToolbar" aria-label="Formatting toolbar">
         <div className="docsToolGroup">
-          <button onClick={() => command("undo")} title="Undo">↶</button>
-          <button onClick={() => command("redo")} title="Redo">↷</button>
+          <button onClick={undoAction} title="Undo">↶</button>
+          <button onClick={redoAction} title="Redo">↷</button>
         </div>
 
         <div className="docsToolDivider" />
@@ -326,10 +412,11 @@ td,th{border:1px solid #d0d5dd;padding:8px}
           </div>
 
           <div className="docsPageStage">
-            <article className="docsPage" style={zoomStyle}>
+            <article className="docsPage" style={pageStyle}>
               <div
                 ref={editorRef}
                 className="docsEditor"
+                style={editorStyle}
                 contentEditable
                 suppressContentEditableWarning
                 onInput={updateCounts}
@@ -348,6 +435,11 @@ td,th{border:1px solid #d0d5dd;padding:8px}
         </section>
 
         <aside className="docsRightRail">
+          <div className="docsInfoCard">
+            <span className="docsInfoLabel">Page setup</span>
+            <PageSettings page={page} onChange={updatePageConfig} />
+          </div>
+
           <div className="docsInfoCard">
             <span className="docsInfoLabel">Document</span>
             <strong>{wordCount} words</strong>
@@ -371,6 +463,7 @@ td,th{border:1px solid #d0d5dd;padding:8px}
       <footer className="docsStatusBar">
         <span>Page 1</span>
         <span>{wordCount} words</span>
+        <span>{page.size} · {page.orientation}</span>
         <span>English</span>
         <span className="docsStatusSpacer" />
         <span>{savedState}</span>
