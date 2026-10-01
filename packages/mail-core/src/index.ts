@@ -148,3 +148,6 @@ export class MailProviderError extends Error {
     this.name = "MailProviderError";
   }
 }
+
+export * from "./provider-registry";
+export * from "./local-provider";
