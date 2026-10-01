@@ -1078,7 +1078,9 @@ export default function DocsEditor() {
       });
 
       const bytes = serializeTamishraDocument(packageData);
-      const blob = new Blob([bytes], { type: TMDOC_MIME_TYPE });
+      const buffer = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(buffer).set(bytes);
+      const blob = new Blob([buffer], { type: TMDOC_MIME_TYPE });
       const href = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = href;
