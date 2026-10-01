@@ -14,6 +14,7 @@ import {
   type MeetingControls,
   type MeetingMessage,
   type MeetingParticipant,
+  type MeetingRecordingState,
   type MeetingSignal,
   WorkspaceMeetingGateway
 } from "@tamishra/meet-core/workspace-gateway";
@@ -60,7 +61,11 @@ function auditLabel(event: MeetingAuditEvent) {
     participant_microphone_muted: "Participant microphone muted",
     participant_camera_stopped: "Participant camera stopped",
     mute_all_mics: "All participant microphones muted",
-    stop_all_cameras: "All participant cameras stopped"
+    stop_all_cameras: "All participant cameras stopped",
+    recording_started: "Recording started",
+    recording_stopped: "Recording stopped",
+    recording_consent_accepted: "Recording consent accepted",
+    recording_consent_declined: "Recording consent declined"
   };
   return labels[event.eventType] ?? event.eventType.replaceAll("_", " ");
 }
@@ -95,6 +100,15 @@ export function MeetRoomClient() {
   const [roomError, setRoomError] = useState("");
   const [copied, setCopied] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [recordingState, setRecordingState] =
+    useState<MeetingRecordingState>({
+      configured: false,
+      active: null,
+      consent: null,
+      consents: [],
+      recordings: []
+    });
+  const [recordingBusy, setRecordingBusy] = useState(false);
 
   const isHost = context?.role === "host";
   const isModerator =
@@ -151,6 +165,15 @@ export function MeetRoomClient() {
     [gateway]
   );
 
+  const loadRecording = useCallback(
+    async (room: string, key: string) => {
+      const result = await gateway.getRecordingState(room, key);
+      setRecordingState(result);
+      return result;
+    },
+    [gateway]
+  );
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const room = params.get("room")?.trim() ?? "";
@@ -180,7 +203,8 @@ export function MeetRoomClient() {
           setSidebarTab("people");
           return Promise.all([
             loadParticipants(room, access.accessKey).catch(() => undefined),
-            loadAttendance(room, access.accessKey).catch(() => undefined)
+            loadAttendance(room, access.accessKey).catch(() => undefined),
+            loadRecording(room, access.accessKey).catch(() => undefined)
           ]);
         }
         return undefined;
@@ -191,7 +215,7 @@ export function MeetRoomClient() {
         );
       })
       .finally(() => setLoading(false));
-  }, [loadAttendance, loadContext, loadParticipants]);
+  }, [loadAttendance, loadContext, loadParticipants, loadRecording]);
 
   useEffect(() => {
     if (!roomName || !accessKey || !context || token) return;
@@ -263,6 +287,33 @@ export function MeetRoomClient() {
     context?.status,
     context?.admissionStatus,
     loadCollaboration
+  ]);
+
+  useEffect(() => {
+    if (
+      !roomName ||
+      !accessKey ||
+      !context ||
+      context.status !== "live" ||
+      context.admissionStatus !== "admitted"
+    ) {
+      return;
+    }
+
+    const refresh = () => {
+      void loadRecording(roomName, accessKey).catch(() => undefined);
+    };
+
+    refresh();
+    const timer = window.setInterval(refresh, 2500);
+    return () => window.clearInterval(timer);
+  }, [
+    roomName,
+    accessKey,
+    context,
+    context?.status,
+    context?.admissionStatus,
+    loadRecording
   ]);
 
   useEffect(() => {
@@ -516,11 +567,80 @@ export function MeetRoomClient() {
     }
   }
 
+  async function setRecordingConsent(
+    consent: "accepted" | "declined"
+  ) {
+    if (!roomName || !accessKey || recordingBusy) return;
+    setRecordingBusy(true);
+    setRoomError("");
+    setError("");
+    try {
+      await gateway.setRecordingConsent(roomName, accessKey, consent);
+      await Promise.all([
+        loadRecording(roomName, accessKey),
+        isModerator
+          ? loadAudit(roomName, accessKey)
+          : Promise.resolve()
+      ]);
+    } catch (reason) {
+      const message =
+        reason instanceof Error
+          ? reason.message
+          : "Unable to update recording consent.";
+      setRoomError(message);
+      setError(message);
+    } finally {
+      setRecordingBusy(false);
+    }
+  }
+
+  async function controlRecording(action: "start" | "stop") {
+    if (!roomName || !accessKey || !isHost || recordingBusy) return;
+    setRecordingBusy(true);
+    setRoomError("");
+    try {
+      await gateway.controlRecording(roomName, accessKey, action);
+      await Promise.all([
+        loadRecording(roomName, accessKey),
+        loadAudit(roomName, accessKey)
+      ]);
+    } catch (reason) {
+      const body = (reason as {
+        body?: {
+          pending?: Array<{ displayName?: string }>;
+          declined?: Array<{ displayName?: string }>;
+        };
+      }).body;
+      const pendingNames = body?.pending
+        ?.map((item) => item.displayName)
+        .filter(Boolean)
+        .join(", ");
+      setRoomError(
+        pendingNames
+          ? "Recording is waiting for consent from: " + pendingNames
+          : reason instanceof Error
+            ? reason.message
+            : "Unable to control recording."
+      );
+    } finally {
+      setRecordingBusy(false);
+    }
+  }
+
   async function connect(values: JoinChoices) {
     if (!roomName || !accessKey || joining) return;
     setJoining(true);
     setError("");
     try {
+      if (
+        recordingState.active &&
+        !isHost &&
+        recordingState.consent?.consent !== "accepted"
+      ) {
+        setError("Accept recording consent before joining this recorded meeting.");
+        return;
+      }
+
       const result = await gateway.issueToken(
         roomName,
         accessKey,
@@ -694,7 +814,13 @@ export function MeetRoomClient() {
             <h1>{context.title}</h1>
           </div>
           <div className={styles.headerActions}>
-            {isHost && hostJoinCode && (
+            {recordingState.active && (
+            <span className={styles.recordingBadge}>
+              <span />
+              REC
+            </span>
+          )}
+          {isHost && hostJoinCode && (
               <button className={styles.codeButton} onClick={() => void copyJoinCode()}>
                 <span>{copied ? "Copied" : "Private code"}</span>
                 <strong>{hostJoinCode}</strong>
@@ -711,6 +837,49 @@ export function MeetRoomClient() {
         </header>
 
         {error && <div className={styles.prejoinError}>{error}</div>}
+
+        {!isHost && (
+          <div className={styles.recordingConsentCard}>
+            <div>
+              <span>RECORDING CONSENT</span>
+              <strong>
+                {recordingState.active
+                  ? "This meeting is currently being recorded."
+                  : "Set your recording preference before the host records."}
+              </strong>
+              <small>
+                You can withdraw consent later. If recording is active,
+                withdrawing consent stops the recording.
+              </small>
+            </div>
+            <div>
+              <button
+                className={
+                  recordingState.consent?.consent === "accepted"
+                    ? styles.consentAccepted
+                    : styles.consentButton
+                }
+                disabled={recordingBusy}
+                onClick={() => void setRecordingConsent("accepted")}
+              >
+                {recordingState.consent?.consent === "accepted"
+                  ? "Recording allowed"
+                  : "Allow recording"}
+              </button>
+              <button
+                className={
+                  recordingState.consent?.consent === "declined"
+                    ? styles.consentDeclined
+                    : styles.consentButton
+                }
+                disabled={recordingBusy}
+                onClick={() => void setRecordingConsent("declined")}
+              >
+                Decline
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className={styles.prejoinShell}>
           <PreJoin
@@ -821,6 +990,35 @@ export function MeetRoomClient() {
             </button>
           )}
           {isHost && (
+            <button
+              className={
+                recordingState.active
+                  ? styles.stopRecordingButton
+                  : styles.recordingButton
+              }
+              disabled={
+                recordingBusy ||
+                (!recordingState.active && !recordingState.configured)
+              }
+              onClick={() =>
+                void controlRecording(
+                  recordingState.active ? "stop" : "start"
+                )
+              }
+              title={
+                recordingState.configured
+                  ? undefined
+                  : "Configure Workspace recording storage first."
+              }
+            >
+              {recordingBusy
+                ? "Recording…"
+                : recordingState.active
+                  ? "Stop recording"
+                  : "Start recording"}
+            </button>
+          )}
+          {isHost && (
             <button className={styles.endButton} onClick={() => void endMeeting()}>
               End meeting
             </button>
@@ -885,6 +1083,32 @@ export function MeetRoomClient() {
                 }}
               >
                 People · {participants.length}
+              </button>
+            )}
+
+            {!isHost && (
+              <button
+                className={
+                  recordingState.consent?.consent === "accepted"
+                    ? styles.toolbarConsentAccepted
+                    : recordingState.consent?.consent === "declined"
+                      ? styles.toolbarConsentDeclined
+                      : styles.toolbarButton
+                }
+                disabled={recordingBusy}
+                onClick={() =>
+                  void setRecordingConsent(
+                    recordingState.consent?.consent === "accepted"
+                      ? "declined"
+                      : "accepted"
+                  )
+                }
+              >
+                {recordingState.consent?.consent === "accepted"
+                  ? "Recording allowed"
+                  : recordingState.consent?.consent === "declined"
+                    ? "Recording declined"
+                    : "Allow recording"}
               </button>
             )}
 
@@ -1016,6 +1240,64 @@ export function MeetRoomClient() {
 
           {sidebarTab === "people" && (
             <div className={styles.peoplePanel}>
+              {isModerator && (
+                <div className={styles.recordingPanel}>
+                  <div className={styles.recordingPanelHeader}>
+                    <div>
+                      <span className={styles.groupLabel}>RECORDING</span>
+                      <strong>
+                        {recordingState.active
+                          ? "Recording in progress"
+                          : recordingState.configured
+                            ? "Ready to record"
+                            : "Storage not configured"}
+                      </strong>
+                    </div>
+                    {recordingState.active && (
+                      <span className={styles.recordingBadge}>
+                        <span />
+                        REC
+                      </span>
+                    )}
+                  </div>
+
+                  <small>
+                    {recordingState.consents.filter(
+                      (item) => item.consent === "accepted"
+                    ).length}
+                    {" accepted · "}
+                    {recordingState.consents.filter(
+                      (item) => item.consent === "declined"
+                    ).length}
+                    {" declined"}
+                  </small>
+
+                  {isHost && (
+                    <button
+                      className={
+                        recordingState.active
+                          ? styles.stopRecordingInline
+                          : styles.startRecordingInline
+                      }
+                      disabled={
+                        recordingBusy ||
+                        (!recordingState.active &&
+                          !recordingState.configured)
+                      }
+                      onClick={() =>
+                        void controlRecording(
+                          recordingState.active ? "stop" : "start"
+                        )
+                      }
+                    >
+                      {recordingState.active
+                        ? "Stop recording"
+                        : "Start recording"}
+                    </button>
+                  )}
+                </div>
+              )}
+
               {isHost && (
                 <div className={styles.policyPanel}>
                   <span className={styles.groupLabel}>ROOM POLICIES</span>
