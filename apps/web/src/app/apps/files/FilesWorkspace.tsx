@@ -16,6 +16,7 @@ import {
   targetAppForNativeFile
 } from "../../../lib/native-file-handoff";
 import { deleteWorkspaceBinaryAsset } from "../../../lib/workspace-binary-store";
+import { deleteCloudBinaryAsset } from "../../../lib/workspace-binary-cloud";
 import {
   loadWorkspaceFileIndex,
   mutateWorkspaceFileIndex,
@@ -200,6 +201,7 @@ export default function FilesWorkspace() {
                           if (confirm("Permanently delete this file from Tamishra Workspace?")) {
                             if (file.kind === "pdf" && file.sourceId) {
                               void deleteWorkspaceBinaryAsset(file.sourceId).catch(() => undefined);
+                              void deleteCloudBinaryAsset(file.sourceId);
                             }
                             update(permanentlyDeleteWorkspaceFile(index, file.id));
                           }
