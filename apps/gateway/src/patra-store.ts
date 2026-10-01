@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
+import postgres from "postgres";
 
 export type PatraMailboxClass = "public" | "tamishra-company";
 export type PatraMailboxStatus = "active" | "suspended";
@@ -499,11 +499,11 @@ class MemoryPatraStore implements PatraStore {
 
 class PostgresPatraStore implements PatraStore {
   readonly kind = "postgres" as const;
-  private readonly sql: NeonQueryFunction<false, false>;
+  private readonly sql: ReturnType<typeof postgres>;
   private readyPromise: Promise<void> | null = null;
 
   constructor(databaseUrl: string) {
-    this.sql = neon<false, false>(databaseUrl);
+    this.sql = postgres(databaseUrl, { max: 5, prepare: false });
   }
 
   ready() {
