@@ -74,6 +74,10 @@ Local listen port. Defaults to `4100`.
 
 Comma-separated origin allow-list for Workspace clients.
 
+`WORKSPACE_MEET_DATABASE_URL`
+
+Workspace-owned Postgres connection string for durable meeting and membership state. If omitted, Meet uses the explicit local-development memory fallback.
+
 ### LiveKit
 
 `LIVEKIT_URL`
@@ -99,23 +103,28 @@ npm run dev:web
 
 Then open Tamishra Meet from Workspace.
 
-## Current hardening boundary
+## Durable meeting persistence
 
-Meeting state currently uses an in-memory gateway store.
+The gateway now selects its meeting store automatically.
 
-That is intentionally marked as `ephemeral-memory` by the capabilities endpoint and is **not production persistence**. A gateway restart removes rooms and access keys.
+When `WORKSPACE_MEET_DATABASE_URL` (or `WORKSPACE_DATABASE_URL` / `DATABASE_URL`) is configured, Meet uses the Workspace Postgres adapter and persists:
 
-The next production-hardening block should replace the in-memory maps with a Workspace-owned durable store while preserving the existing `@tamishra/meet-core` API.
-
-The durable model should persist at minimum:
-
-- meetings
+- meeting records
 - private joining codes
-- memberships
-- admission state
-- lifecycle state
-- attendance
-- chat
+- scheduled / live / ended lifecycle state
+- host and participant memberships
+- waiting-room admission state
+- participant display names
+- last-seen timestamps
+
+Room capability keys are never stored raw. The gateway stores only SHA-256 hashes and returns the raw key to the creating/joining client once.
+
+When no database URL is configured, the gateway deliberately falls back to `ephemeral-memory` for local development. The capabilities endpoint reports which store is active.
+
+The next persistence block should extend the same database boundary for:
+
+- detailed attendance sessions
+- persistent meeting chat
 - reactions / hand raise
 - recording metadata
 - audit events
