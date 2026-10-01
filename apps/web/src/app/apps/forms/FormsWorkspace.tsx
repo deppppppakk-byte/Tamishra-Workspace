@@ -1287,7 +1287,7 @@ export default function FormsWorkspace() {
                   <div className={styles.branchList}>
                     {selectedForm.pages.map((page, pageIndex) => {
                       const pageFields = getFieldsForPage(selectedForm, page.id);
-                      const targets = selectedForm.pages.filter((target) => target.id !== page.id);
+                      const targets = selectedForm.pages.slice(pageIndex + 1);
                       return (
                         <article key={page.id}>
                           <div className={styles.branchHeader}>
