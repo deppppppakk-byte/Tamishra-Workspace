@@ -233,7 +233,8 @@ class MemoryMeetingStore implements MeetingStore {
     if (
       !participant ||
       participant.roomName !== roomName ||
-      participant.role === "host"
+      participant.role === "host" ||
+      participant.admissionStatus !== "admitted"
     ) {
       return null;
     }
@@ -572,6 +573,7 @@ class PostgresMeetingStore implements MeetingStore {
       where room_name=${roomName}
         and id=${participantId}
         and role <> 'host'
+        and admission_status='admitted'
       returning
         id,
         room_name,
