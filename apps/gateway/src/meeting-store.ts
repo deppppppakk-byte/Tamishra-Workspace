@@ -573,7 +573,6 @@ class PostgresMeetingStore implements MeetingStore {
       where room_name=${roomName}
         and id=${participantId}
         and role <> 'host'
-        and admission_status='admitted'
       returning
         id,
         room_name,
@@ -601,6 +600,7 @@ class PostgresMeetingStore implements MeetingStore {
       where room_name=${roomName}
         and id=${participantId}
         and role <> 'host'
+        and admission_status='admitted'
       returning
         id,
         room_name,
