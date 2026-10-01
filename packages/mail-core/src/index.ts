@@ -149,5 +149,67 @@ export class MailProviderError extends Error {
   }
 }
 
+export type MailConnectionStatus =
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "expired"
+  | "error";
+
+export type MailConnectedAccount = {
+  id: string;
+  providerKey: string;
+  displayName: string;
+  primaryAddress: string;
+  status: MailConnectionStatus;
+  lastSyncAt?: string;
+  errorCode?: string;
+};
+
+export type MailOAuthStartRequest = {
+  providerKey: "google" | "microsoft" | string;
+  returnUrl: string;
+};
+
+export type MailOAuthStartResult = {
+  authorizationUrl: string;
+  state: string;
+};
+
+export type MailOAuthCompleteRequest = {
+  providerKey: string;
+  code: string;
+  state: string;
+};
+
+export type MailServerConnectionRequest = {
+  email: string;
+  imap: {
+    host: string;
+    port: number;
+    secure: boolean;
+  };
+  smtp: {
+    host: string;
+    port: number;
+    secure: boolean;
+  };
+  username: string;
+  password: string;
+};
+
+export type MailGatewayAccountResult = {
+  account: MailConnectedAccount;
+};
+
+export interface MailGateway {
+  listAccounts(): Promise<MailConnectedAccount[]>;
+  beginOAuth(request: MailOAuthStartRequest): Promise<MailOAuthStartResult>;
+  completeOAuth(request: MailOAuthCompleteRequest): Promise<MailGatewayAccountResult>;
+  connectServer(request: MailServerConnectionRequest): Promise<MailGatewayAccountResult>;
+  disconnect(accountId: string): Promise<void>;
+  createProvider(accountId: string): Promise<MailProvider>;
+}
+
 export * from "./provider-registry";
 export * from "./local-provider";
