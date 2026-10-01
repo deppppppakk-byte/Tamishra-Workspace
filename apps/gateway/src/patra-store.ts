@@ -42,6 +42,8 @@ export type StoredPatraFolder = {
   mailboxId: string;
   name: string;
   kind: PatraFolderKind;
+  totalCount?: number;
+  unreadCount?: number;
   createdAt: string;
 };
 
@@ -189,6 +191,10 @@ function toFolder(row: Record<string, unknown>): StoredPatraFolder {
     mailboxId: String(row.mailbox_id),
     name: String(row.name),
     kind: String(row.kind) as PatraFolderKind,
+    totalCount:
+      row.total === undefined || row.total === null ? undefined : Number(row.total),
+    unreadCount:
+      row.unread === undefined || row.unread === null ? undefined : Number(row.unread),
     createdAt: iso(row.created_at) ?? new Date().toISOString()
   };
 }
@@ -331,10 +337,14 @@ class MemoryPatraStore implements PatraStore {
           SYSTEM_FOLDERS.findIndex((item) => item.kind === a.kind) -
           SYSTEM_FOLDERS.findIndex((item) => item.kind === b.kind)
       )
-      .map((folder) => ({
-        ...structuredClone(folder),
-        ...(counts.get(folder.kind) ?? { total: 0, unread: 0 })
-      })) as StoredPatraFolder[];
+      .map((folder) => {
+        const count = counts.get(folder.kind) ?? { total: 0, unread: 0 };
+        return {
+          ...structuredClone(folder),
+          totalCount: count.total,
+          unreadCount: count.unread
+        };
+      });
   }
 
   async listMessages(
