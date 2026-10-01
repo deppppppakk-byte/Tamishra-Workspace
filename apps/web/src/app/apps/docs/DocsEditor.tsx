@@ -550,6 +550,12 @@ export default function DocsEditor() {
           `img[data-tamishra-id="${CSS.escape(id)}"]`
         );
         selectImageElement(image);
+
+        if (image && !image.complete) {
+          image.addEventListener("load", scheduleReflow, { once: true });
+        } else {
+          scheduleReflow();
+        }
       });
     };
     reader.readAsDataURL(file);
