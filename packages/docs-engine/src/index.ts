@@ -138,13 +138,15 @@ function blocksFromContainer(container: ParentNode): DocumentBlock[] {
     }
 
     if (tag === "img") {
+      const image = node as HTMLImageElement;
+
       blocks.push({
         id,
         type: "image",
-        src: node.getAttribute("src") ?? "",
-        alt: node.getAttribute("alt") ?? "",
-        widthPx: node.width || undefined,
-        heightPx: node.height || undefined,
+        src: image.getAttribute("src") ?? "",
+        alt: image.getAttribute("alt") ?? "",
+        widthPx: image.width || undefined,
+        heightPx: image.height || undefined,
         layout: (node.dataset.layout as "inline" | "block" | "wrap-left" | "wrap-right" | "center" | undefined) ?? "inline"
       });
       continue;
