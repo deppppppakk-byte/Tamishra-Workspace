@@ -33,6 +33,9 @@ import {
   type Workbook
 } from "@tamishra/sheets-engine";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { upsertWorkspaceFile } from "@tamishra/file-core";
+import { consumeNativeFileHandoff } from "../../../lib/native-file-handoff";
+import { mutateWorkspaceFileIndex } from "../../../lib/workspace-files";
 import styles from "./sheets.module.css";
 
 const STORAGE_KEY = "tamishra-sheets-workbook-v2";
@@ -141,6 +144,31 @@ export default function SheetsWorkspace() {
   }, []);
 
   useEffect(() => {
+    const createRequest = sessionStorage.getItem("tamishra.workspace.create");
+    if (createRequest === "sheets") {
+      sessionStorage.removeItem("tamishra.workspace.create");
+      const blank = createWorkbook("Untitled spreadsheet");
+      setWorkbook(blank);
+      setSelection({ anchor: "A1", focus: "A1" });
+      setSaveState("New spreadsheet");
+      return;
+    }
+
+    void consumeNativeFileHandoff()
+      .then((handoff) => {
+        if (!handoff) return;
+        const file = new File([handoff.bytes], handoff.name, {
+          type: handoff.type || "application/octet-stream"
+        });
+        return importFile(file);
+      })
+      .catch((error) => {
+        console.error("Workspace Sheets handoff failed", error);
+        setSaveState("Workspace file could not be opened");
+      });
+  }, []);
+
+  useEffect(() => {
     if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
       return;
     }
@@ -183,6 +211,19 @@ export default function SheetsWorkspace() {
           setRecoveryAvailable(true);
         }
         window.localStorage.setItem(STORAGE_KEY, serialized);
+        mutateWorkspaceFileIndex((index) =>
+          upsertWorkspaceFile(index, {
+            id: `sheets:${workbook.id}`,
+            title: workbook.title || "Untitled spreadsheet",
+            kind: "sheets",
+            appHref: "/apps/sheets",
+            nativeExtension: ".tmsh",
+            nativeMime: TMSHEET_MIME_TYPE,
+            sourceId: workbook.id,
+            sizeBytes: new Blob([serialized]).size,
+            storage: "local"
+          })
+        );
         setSaveState("Saved locally");
       } catch {
         setSaveState("Local save failed — export backup");
