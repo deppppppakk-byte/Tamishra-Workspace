@@ -860,4 +860,4 @@ export function parseWorkbookJson(json: string): Workbook | null {
   }
 }
 
-export * from "./native-format.js";
+export * from "./native-format";
