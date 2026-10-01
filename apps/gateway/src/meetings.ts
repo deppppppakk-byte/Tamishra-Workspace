@@ -441,49 +441,6 @@ export async function handleMeetingRequest(
 
       await store.createMeeting(meeting, host);
       await collaboration.ensureRoom(meeting.roomName);
-      const mediaPolicyChanged =
-        previousControls.participantMicrophoneEnabled !==
-          controls.participantMicrophoneEnabled ||
-        previousControls.participantCameraEnabled !==
-          controls.participantCameraEnabled;
-
-      if (mediaPolicyChanged) {
-        const participants = await store.listParticipants(meeting.roomName);
-        const admittedParticipants = participants.filter(
-          (participant) =>
-            participant.role === "participant" &&
-            participant.admissionStatus === "admitted"
-        );
-
-        await Promise.all(
-          admittedParticipants.map(async (participant) => {
-            try {
-              await applyLiveKitPermissions(
-                meeting,
-                participant,
-                controls
-              );
-              if (!controls.participantMicrophoneEnabled) {
-                await muteParticipantSource(
-                  meeting.roomName,
-                  participant.id,
-                  TrackSource.MICROPHONE
-                );
-              }
-              if (!controls.participantCameraEnabled) {
-                await muteParticipantSource(
-                  meeting.roomName,
-                  participant.id,
-                  TrackSource.CAMERA
-                );
-              }
-            } catch {
-              // Participant may not currently be connected.
-            }
-          })
-        );
-      }
-
       await collaboration.appendAudit({
         roomName: meeting.roomName,
         actorParticipantId: host.id,
@@ -986,6 +943,51 @@ export async function handleMeetingRequest(
         meeting.roomName,
         patch
       );
+
+      const mediaPolicyChanged =
+        previousControls.participantMicrophoneEnabled !==
+          controls.participantMicrophoneEnabled ||
+        previousControls.participantCameraEnabled !==
+          controls.participantCameraEnabled;
+
+      if (mediaPolicyChanged) {
+        const participants = await store.listParticipants(meeting.roomName);
+        const policyTargets = participants.filter(
+          (participant) =>
+            participant.role === "participant" &&
+            participant.admissionStatus === "admitted"
+        );
+
+        await Promise.all(
+          policyTargets.map(async (participant) => {
+            try {
+              await applyLiveKitPermissions(
+                meeting,
+                participant,
+                controls
+              );
+
+              if (!controls.participantMicrophoneEnabled) {
+                await muteParticipantSource(
+                  meeting.roomName,
+                  participant.id,
+                  TrackSource.MICROPHONE
+                );
+              }
+
+              if (!controls.participantCameraEnabled) {
+                await muteParticipantSource(
+                  meeting.roomName,
+                  participant.id,
+                  TrackSource.CAMERA
+                );
+              }
+            } catch {
+              // Offline participants receive this policy when they reconnect.
+            }
+          })
+        );
+      }
 
       await collaboration.appendAudit({
         roomName: meeting.roomName,
