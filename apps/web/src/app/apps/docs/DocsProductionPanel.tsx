@@ -48,6 +48,8 @@ type Props = {
   onDeleteForever: (id: string) => void;
   onCreateFolder: (name: string) => void;
   onMoveCurrentToFolder: (folderId: string | null) => void;
+  onImportNative: () => void;
+  onExportNative: () => void;
   onImportDocx: () => void;
   onExportDocx: () => void;
   onGoToOutline: (entry: DocsOutlineEntry) => void;
@@ -148,6 +150,8 @@ export default function DocsProductionPanel(props: Props) {
             <div className="docsPanelActions">
               <button onClick={props.onNew}>New</button>
               <button onClick={props.onSaveAs}>Save As</button>
+              <button onClick={props.onImportNative}>Open .tmdoc</button>
+              <button onClick={props.onExportNative}>Export .tmdoc</button>
               <button onClick={props.onImportDocx}>Open DOCX</button>
               <button onClick={props.onExportDocx}>Export DOCX</button>
             </div>
