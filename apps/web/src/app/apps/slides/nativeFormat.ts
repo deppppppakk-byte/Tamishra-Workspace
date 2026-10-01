@@ -46,11 +46,14 @@ const equalMagic = (bytes: Uint8Array) => {
 const bytesToHex = (bytes: Uint8Array) =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 
+const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+};
+
 const sha256 = async (bytes: Uint8Array) => {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
-  );
+  const digest = await crypto.subtle.digest("SHA-256", toArrayBuffer(bytes));
   return bytesToHex(new Uint8Array(digest));
 };
 
@@ -67,7 +70,7 @@ const compress = async (bytes: Uint8Array): Promise<{
     return { bytes, compression: "none" };
   }
 
-  const input = new Blob([bytes]).stream();
+  const input = new Blob([toArrayBuffer(bytes)]).stream();
   const compressed = input.pipeThrough(new CompressionStream("gzip"));
   return {
     bytes: await streamToUint8Array(compressed),
@@ -84,7 +87,7 @@ const decompress = async (
     throw new Error("This browser cannot open compressed TMSL files.");
   }
 
-  const input = new Blob([bytes]).stream();
+  const input = new Blob([toArrayBuffer(bytes)]).stream();
   const decompressed = input.pipeThrough(new DecompressionStream("gzip"));
   return streamToUint8Array(decompressed);
 };
