@@ -1,9 +1,10 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     env,
     fs,
     path::{Path, PathBuf},
     sync::Mutex,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -31,6 +32,113 @@ struct NativeWorkspaceFile {
     name: String,
     extension: String,
     bytes: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct StoredRecentTmsl {
+    path: String,
+    last_opened_unix_ms: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecentTmslEntry {
+    path: String,
+    name: String,
+    last_opened_unix_ms: u64,
+    modified_unix_ms: u64,
+    size_bytes: u64,
+    exists: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecoveryInfo {
+    path: String,
+    name: String,
+    modified_unix_ms: u64,
+    size_bytes: u64,
+}
+
+fn unix_ms(time: SystemTime) -> u64 {
+    time.duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn app_data_file(app: &AppHandle, file_name: &str) -> Result<PathBuf, String> {
+    let mut directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Unable to resolve app data directory: {error}"))?;
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Unable to create app data directory: {error}"))?;
+    directory.push(file_name);
+    Ok(directory)
+}
+
+fn load_recent_tmsl(app: &AppHandle) -> Vec<StoredRecentTmsl> {
+    let Ok(path) = app_data_file(app, "recent-slides.json") else {
+        return Vec::new();
+    };
+    let Ok(content) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<StoredRecentTmsl>>(&content).unwrap_or_default()
+}
+
+fn save_recent_tmsl(app: &AppHandle, entries: &[StoredRecentTmsl]) -> Result<(), String> {
+    let path = app_data_file(app, "recent-slides.json")?;
+    let content = serde_json::to_vec_pretty(entries)
+        .map_err(|error| format!("Unable to encode recent TMSL index: {error}"))?;
+    fs::write(path, content)
+        .map_err(|error| format!("Unable to save recent TMSL index: {error}"))
+}
+
+fn record_recent_tmsl(app: &AppHandle, path: &Path) -> Result<(), String> {
+    if !is_tmsl(path) {
+        return Ok(());
+    }
+
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let value = canonical.to_string_lossy().into_owned();
+    let mut entries = load_recent_tmsl(app);
+    entries.retain(|entry| !entry.path.eq_ignore_ascii_case(&value));
+    entries.insert(
+        0,
+        StoredRecentTmsl {
+            path: value,
+            last_opened_unix_ms: unix_ms(SystemTime::now()),
+        },
+    );
+    entries.truncate(16);
+    save_recent_tmsl(app, &entries)
+}
+
+fn recent_entry(stored: StoredRecentTmsl) -> RecentTmslEntry {
+    let path = PathBuf::from(&stored.path);
+    let metadata = fs::metadata(&path).ok();
+    let exists = metadata.is_some();
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("presentation.tmsl")
+        .to_string();
+    let size_bytes = metadata.as_ref().map(|value| value.len()).unwrap_or(0);
+    let modified_unix_ms = metadata
+        .and_then(|value| value.modified().ok())
+        .map(unix_ms)
+        .unwrap_or(0);
+
+    RecentTmslEntry {
+        path: stored.path,
+        name,
+        last_opened_unix_ms: stored.last_opened_unix_ms,
+        modified_unix_ms,
+        size_bytes,
+        exists,
+    }
 }
 
 fn is_tmsl(path: &Path) -> bool {
@@ -254,7 +362,79 @@ fn write_tmsl(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn take_pending_tmsl(state: State<'_, NativeFileState>) -> Result<Option<NativeTmslFile>, String> {
+fn list_recent_tmsl(app: AppHandle) -> Result<Vec<RecentTmslEntry>, String> {
+    Ok(load_recent_tmsl(&app)
+        .into_iter()
+        .map(recent_entry)
+        .collect())
+}
+
+#[tauri::command]
+fn forget_recent_tmsl(app: AppHandle, path: String) -> Result<(), String> {
+    let mut entries = load_recent_tmsl(&app);
+    entries.retain(|entry| !entry.path.eq_ignore_ascii_case(&path));
+    save_recent_tmsl(&app, &entries)
+}
+
+#[tauri::command]
+fn clear_recent_tmsl(app: AppHandle) -> Result<(), String> {
+    save_recent_tmsl(&app, &[])
+}
+
+#[tauri::command]
+fn recovery_tmsl_info(app: AppHandle) -> Result<Option<RecoveryInfo>, String> {
+    let mut path = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Unable to resolve recovery directory: {error}"))?;
+    path.push("recovery");
+    path.push("slides-recovery.tmsl");
+
+    let Ok(metadata) = fs::metadata(&path) else {
+        return Ok(None);
+    };
+
+    Ok(Some(RecoveryInfo {
+        name: "Slides recovery".to_string(),
+        path: path.to_string_lossy().into_owned(),
+        modified_unix_ms: metadata.modified().map(unix_ms).unwrap_or(0),
+        size_bytes: metadata.len(),
+    }))
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn open_tmsl_dialog(
+    app: AppHandle,
+    state: State<'_, NativeFileState>,
+) -> Result<Option<NativeTmslFile>, String> {
+    let selected = app
+        .dialog()
+        .file()
+        .set_title("Open Tamishra Slides Presentation")
+        .add_filter("Tamishra Slides", &["tmsl"])
+        .blocking_pick_file();
+
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+
+    let path = selected
+        .into_path()
+        .map_err(|error| format!("Unable to resolve selected file path: {error}"))?;
+    let path = normalize_candidate(path)
+        .ok_or_else(|| "The selected file is not a .tmsl presentation.".to_string())?;
+    let file = read_tmsl(&path)?;
+    set_current_path(&state, path.clone())?;
+    record_recent_tmsl(&app, &path)?;
+    Ok(Some(file))
+}
+
+#[tauri::command]
+fn take_pending_tmsl(
+    app: AppHandle,
+    state: State<'_, NativeFileState>,
+) -> Result<Option<NativeTmslFile>, String> {
     let pending = {
         let mut pending = state
             .pending_path
@@ -268,19 +448,22 @@ fn take_pending_tmsl(state: State<'_, NativeFileState>) -> Result<Option<NativeT
     };
 
     let file = read_tmsl(&path)?;
-    set_current_path(&state, path)?;
+    set_current_path(&state, path.clone())?;
+    record_recent_tmsl(&app, &path)?;
     Ok(Some(file))
 }
 
 #[tauri::command]
 fn open_tmsl_path(
+    app: AppHandle,
     path: String,
     state: State<'_, NativeFileState>,
 ) -> Result<NativeTmslFile, String> {
     let path = normalize_candidate(PathBuf::from(path))
         .ok_or_else(|| "The selected file is not a .tmsl presentation.".to_string())?;
     let file = read_tmsl(&path)?;
-    set_current_path(&state, path)?;
+    set_current_path(&state, path.clone())?;
+    record_recent_tmsl(&app, &path)?;
     Ok(file)
 }
 
@@ -298,6 +481,7 @@ fn current_tmsl_path(state: State<'_, NativeFileState>) -> Result<Option<String>
 
 #[tauri::command]
 fn save_tmsl_current(
+    app: AppHandle,
     bytes: Vec<u8>,
     state: State<'_, NativeFileState>,
 ) -> Result<String, String> {
@@ -312,6 +496,7 @@ fn save_tmsl_current(
     };
 
     write_tmsl(&path, &bytes)?;
+    record_recent_tmsl(&app, &path)?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -349,6 +534,7 @@ fn save_tmsl_as(
 
     write_tmsl(&path, &bytes)?;
     set_current_path(&state, path.clone())?;
+    record_recent_tmsl(&app, &path)?;
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
@@ -443,6 +629,10 @@ pub fn run() {
     builder
         .invoke_handler(tauri::generate_handler![
             take_pending_tmsl,
+            list_recent_tmsl,
+            forget_recent_tmsl,
+            clear_recent_tmsl,
+            recovery_tmsl_info,
             startup_tmdoc,
             startup_tmsh,
             startup_tmnt,
@@ -456,7 +646,9 @@ pub fn run() {
             read_tmsl_recovery,
             clear_tmsl_recovery,
             #[cfg(desktop)]
-            save_tmsl_as
+            save_tmsl_as,
+            #[cfg(desktop)]
+            open_tmsl_dialog
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tamishra Workspace");
