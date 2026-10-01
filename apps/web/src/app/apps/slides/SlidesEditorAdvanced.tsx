@@ -21,6 +21,7 @@ import {
   type AlignMode,
   type DistributeAxis
 } from "@tamishra/slides-core";
+import { exportDeckToPptx } from "./pptxExport";
 import styles from "./slides.module.css";
 
 type ElementType = "text" | "shape" | "image" | "line" | "table" | "chart";
@@ -70,6 +71,16 @@ type SlideElement = {
   imageMask?: ImageMask;
   imageX?: number;
   imageY?: number;
+  name?: string;
+  locked?: boolean;
+  hidden?: boolean;
+};
+
+type SlideComment = {
+  id: string;
+  text: string;
+  createdAt: string;
+  resolved: boolean;
 };
 
 type Slide = {
@@ -83,6 +94,24 @@ type Slide = {
     vertical: number[];
     horizontal: number[];
   };
+  comments?: SlideComment[];
+  elements: SlideElement[];
+};
+
+type VersionSnapshot = {
+  id: string;
+  label: string;
+  createdAt: string;
+  title: string;
+  slides: Slide[];
+};
+
+type SavedComponent = {
+  id: string;
+  name: string;
+  createdAt: string;
+  width: number;
+  height: number;
   elements: SlideElement[];
 };
 
@@ -323,11 +352,19 @@ export default function SlidesEditorAdvanced() {
   const [snap, setSnap] = useState(true);
   const [guides, setGuides] = useState<GuideState>({});
   const [marquee, setMarquee] = useState<MarqueeState | null>(null);
-  const [inspectorMode, setInspectorMode] = useState<"slide" | "element" | "theme">("slide");
+  const [inspectorMode, setInspectorMode] = useState<
+    "slide" | "element" | "layers" | "review" | "history" | "components" | "theme"
+  >("slide");
   const [saveState, setSaveState] = useState("Saved locally");
   const [presenterIndex, setPresenterIndex] = useState<number | null>(null);
   const [presenterScale, setPresenterScale] = useState(1);
   const [showPresenterNotes, setShowPresenterNotes] = useState(false);
+  const [presenterStartedAt, setPresenterStartedAt] = useState<number | null>(null);
+  const [presenterElapsed, setPresenterElapsed] = useState(0);
+  const [presenterBlackout, setPresenterBlackout] = useState(false);
+  const [commentDraft, setCommentDraft] = useState("");
+  const [history, setHistory] = useState<VersionSnapshot[]>([]);
+  const [components, setComponents] = useState<SavedComponent[]>([]);
 
   const imageInput = useRef<HTMLInputElement>(null);
   const importInput = useRef<HTMLInputElement>(null);
@@ -366,6 +403,7 @@ export default function SlidesEditorAdvanced() {
           layout: slide.layout ?? "content",
           section: slide.section ?? "",
           guides: slide.guides ?? { vertical: [], horizontal: [] },
+          comments: slide.comments ?? [],
           elements: slide.elements.map((element) => ({ ...element }))
         }));
         setSlides(normalized);
@@ -376,6 +414,31 @@ export default function SlidesEditorAdvanced() {
       // Keep the starter deck if a local draft is malformed.
     }
   }, []);
+
+  useEffect(() => {
+    try {
+      const rawHistory = localStorage.getItem("tamishra-slides-history-v1");
+      if (rawHistory) {
+        const parsed = JSON.parse(rawHistory) as VersionSnapshot[];
+        if (Array.isArray(parsed)) setHistory(parsed.slice(0, 30));
+      }
+      const rawComponents = localStorage.getItem("tamishra-slides-components-v1");
+      if (rawComponents) {
+        const parsed = JSON.parse(rawComponents) as SavedComponent[];
+        if (Array.isArray(parsed)) setComponents(parsed);
+      }
+    } catch {
+      // Ignore malformed optional workspace data.
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("tamishra-slides-history-v1", JSON.stringify(history.slice(0, 30)));
+  }, [history]);
+
+  useEffect(() => {
+    localStorage.setItem("tamishra-slides-components-v1", JSON.stringify(components));
+  }, [components]);
 
   useEffect(() => {
     setSaveState("Saving…");
@@ -458,6 +521,7 @@ export default function SlidesEditorAdvanced() {
       layout,
       section: activeSlide?.section ?? "",
       guides: { vertical: [], horizontal: [] },
+      comments: [],
       elements: layoutElements(layout, theme)
     };
     const insertAt = activeIndex + 1;
@@ -612,6 +676,137 @@ export default function SlidesEditorAdvanced() {
         ids.has(element.id) ? { ...element, ...patch } : element
       )
     }));
+  };
+
+  const setLayerState = (id: string, patch: Partial<SlideElement>) => {
+    mutateActive((slide) => ({
+      ...slide,
+      elements: slide.elements.map((element) =>
+        element.id === id ? { ...element, ...patch } : element
+      )
+    }));
+  };
+
+  const addComment = () => {
+    const text = commentDraft.trim();
+    if (!text) return;
+    const comment: SlideComment = {
+      id: uid(),
+      text,
+      createdAt: new Date().toISOString(),
+      resolved: false
+    };
+    mutateActive((slide) => ({
+      ...slide,
+      comments: [...(slide.comments ?? []), comment]
+    }));
+    setCommentDraft("");
+  };
+
+  const toggleComment = (id: string) => {
+    mutateActive((slide) => ({
+      ...slide,
+      comments: (slide.comments ?? []).map((comment) =>
+        comment.id === id ? { ...comment, resolved: !comment.resolved } : comment
+      )
+    }));
+  };
+
+  const removeComment = (id: string) => {
+    mutateActive((slide) => ({
+      ...slide,
+      comments: (slide.comments ?? []).filter((comment) => comment.id !== id)
+    }));
+  };
+
+  const createSnapshot = () => {
+    const snapshot: VersionSnapshot = {
+      id: uid(),
+      label: "Snapshot " + (history.length + 1),
+      createdAt: new Date().toISOString(),
+      title: deckTitle,
+      slides: cloneSlides(slides)
+    };
+    setHistory((current) => [snapshot, ...current].slice(0, 30));
+    setSaveState("Version snapshot created");
+  };
+
+  const restoreSnapshot = (snapshot: VersionSnapshot) => {
+    undoStack.current.push(slides);
+    redoStack.current = [];
+    const restored = cloneSlides(snapshot.slides);
+    setSlides(restored);
+    setDeckTitle(snapshot.title);
+    setActiveId(restored[0]?.id ?? activeId);
+    setSelectedIds([]);
+    setSaveState("Version restored");
+  };
+
+  const deleteSnapshot = (id: string) => {
+    setHistory((current) => current.filter((snapshot) => snapshot.id !== id));
+  };
+
+  const saveSelectionAsComponent = () => {
+    if (!expandedSelection.length) return;
+    const ids = new Set(expandedSelection);
+    const source = activeSlide.elements.filter((element) => ids.has(element.id));
+    const bounds = selectionBounds(source, source.map((element) => element.id));
+    if (!bounds) return;
+    const groupMap = new Map<string, string>();
+    const elements = source.map((element) => {
+      let groupId = element.groupId;
+      if (groupId) {
+        if (!groupMap.has(groupId)) groupMap.set(groupId, uid());
+        groupId = groupMap.get(groupId);
+      }
+      return {
+        ...element,
+        id: uid(),
+        groupId,
+        x: element.x - bounds.x,
+        y: element.y - bounds.y
+      };
+    });
+    const component: SavedComponent = {
+      id: uid(),
+      name:
+        source.length === 1
+          ? (source[0].name || source[0].type) + " component"
+          : "Component " + (components.length + 1),
+      createdAt: new Date().toISOString(),
+      width: bounds.w,
+      height: bounds.h,
+      elements
+    };
+    setComponents((current) => [component, ...current]);
+    setSaveState("Reusable component saved");
+  };
+
+  const insertComponent = (component: SavedComponent) => {
+    const groupMap = new Map<string, string>();
+    const offsetX = Math.max(20, (SLIDE_W - component.width) / 2);
+    const offsetY = Math.max(20, (SLIDE_H - component.height) / 2);
+    const elements = component.elements.map((element) => {
+      let groupId = element.groupId;
+      if (groupId) {
+        if (!groupMap.has(groupId)) groupMap.set(groupId, uid());
+        groupId = groupMap.get(groupId);
+      }
+      return {
+        ...element,
+        id: uid(),
+        groupId,
+        x: Math.min(SLIDE_W - element.w, offsetX + element.x),
+        y: Math.min(SLIDE_H - element.h, offsetY + element.y)
+      };
+    });
+    mutateActive((slide) => ({ ...slide, elements: [...slide.elements, ...elements] }));
+    setSelectedIds(elements.map((element) => element.id));
+    setInspectorMode("element");
+  };
+
+  const deleteComponent = (id: string) => {
+    setComponents((current) => current.filter((component) => component.id !== id));
   };
 
   const deleteSelection = () => {
@@ -927,6 +1122,11 @@ export default function SlidesEditorAdvanced() {
   ) => {
     if (editingId === element.id) return;
     event.stopPropagation();
+    if (element.locked) {
+      setSelectedIds(selectionFromClickedElement(activeSlide.elements, element.id));
+      setInspectorMode("element");
+      return;
+    }
     event.currentTarget.setPointerCapture(event.pointerId);
 
     const clickedSelection = selectionFromClickedElement(activeSlide.elements, element.id);
@@ -1097,6 +1297,16 @@ export default function SlidesEditorAdvanced() {
     }));
   };
 
+  const exportPptx = async () => {
+    try {
+      setSaveState("Generating PPTX…");
+      await exportDeckToPptx({ title: deckTitle, slides });
+      setSaveState("PPTX exported");
+    } catch {
+      setSaveState("PPTX export failed");
+    }
+  };
+
   const exportDeck = () => {
     const blob = new Blob(
       [JSON.stringify({ version: 3, title: deckTitle, slides }, null, 2)],
@@ -1124,7 +1334,8 @@ export default function SlidesEditorAdvanced() {
           ...slide,
           layout: slide.layout ?? "content",
           section: slide.section ?? "",
-          guides: slide.guides ?? { vertical: [], horizontal: [] }
+          guides: slide.guides ?? { vertical: [], horizontal: [] },
+          comments: slide.comments ?? []
         })));
         setActiveId(data.slides[0].id);
         setSelectedIds([]);
@@ -1148,6 +1359,9 @@ export default function SlidesEditorAdvanced() {
 
   const startPresentation = async () => {
     setPresenterIndex(activeIndex);
+    setPresenterStartedAt(Date.now());
+    setPresenterElapsed(0);
+    setPresenterBlackout(false);
     try {
       await document.documentElement.requestFullscreen?.();
     } catch {
@@ -1158,6 +1372,8 @@ export default function SlidesEditorAdvanced() {
   const stopPresentation = async () => {
     setPresenterIndex(null);
     setShowPresenterNotes(false);
+    setPresenterStartedAt(null);
+    setPresenterBlackout(false);
     if (document.fullscreenElement) {
       try {
         await document.exitFullscreen();
@@ -1166,6 +1382,14 @@ export default function SlidesEditorAdvanced() {
       }
     }
   };
+
+  useEffect(() => {
+    if (presenterIndex === null || presenterStartedAt === null) return;
+    const tick = () => setPresenterElapsed(Math.max(0, Date.now() - presenterStartedAt));
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [presenterIndex, presenterStartedAt]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -1364,6 +1588,7 @@ export default function SlidesEditorAdvanced() {
     interactive: boolean,
     presenting = false
   ) => {
+    if (element.hidden) return null;
     const isSelected = interactive && selectedIds.includes(element.id);
     const style: CSSProperties = {
       left: element.x,
@@ -1390,7 +1615,7 @@ export default function SlidesEditorAdvanced() {
           suppressContentEditableWarning
           onDoubleClick={(event) => {
             event.stopPropagation();
-            setEditingId(element.id);
+            if (!element.locked) setEditingId(element.id);
             setSelectedIds(selectionFromClickedElement(activeSlide.elements, element.id));
           }}
           onKeyDown={(event) => event.stopPropagation()}
@@ -1488,7 +1713,7 @@ export default function SlidesEditorAdvanced() {
         } : undefined}
       >
         {content}
-        {isSelected && editingId !== element.id && selectedIds.length === 1 && (
+        {isSelected && !element.locked && editingId !== element.id && selectedIds.length === 1 && (
           <div
             className={styles.resizeHandle}
             onPointerDown={(event) => beginGesture(event, element, "resize")}
@@ -1577,6 +1802,16 @@ export default function SlidesEditorAdvanced() {
   const animatedElements = activeSlide.elements.filter(
     (element) => element.animation && element.animation !== "none"
   );
+  const unresolvedComments = (activeSlide.comments ?? []).filter((comment) => !comment.resolved);
+  const formatElapsed = (milliseconds: number) => {
+    const totalSeconds = Math.floor(milliseconds / 1000);
+    const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, "0");
+    const seconds = (totalSeconds % 60).toString().padStart(2, "0");
+    return minutes + ":" + seconds;
+  };
+  const slideTitle = (slide: Slide | undefined) =>
+    slide?.elements.find((element) => element.type === "text" && !element.hidden)?.text ??
+    "Untitled slide";
 
   return (
     <main className={styles.shell}>
@@ -1602,9 +1837,14 @@ export default function SlidesEditorAdvanced() {
       <nav className={styles.menuBar} aria-label="Presentation menu">
         <button className={styles.menuItem} onClick={() => addSlide("content")}>New slide</button>
         <button className={styles.menuItem} onClick={() => importInput.current?.click()}>Import</button>
-        <button className={styles.menuItem} onClick={exportDeck}>Export</button>
+        <button className={styles.menuItem} onClick={exportDeck}>Export JSON</button>
+        <button className={styles.menuItem} onClick={() => void exportPptx()}>Export PPTX</button>
         <button className={styles.menuItem} onClick={() => window.print()}>Print / PDF</button>
         <button className={styles.menuItem} onClick={() => duplicateSlide()}>Duplicate slide</button>
+        <button className={styles.menuItem} onClick={createSnapshot}>Save version</button>
+        <button className={styles.menuItem} onClick={() => setInspectorMode("review")}>
+          Review {unresolvedComments.length ? "(" + unresolvedComments.length + ")" : ""}
+        </button>
         <button className={styles.menuItem} onClick={() => setInspectorMode("theme")}>Master & theme</button>
       </nav>
 
@@ -1647,6 +1887,7 @@ export default function SlidesEditorAdvanced() {
             <button className={styles.toolbarBtn} onClick={duplicateSelection}>Duplicate</button>
             <button className={styles.toolbarBtn} onClick={copySelection}>Copy</button>
             <button className={styles.toolbarBtn} onClick={deleteSelection}>Delete</button>
+            <button className={styles.toolbarBtn} onClick={saveSelectionAsComponent}>Save component</button>
           </>
         )}
 
@@ -1711,24 +1952,23 @@ export default function SlidesEditorAdvanced() {
 
         <aside className={styles.inspector}>
           <div className={styles.inspectorHeader}>
-            <button
-              className={styles.inspectorTab + (inspectorMode === "slide" ? " " + styles.inspectorTabActive : "")}
-              onClick={() => setInspectorMode("slide")}
-            >
-              Slide
-            </button>
-            <button
-              className={styles.inspectorTab + (inspectorMode === "element" ? " " + styles.inspectorTabActive : "")}
-              onClick={() => setInspectorMode("element")}
-            >
-              Object
-            </button>
-            <button
-              className={styles.inspectorTab + (inspectorMode === "theme" ? " " + styles.inspectorTabActive : "")}
-              onClick={() => setInspectorMode("theme")}
-            >
-              Master
-            </button>
+            {[
+              ["slide", "Slide"],
+              ["element", "Object"],
+              ["layers", "Layers"],
+              ["review", "Review"],
+              ["history", "History"],
+              ["components", "Assets"],
+              ["theme", "Master"]
+            ].map(([mode, label]) => (
+              <button
+                key={mode}
+                className={styles.inspectorTab + (inspectorMode === mode ? " " + styles.inspectorTabActive : "")}
+                onClick={() => setInspectorMode(mode as typeof inspectorMode)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
           {inspectorMode === "slide" && (
@@ -1942,6 +2182,46 @@ export default function SlidesEditorAdvanced() {
                 <div className={styles.field}>
                   <label>Rotation</label>
                   <input type="number" value={primaryElement.rotation ?? 0} onChange={(event) => updateElement(primaryElement.id, { rotation: Number(event.target.value) })} />
+                </div>
+              </div>
+
+              <div className={styles.panel}>
+                <h3 className={styles.panelTitle}>Object identity</h3>
+                <div className={styles.field}>
+                  <label>Layer name</label>
+                  <input
+                    value={primaryElement.name ?? ""}
+                    placeholder={primaryElement.type}
+                    onChange={(event) =>
+                      updateElement(primaryElement.id, { name: event.target.value })
+                    }
+                  />
+                </div>
+                <div className={styles.fieldRow}>
+                  <div className={styles.field}>
+                    <label>Lock</label>
+                    <select
+                      value={primaryElement.locked ? "locked" : "unlocked"}
+                      onChange={(event) =>
+                        updateElement(primaryElement.id, { locked: event.target.value === "locked" })
+                      }
+                    >
+                      <option value="unlocked">Unlocked</option>
+                      <option value="locked">Locked</option>
+                    </select>
+                  </div>
+                  <div className={styles.field}>
+                    <label>Visibility</label>
+                    <select
+                      value={primaryElement.hidden ? "hidden" : "visible"}
+                      onChange={(event) =>
+                        updateElement(primaryElement.id, { hidden: event.target.value === "hidden" })
+                      }
+                    >
+                      <option value="visible">Visible</option>
+                      <option value="hidden">Hidden</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 
@@ -2280,6 +2560,143 @@ export default function SlidesEditorAdvanced() {
             </div>
           )}
 
+          {inspectorMode === "layers" && (
+            <div className={styles.panel}>
+              <h3 className={styles.panelTitle}>Object layers</h3>
+              <div className={styles.layerList}>
+                {[...activeSlide.elements].reverse().map((element, index) => (
+                  <div
+                    className={
+                      styles.layerItem +
+                      (selectedIds.includes(element.id) ? " " + styles.layerItemActive : "")
+                    }
+                    key={element.id}
+                  >
+                    <button
+                      className={styles.layerSelect}
+                      onClick={() => {
+                        setSelectedIds([element.id]);
+                        setInspectorMode("element");
+                      }}
+                    >
+                      <span>{activeSlide.elements.length - index}</span>
+                      <strong>{element.name || element.type}</strong>
+                    </button>
+                    <button
+                      className={styles.layerIcon}
+                      title={element.hidden ? "Show object" : "Hide object"}
+                      onClick={() => setLayerState(element.id, { hidden: !element.hidden })}
+                    >
+                      {element.hidden ? "○" : "●"}
+                    </button>
+                    <button
+                      className={styles.layerIcon}
+                      title={element.locked ? "Unlock object" : "Lock object"}
+                      onClick={() => setLayerState(element.id, { locked: !element.locked })}
+                    >
+                      {element.locked ? "🔒" : "◇"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {inspectorMode === "review" && (
+            <div className={styles.panel}>
+              <h3 className={styles.panelTitle}>Slide review</h3>
+              <div className={styles.field}>
+                <label>New comment</label>
+                <textarea
+                  value={commentDraft}
+                  placeholder="Add a review note…"
+                  onChange={(event) => setCommentDraft(event.target.value)}
+                />
+              </div>
+              <button className={styles.inspectorBtn} onClick={addComment}>Add comment</button>
+
+              <div className={styles.commentList}>
+                {(activeSlide.comments ?? []).map((comment) => (
+                  <div
+                    className={
+                      styles.commentCard +
+                      (comment.resolved ? " " + styles.commentResolved : "")
+                    }
+                    key={comment.id}
+                  >
+                    <div className={styles.commentMeta}>
+                      <strong>{comment.resolved ? "Resolved" : "Open"}</strong>
+                      <span>{new Date(comment.createdAt).toLocaleString()}</span>
+                    </div>
+                    <p>{comment.text}</p>
+                    <div className={styles.commentActions}>
+                      <button onClick={() => toggleComment(comment.id)}>
+                        {comment.resolved ? "Reopen" : "Resolve"}
+                      </button>
+                      <button onClick={() => removeComment(comment.id)}>Delete</button>
+                    </div>
+                  </div>
+                ))}
+                {!(activeSlide.comments ?? []).length && (
+                  <p className={styles.panelHint}>No review comments on this slide.</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {inspectorMode === "history" && (
+            <div className={styles.panel}>
+              <h3 className={styles.panelTitle}>Version snapshots</h3>
+              <button className={styles.inspectorBtn} onClick={createSnapshot}>Create snapshot now</button>
+              <div className={styles.historyList}>
+                {history.map((snapshot) => (
+                  <div className={styles.historyCard} key={snapshot.id}>
+                    <div>
+                      <strong>{snapshot.label}</strong>
+                      <span>{new Date(snapshot.createdAt).toLocaleString()}</span>
+                      <small>{snapshot.slides.length} slides · {snapshot.title}</small>
+                    </div>
+                    <div className={styles.historyActions}>
+                      <button onClick={() => restoreSnapshot(snapshot)}>Restore</button>
+                      <button onClick={() => deleteSnapshot(snapshot.id)}>Delete</button>
+                    </div>
+                  </div>
+                ))}
+                {!history.length && (
+                  <p className={styles.panelHint}>Create a snapshot before a major edit to make rollback instant.</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {inspectorMode === "components" && (
+            <div className={styles.panel}>
+              <h3 className={styles.panelTitle}>Reusable components</h3>
+              {expandedSelection.length > 0 && (
+                <button className={styles.inspectorBtn} onClick={saveSelectionAsComponent}>
+                  Save current selection
+                </button>
+              )}
+              <div className={styles.componentList}>
+                {components.map((component) => (
+                  <div className={styles.componentCard} key={component.id}>
+                    <div>
+                      <strong>{component.name}</strong>
+                      <span>{component.elements.length} objects</span>
+                    </div>
+                    <div className={styles.componentActions}>
+                      <button onClick={() => insertComponent(component)}>Insert</button>
+                      <button onClick={() => deleteComponent(component.id)}>Delete</button>
+                    </div>
+                  </div>
+                ))}
+                {!components.length && (
+                  <p className={styles.panelHint}>Select one or more objects and save them as a reusable component.</p>
+                )}
+              </div>
+            </div>
+          )}
+
           {inspectorMode === "theme" && (
             <>
               <div className={styles.panel}>
@@ -2346,6 +2763,7 @@ export default function SlidesEditorAdvanced() {
       {presenterIndex !== null && slides[presenterIndex] && (
         <div className={styles.presenter}>
           <div className={styles.presenterStage}>
+            {presenterBlackout && <div className={styles.presenterBlackout} />}
             <div
               key={slides[presenterIndex].id}
               className={
@@ -2368,8 +2786,19 @@ export default function SlidesEditorAdvanced() {
           <div className={styles.presenterControls}>
             <button onClick={() => setPresenterIndex((index) => index === null ? null : Math.max(0, index - 1))}>← Previous</button>
             <span>{presenterIndex + 1} / {slides.length}</span>
+            <strong className={styles.presenterTimer}>{formatElapsed(presenterElapsed)}</strong>
+            <span className={styles.presenterNext}>
+              Next: {slideTitle(slides[Math.min(slides.length - 1, presenterIndex + 1)])}
+            </span>
             <button onClick={() => setPresenterIndex((index) => index === null ? null : Math.min(slides.length - 1, index + 1))}>Next →</button>
             <button onClick={() => setShowPresenterNotes((value) => !value)}>Notes</button>
+            <button onClick={() => setPresenterBlackout((value) => !value)}>
+              {presenterBlackout ? "Resume" : "Black"}
+            </button>
+            <button onClick={() => {
+              setPresenterStartedAt(Date.now());
+              setPresenterElapsed(0);
+            }}>Reset timer</button>
             <button onClick={() => void stopPresentation()}>Exit</button>
           </div>
         </div>
