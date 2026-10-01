@@ -6,8 +6,11 @@ import {
   addResponse,
   createField,
   createForm,
+  createFormPage,
   createFormsSnapshot,
   createTemplateForm,
+  getFieldsForPage,
+  getNextPageId,
   isFieldVisible,
   normalizeForm,
   parseTamishraForm,
@@ -20,6 +23,7 @@ import {
   type FormField,
   type FormFieldType,
   type FormLogicOperator,
+  type FormResponse,
   type FormsSnapshot,
   type TamishraForm
 } from "@tamishra/forms-core";
@@ -30,6 +34,7 @@ import {
 } from "@tamishra/file-core";
 import { consumeNativeFileHandoff } from "../../../lib/native-file-handoff";
 import { mutateWorkspaceFileIndex } from "../../../lib/workspace-files";
+import { workspaceApi } from "../../../lib/workspace-api";
 import styles from "./forms.module.css";
 
 const STORAGE_KEY = "tamishra.forms.snapshot.v1";
@@ -239,6 +244,9 @@ export default function FormsWorkspace() {
   const [snapshot, setSnapshot] = useState<FormsSnapshot>(() => createFormsSnapshot());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
+  const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
+  const [previewPageId, setPreviewPageId] = useState<string | null>(null);
+  const [previewHistory, setPreviewHistory] = useState<string[]>([]);
   const [mode, setMode] = useState<Mode>("build");
   const [view, setView] = useState<View>("forms");
   const [query, setQuery] = useState("");
@@ -255,6 +263,29 @@ export default function FormsWorkspace() {
   const selectedField = useMemo(
     () => selectedForm?.fields.find((field) => field.id === selectedFieldId) ?? null,
     [selectedForm, selectedFieldId]
+  );
+
+  const selectedPage = useMemo(
+    () => selectedForm?.pages.find((page) => page.id === selectedPageId) ?? selectedForm?.pages[0] ?? null,
+    [selectedForm, selectedPageId]
+  );
+
+  const builderFields = useMemo(
+    () => selectedForm && selectedPage ? getFieldsForPage(selectedForm, selectedPage.id) : [],
+    [selectedForm, selectedPage]
+  );
+
+  const previewPage = useMemo(
+    () => selectedForm?.pages.find((page) => page.id === previewPageId) ?? selectedForm?.pages[0] ?? null,
+    [selectedForm, previewPageId]
+  );
+
+  const previewFields = useMemo(
+    () =>
+      selectedForm && previewPage
+        ? getFieldsForPage(selectedForm, previewPage.id).filter((field) => isFieldVisible(field, answers))
+        : [],
+    [selectedForm, previewPage, answers]
   );
 
   const formResponses = useMemo(
@@ -279,8 +310,12 @@ export default function FormsWorkspace() {
 
   const selectForm = (id: string) => {
     const form = snapshot.forms.find((item) => item.id === id);
+    const firstPage = form?.pages[0] ?? null;
     setSelectedId(id);
-    setSelectedFieldId(form?.fields[0]?.id ?? null);
+    setSelectedPageId(firstPage?.id ?? null);
+    setPreviewPageId(firstPage?.id ?? null);
+    setPreviewHistory([]);
+    setSelectedFieldId(firstPage ? getFieldsForPage(form!, firstPage.id)[0]?.id ?? null : null);
     setAnswers({});
     setErrors({});
     history.replaceState(null, "", "/apps/forms?form=" + encodeURIComponent(id));
@@ -292,6 +327,9 @@ export default function FormsWorkspace() {
     setView("forms");
     setMode("build");
     setSelectedId(form.id);
+    setSelectedPageId(form.pages[0]?.id ?? null);
+    setPreviewPageId(form.pages[0]?.id ?? null);
+    setPreviewHistory([]);
     setSelectedFieldId(form.fields[0]?.id ?? null);
     history.replaceState(null, "", "/apps/forms?form=" + encodeURIComponent(form.id));
     setStatus(template ? "Template created" : "New form");
@@ -317,10 +355,52 @@ export default function FormsWorkspace() {
   };
 
   const addField = (type: FormFieldType) => {
-    if (!selectedForm) return;
+    if (!selectedForm || !selectedPage) return;
     const field = createField(type, fieldLabels[type]);
-    updateForm(selectedForm.id, { fields: [...selectedForm.fields, field] });
+    updateForm(selectedForm.id, {
+      fields: [...selectedForm.fields, field],
+      pages: selectedForm.pages.map((page) =>
+        page.id === selectedPage.id
+          ? { ...page, fieldIds: [...page.fieldIds, field.id] }
+          : page
+      )
+    });
     setSelectedFieldId(field.id);
+  };
+
+  const addPage = () => {
+    if (!selectedForm) return;
+    const page = createFormPage("Page " + (selectedForm.pages.length + 1));
+    updateForm(selectedForm.id, { pages: [...selectedForm.pages, page] });
+    setSelectedPageId(page.id);
+    setSelectedFieldId(null);
+  };
+
+  const updatePage = (pageId: string, patch: Partial<TamishraForm["pages"][number]>) => {
+    if (!selectedForm) return;
+    updateForm(selectedForm.id, {
+      pages: selectedForm.pages.map((page) =>
+        page.id === pageId ? { ...page, ...patch } : page
+      )
+    });
+  };
+
+  const deletePage = (pageId: string) => {
+    if (!selectedForm || selectedForm.pages.length <= 1) return;
+    const page = selectedForm.pages.find((item) => item.id === pageId);
+    if (!page) return;
+    const remainingPages = selectedForm.pages.filter((item) => item.id !== pageId);
+    const remainingFields = selectedForm.fields.filter((field) => !page.fieldIds.includes(field.id));
+    updateForm(selectedForm.id, {
+      fields: remainingFields,
+      pages: remainingPages.map((item) => ({
+        ...item,
+        defaultNextPageId: item.defaultNextPageId === pageId ? null : item.defaultNextPageId,
+        branchRules: item.branchRules.filter((rule) => rule.targetPageId !== pageId)
+      }))
+    });
+    setSelectedPageId(remainingPages[0]?.id ?? null);
+    setSelectedFieldId(remainingPages[0] ? getFieldsForPage({ ...selectedForm, fields: remainingFields, pages: remainingPages }, remainingPages[0].id)[0]?.id ?? null : null);
   };
 
   const moveField = (fieldId: string, direction: -1 | 1) => {
@@ -340,15 +420,33 @@ export default function FormsWorkspace() {
     const duplicate = copyField(selectedForm.fields[index]);
     const fields = [...selectedForm.fields];
     fields.splice(index + 1, 0, duplicate);
-    updateForm(selectedForm.id, { fields });
+    updateForm(selectedForm.id, {
+      fields,
+      pages: selectedForm.pages.map((page) =>
+        page.fieldIds.includes(fieldId)
+          ? {
+              ...page,
+              fieldIds: page.fieldIds.flatMap((id) => id === fieldId ? [id, duplicate.id] : [id])
+            }
+          : page
+      )
+    });
     setSelectedFieldId(duplicate.id);
   };
 
   const deleteField = (fieldId: string) => {
     if (!selectedForm) return;
     const fields = selectedForm.fields.filter((field) => field.id !== fieldId);
-    updateForm(selectedForm.id, { fields });
-    setSelectedFieldId(fields[0]?.id ?? null);
+    const pages = selectedForm.pages.map((page) => ({
+      ...page,
+      fieldIds: page.fieldIds.filter((id) => id !== fieldId),
+      branchRules: page.branchRules.filter((rule) => rule.sourceFieldId !== fieldId)
+    }));
+    updateForm(selectedForm.id, { fields, pages });
+    const currentPageFields = selectedPage
+      ? getFieldsForPage({ ...selectedForm, fields, pages }, selectedPage.id)
+      : fields;
+    setSelectedFieldId(currentPageFields[0]?.id ?? null);
   };
 
   const importNativeBytes = (bytes: ArrayBuffer | Uint8Array) => {
@@ -366,6 +464,9 @@ export default function FormsWorkspace() {
     setView("forms");
     setMode("build");
     setSelectedId(form.id);
+    setSelectedPageId(form.pages[0]?.id ?? null);
+    setPreviewPageId(form.pages[0]?.id ?? null);
+    setPreviewHistory([]);
     setSelectedFieldId(form.fields[0]?.id ?? null);
     setStatus(".tmfm opened · integrity verified");
   };
@@ -379,6 +480,8 @@ export default function FormsWorkspace() {
       restored.forms.find((form) => !form.trashedAt) ||
       null;
     setSelectedId(active?.id ?? null);
+    setSelectedPageId(active?.pages[0]?.id ?? null);
+    setPreviewPageId(active?.pages[0]?.id ?? null);
     setSelectedFieldId(active?.fields[0]?.id ?? null);
     setLoaded(true);
   }, []);
