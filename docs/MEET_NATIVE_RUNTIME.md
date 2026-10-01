@@ -116,6 +116,8 @@ When `WORKSPACE_MEET_DATABASE_URL` (or `WORKSPACE_DATABASE_URL` / `DATABASE_URL`
 - waiting-room admission state
 - participant display names
 - last-seen timestamps
+- connected attendance sessions
+- attendance join / heartbeat / leave timestamps
 
 Room capability keys are never stored raw. The gateway stores only SHA-256 hashes and returns the raw key to the creating/joining client once.
 
@@ -123,7 +125,6 @@ When no database URL is configured, the gateway deliberately falls back to `ephe
 
 The next persistence block should extend the same database boundary for:
 
-- detailed attendance sessions
 - persistent meeting chat
 - reactions / hand raise
 - recording metadata
