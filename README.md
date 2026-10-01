@@ -43,3 +43,28 @@ The suite should open into one Workspace Home with:
 - unified settings
 
 See `docs/PRODUCT_SCOPE.md` and `docs/ARCHITECTURE.md`.
+
+
+## Independence boundary
+
+Tamishra Workspace is a standalone product and codebase.
+
+It must not depend on the Tamishra training/services website for authentication, APIs, meetings, storage, payments, deployment, routing or runtime assets.
+
+Workspace owns its own:
+
+- web application
+- Windows/macOS/Linux desktop shell
+- Android/iOS shell
+- backend gateway and APIs
+- identity and organization model
+- file/storage layer
+- collaboration and sync services
+- mail provider gateway
+- meeting service
+- notification service
+- deployment configuration
+- environment variables and secrets
+- product settings and release lifecycle
+
+The original Tamishra website may link users to Workspace, but it is an external product boundary—not a runtime dependency.
