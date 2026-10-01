@@ -31,6 +31,7 @@ function applyCommand(command: string, value?: string) {
 
 export default function DocsEditor() {
   const editorRef = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const draftRef = useRef<PersistedDocsDraft | null>(null);
   const pageHistoryRef = useRef(new TransactionHistory<PageConfig>(100));
   const [title, setTitle] = useState("Untitled document");
@@ -42,6 +43,10 @@ export default function DocsEditor() {
   const [pageCount, setPageCount] = useState(1);
   const [fontSize, setFontSize] = useState("3");
   const [textColor, setTextColor] = useState("#202939");
+  const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
+  const [selectedImageWidth, setSelectedImageWidth] = useState(320);
+  const [selectedImageAlt, setSelectedImageAlt] = useState("");
+  const [selectedImageLayout, setSelectedImageLayout] = useState("inline");
 
   const ensureBlockIds = () => {
     const editor = editorRef.current;
@@ -230,6 +235,145 @@ export default function DocsEditor() {
       "insertHTML",
       `<div data-page-break="true" data-tamishra-id="${id}" contenteditable="false" class="docsManualPageBreak"><span>Page break</span></div><p><br></p>`
     );
+    updateCounts();
+  };
+
+  const selectImageElement = (image: HTMLImageElement | null) => {
+    editorRef.current
+      ?.querySelectorAll("img.docsSelectedImage")
+      .forEach((element) => element.classList.remove("docsSelectedImage"));
+
+    if (!image) {
+      setSelectedImageId(null);
+      return;
+    }
+
+    if (!image.dataset.tamishraId) {
+      image.dataset.tamishraId = createId("img");
+    }
+
+    image.classList.add("docsSelectedImage");
+    setSelectedImageId(image.dataset.tamishraId);
+    setSelectedImageWidth(Math.round(image.getBoundingClientRect().width || image.width || 320));
+    setSelectedImageAlt(image.alt || "");
+    setSelectedImageLayout(image.dataset.layout || "inline");
+  };
+
+  const findSelectedImage = () => {
+    if (!selectedImageId) return null;
+    return editorRef.current?.querySelector(
+      `img[data-tamishra-id="${CSS.escape(selectedImageId)}"]`
+    ) as HTMLImageElement | null;
+  };
+
+  const insertImageFile = (file: File) => {
+    if (!file.type.startsWith("image/")) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const src = typeof reader.result === "string" ? reader.result : "";
+      if (!src) return;
+
+      editorRef.current?.focus();
+      const id = createId("img");
+      const escapedName = file.name.replace(/[&<>"']/g, "");
+      applyCommand(
+        "insertHTML",
+        `<img data-tamishra-id="${id}" data-layout="inline" src="${src}" alt="${escapedName}" style="width:320px;max-width:100%;height:auto;" /><p><br></p>`
+      );
+      ensureBlockIds();
+      updateCounts();
+
+      requestAnimationFrame(() => {
+        const image = editorRef.current?.querySelector(
+          `img[data-tamishra-id="${CSS.escape(id)}"]`
+        ) as HTMLImageElement | null;
+        selectImageElement(image);
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleImageInput = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) insertImageFile(file);
+    event.target.value = "";
+  };
+
+  const handleEditorPaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
+    const imageItem = Array.from(event.clipboardData.items).find((item) =>
+      item.type.startsWith("image/")
+    );
+
+    const file = imageItem?.getAsFile();
+    if (!file) return;
+
+    event.preventDefault();
+    insertImageFile(file);
+  };
+
+  const handleEditorDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    const file = Array.from(event.dataTransfer.files).find((item) =>
+      item.type.startsWith("image/")
+    );
+    if (!file) return;
+
+    event.preventDefault();
+    insertImageFile(file);
+  };
+
+  const updateSelectedImageWidth = (width: number) => {
+    const image = findSelectedImage();
+    if (!image) return;
+
+    const safeWidth = Math.max(80, Math.min(700, width));
+    image.style.width = `${safeWidth}px`;
+    image.style.height = "auto";
+    setSelectedImageWidth(safeWidth);
+    updateCounts();
+  };
+
+  const updateSelectedImageAlt = (alt: string) => {
+    const image = findSelectedImage();
+    if (!image) return;
+
+    image.alt = alt;
+    setSelectedImageAlt(alt);
+    setSavedState("Saving…");
+  };
+
+  const updateSelectedImageLayout = (layout: string) => {
+    const image = findSelectedImage();
+    if (!image) return;
+
+    image.dataset.layout = layout;
+    image.classList.remove(
+      "docsImageInline",
+      "docsImageBlock",
+      "docsImageCenter",
+      "docsImageWrapLeft",
+      "docsImageWrapRight"
+    );
+
+    const className: Record<string, string> = {
+      inline: "docsImageInline",
+      block: "docsImageBlock",
+      center: "docsImageCenter",
+      "wrap-left": "docsImageWrapLeft",
+      "wrap-right": "docsImageWrapRight"
+    };
+
+    image.classList.add(className[layout] ?? "docsImageInline");
+    setSelectedImageLayout(layout);
+    updateCounts();
+  };
+
+  const deleteSelectedImage = () => {
+    const image = findSelectedImage();
+    if (!image) return;
+
+    image.remove();
+    setSelectedImageId(null);
     updateCounts();
   };
 
@@ -427,6 +571,7 @@ td,th{border:1px solid #d0d5dd;padding:8px}
 
         <div className="docsToolGroup">
           <button onClick={insertLink} title="Insert link">⌁</button>
+          <button onClick={() => imageInputRef.current?.click()} title="Insert image">Img</button>
           <button onClick={insertTable} title="Insert table">▦</button>
           <button onClick={insertDivider} title="Insert divider">—</button>
           <button onClick={insertPageBreak} title="Insert page break">PB</button>
@@ -453,6 +598,14 @@ td,th{border:1px solid #d0d5dd;padding:8px}
         <button className="docsExportButton" onClick={handleExportHtml}>HTML</button>
       </section>
 
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={handleImageInput}
+      />
+
       <div className="docsWorkArea">
         <aside className="docsLeftRail">
           <button className="docsRailButton active" title="Document outline">☷</button>
@@ -475,6 +628,13 @@ td,th{border:1px solid #d0d5dd;padding:8px}
                 suppressContentEditableWarning
                 onInput={updateCounts}
                 onBlur={saveDocument}
+                onPaste={handleEditorPaste}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={handleEditorDrop}
+                onClick={(event) => {
+                  const target = event.target;
+                  selectImageElement(target instanceof HTMLImageElement ? target : null);
+                }}
                 spellCheck
                 aria-label="Document editor"
               >
@@ -493,6 +653,54 @@ td,th{border:1px solid #d0d5dd;padding:8px}
             <span className="docsInfoLabel">Page setup</span>
             <PageSettings page={page} onChange={updatePageConfig} />
           </div>
+
+          {selectedImageId && (
+            <div className="docsInfoCard">
+              <span className="docsInfoLabel">Image</span>
+              <div className="docsImageInspector">
+                <label>
+                  <span>Width</span>
+                  <input
+                    type="range"
+                    min="80"
+                    max="700"
+                    step="10"
+                    value={selectedImageWidth}
+                    onChange={(event) => updateSelectedImageWidth(Number(event.target.value))}
+                  />
+                  <small>{selectedImageWidth}px</small>
+                </label>
+
+                <label>
+                  <span>Layout</span>
+                  <select
+                    value={selectedImageLayout}
+                    onChange={(event) => updateSelectedImageLayout(event.target.value)}
+                  >
+                    <option value="inline">Inline</option>
+                    <option value="block">Block</option>
+                    <option value="center">Centered</option>
+                    <option value="wrap-left">Wrap left</option>
+                    <option value="wrap-right">Wrap right</option>
+                  </select>
+                </label>
+
+                <label>
+                  <span>Alt text</span>
+                  <input
+                    type="text"
+                    value={selectedImageAlt}
+                    onChange={(event) => updateSelectedImageAlt(event.target.value)}
+                    placeholder="Describe this image"
+                  />
+                </label>
+
+                <button className="docsDangerButton" onClick={deleteSelectedImage}>
+                  Delete image
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="docsInfoCard">
             <span className="docsInfoLabel">Document</span>
