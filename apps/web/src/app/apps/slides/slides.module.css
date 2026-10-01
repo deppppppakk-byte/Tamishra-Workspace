@@ -350,11 +350,6 @@
   border-bottom: 1px solid rgba(20,25,40,.16);
 }
 
-.tableCell:nth-child(-n+3) {
-  font-weight: 700;
-  background: rgba(111,93,245,.09);
-}
-
 .chart {
   width: 100%;
   height: 100%;
@@ -645,4 +640,183 @@
     overflow: hidden;
   }
   .printSlide:last-child { page-break-after: auto; }
+}
+
+.groupedElement.elementSelected {
+  outline-style: dashed;
+  outline-offset: 3px;
+}
+
+.guideVertical,
+.guideHorizontal {
+  position: absolute;
+  z-index: 20;
+  pointer-events: none;
+  background: #d946ef;
+  box-shadow: 0 0 0 1px rgba(217, 70, 239, .08);
+}
+
+.guideVertical {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.guideHorizontal {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+.multiSelectionBadge {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 30;
+  border: 1px solid rgba(111, 93, 245, .22);
+  border-radius: 999px;
+  padding: 6px 9px;
+  background: rgba(255, 255, 255, .92);
+  color: #5543db;
+  font-size: 11px;
+  font-weight: 800;
+  box-shadow: 0 8px 20px rgba(30, 32, 44, .1);
+  pointer-events: none;
+}
+
+.selectionSummary {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 7px;
+}
+
+.selectionSummary span {
+  border: 1px solid #e1e5ec;
+  border-radius: 8px;
+  padding: 7px 8px;
+  background: white;
+  color: #5c6474;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.alignGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.alignGrid .inspectorBtn {
+  margin-top: 0;
+}
+
+.panelTitleSpaced {
+  margin-top: 16px;
+}
+
+.barGroup {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: stretch;
+  gap: 7px;
+  text-align: center;
+}
+
+.barGroup .bar {
+  width: 100%;
+  flex: 0 0 auto;
+}
+
+.barGroup span {
+  overflow: hidden;
+  color: #626b7a;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chartLineWrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 18px 20px 30px;
+  border-left: 2px solid rgba(30,35,50,.24);
+  border-bottom: 2px solid rgba(30,35,50,.24);
+  background: rgba(255,255,255,.7);
+}
+
+.chartSvg {
+  width: 100%;
+  height: calc(100% - 18px);
+  overflow: visible;
+}
+
+.chartLabels {
+  position: absolute;
+  left: 20px;
+  right: 14px;
+  bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  color: #626b7a;
+  font-size: 10px;
+}
+
+.chartLabels span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.donutWrap {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) minmax(120px, .75fr);
+  align-items: center;
+  gap: 22px;
+  padding: 22px;
+  background: rgba(255,255,255,.72);
+}
+
+.donut {
+  width: min(100%, 190px);
+  aspect-ratio: 1;
+  justify-self: center;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+}
+
+.donutHole {
+  width: 52%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: white;
+  color: #303746;
+  font-size: 20px;
+  font-weight: 800;
+  box-shadow: 0 2px 12px rgba(25, 30, 42, .08);
+}
+
+.donutLegend {
+  display: grid;
+  gap: 8px;
+  color: #596174;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+@media (max-width: 760px) {
+  .multiSelectionBadge {
+    display: none;
+  }
 }
