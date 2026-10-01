@@ -27,3 +27,16 @@ create index if not exists workspace_meeting_participants_room_idx
 
 create index if not exists workspace_meetings_status_idx
   on workspace_meetings(status, created_at desc);
+
+create table if not exists workspace_meeting_attendance (
+  room_name text not null references workspace_meetings(room_name) on delete cascade,
+  participant_id text not null references workspace_meeting_participants(id) on delete cascade,
+  display_name text not null,
+  joined_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  left_at timestamptz,
+  primary key(room_name, participant_id)
+);
+
+create index if not exists workspace_meeting_attendance_room_idx
+  on workspace_meeting_attendance(room_name, joined_at);
