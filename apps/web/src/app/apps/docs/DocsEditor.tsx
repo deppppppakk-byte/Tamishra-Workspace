@@ -59,7 +59,7 @@ export default function DocsEditor() {
   const [findStatus, setFindStatus] = useState("");
 
   const getEditors = () =>
-    pageEditorsRef.current.slice(0, pageCount).filter(
+    pageEditorsRef.current.filter(
       (editor): editor is HTMLDivElement => Boolean(editor)
     );
 
@@ -94,6 +94,205 @@ export default function DocsEditor() {
     if (editor && (!editorRef.current || index === activePageRef.current)) {
       editorRef.current = editor;
     }
+  };
+
+  const pageOverflows = (editor: HTMLDivElement) =>
+    editor.scrollHeight > editor.clientHeight + 1;
+
+  const prependNodes = (target: HTMLDivElement, nodes: Node[]) => {
+    const anchor = target.firstChild;
+    nodes.forEach((node) => target.insertBefore(node, anchor));
+  };
+
+  const splitOversizedTextBlock = (
+    block: HTMLElement,
+    editor: HTMLDivElement,
+    nextEditor: HTMLDivElement
+  ) => {
+    const splittable = new Set(["P", "DIV", "BLOCKQUOTE", "H1", "H2", "H3", "H4"]);
+    const text = block.textContent ?? "";
+
+    if (!splittable.has(block.tagName) || text.length < 40) return false;
+
+    const ratio = Math.max(
+      0.12,
+      Math.min(0.88, (editor.clientHeight / Math.max(editor.scrollHeight, 1)) * 0.92)
+    );
+    let splitOffset = Math.floor(text.length * ratio);
+
+    while (splitOffset > 12 && !/\s/.test(text.charAt(splitOffset))) {
+      splitOffset -= 1;
+    }
+
+    if (splitOffset <= 12 || splitOffset >= text.length - 8) return false;
+
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    let consumed = 0;
+    let textNode = walker.nextNode() as Text | null;
+    let splitNode: Text | null = null;
+    let localOffset = 0;
+
+    while (textNode) {
+      const length = textNode.data.length;
+      if (consumed + length >= splitOffset) {
+        splitNode = textNode;
+        localOffset = Math.max(0, splitOffset - consumed);
+        break;
+      }
+      consumed += length;
+      textNode = walker.nextNode() as Text | null;
+    }
+
+    if (!splitNode) return false;
+
+    const range = document.createRange();
+    range.setStart(splitNode, localOffset);
+    range.setEnd(block, block.childNodes.length);
+
+    const tailContent = range.extractContents();
+    const tail = block.cloneNode(false) as HTMLElement;
+    tail.dataset.tamishraId = createId(block.tagName.toLowerCase());
+    tail.appendChild(tailContent);
+
+    if (!tail.textContent?.trim()) return false;
+
+    nextEditor.insertBefore(tail, nextEditor.firstChild);
+    return true;
+  };
+
+  const updateActivePageFromSelection = () => {
+    const anchor = window.getSelection()?.anchorNode;
+    if (!anchor) return;
+
+    const index = pageEditorsRef.current.findIndex(
+      (editor) => Boolean(editor?.contains(anchor))
+    );
+
+    if (index >= 0) {
+      activePageRef.current = index;
+      setActivePage(index + 1);
+      editorRef.current = pageEditorsRef.current[index];
+    }
+  };
+
+  const rebalancePages = () => {
+    const editors = getEditors();
+    if (!editors.length) return;
+
+    for (let index = 0; index < editors.length; index += 1) {
+      const editor = editors[index];
+
+      const manualBreak = Array.from(editor.children).find(
+        (child) => (child as HTMLElement).dataset.pageBreak === "true"
+      ) as HTMLElement | undefined;
+
+      if (manualBreak && manualBreak.nextSibling) {
+        const nextEditor = pageEditorsRef.current[index + 1];
+        if (!nextEditor) {
+          setPageCount((count) => Math.max(count, index + 2));
+          scheduleReflow();
+          return;
+        }
+
+        const afterBreak: Node[] = [];
+        let node = manualBreak.nextSibling;
+        while (node) {
+          const next = node.nextSibling;
+          afterBreak.push(node);
+          node = next;
+        }
+        prependNodes(nextEditor, afterBreak);
+      }
+
+      let guard = 0;
+      while (pageOverflows(editor) && guard < 250) {
+        guard += 1;
+
+        let nextEditor = pageEditorsRef.current[index + 1];
+        if (!nextEditor) {
+          setPageCount((count) => Math.max(count, index + 2));
+          scheduleReflow();
+          return;
+        }
+
+        const children = Array.from(editor.children);
+        if (!children.length) break;
+
+        if (children.length === 1) {
+          const onlyChild = children[0] as HTMLElement;
+          if (!splitOversizedTextBlock(onlyChild, editor, nextEditor)) {
+            onlyChild.dataset.paginationOverflow = "true";
+            break;
+          }
+          continue;
+        }
+
+        let candidate = editor.lastElementChild as HTMLElement | null;
+        if (candidate?.dataset.pageBreak === "true") {
+          candidate = candidate.previousElementSibling as HTMLElement | null;
+        }
+        if (!candidate) break;
+
+        candidate.removeAttribute("data-pagination-overflow");
+        nextEditor.insertBefore(candidate, nextEditor.firstChild);
+      }
+    }
+
+    const refreshed = getEditors();
+
+    for (let index = 0; index < refreshed.length - 1; index += 1) {
+      const editor = refreshed[index];
+      const nextEditor = refreshed[index + 1];
+      const hasManualBreak = Array.from(editor.children).some(
+        (child) => (child as HTMLElement).dataset.pageBreak === "true"
+      );
+
+      if (hasManualBreak) continue;
+
+      let guard = 0;
+      while (nextEditor.firstElementChild && guard < 250) {
+        guard += 1;
+        const candidate = nextEditor.firstElementChild as HTMLElement;
+
+        editor.appendChild(candidate);
+        if (pageOverflows(editor)) {
+          nextEditor.insertBefore(candidate, nextEditor.firstChild);
+          break;
+        }
+      }
+    }
+
+    let lastUsed = Math.max(0, pageEditorsRef.current.length - 1);
+    while (lastUsed > 0) {
+      const editor = pageEditorsRef.current[lastUsed];
+      if (editor && (editor.childNodes.length > 0 || editor.innerText.trim())) break;
+      lastUsed -= 1;
+    }
+
+    const desiredCount = Math.max(1, lastUsed + 1);
+    if (desiredCount !== pageCount) {
+      setPageCount(desiredCount);
+    }
+
+    ensureBlockIds();
+    updateActivePageFromSelection();
+
+    const text = getDocumentText();
+    const trimmed = text.trim();
+    setCharCount(text.length);
+    setWordCount(trimmed ? trimmed.split(/\s+/).length : 0);
+    setSavedState("Saving…");
+  };
+
+  const scheduleReflow = () => {
+    if (reflowFrameRef.current !== null) {
+      cancelAnimationFrame(reflowFrameRef.current);
+    }
+
+    reflowFrameRef.current = requestAnimationFrame(() => {
+      reflowFrameRef.current = null;
+      rebalancePages();
+    });
   };
 
   const ensureBlockIds = () => {
