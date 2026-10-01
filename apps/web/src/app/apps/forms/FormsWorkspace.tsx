@@ -1274,6 +1274,150 @@ export default function FormsWorkspace() {
                     );
                   })}
                 </div>
+
+                <div className={styles.branchSection}>
+                  <div className={styles.sectionHeader}>
+                    <div>
+                      <span>PAGE BRANCHING</span>
+                      <h2>Route respondents between pages.</h2>
+                      <p>Rules run top to bottom. The first matching branch wins, then the default route is used.</p>
+                    </div>
+                  </div>
+
+                  <div className={styles.branchList}>
+                    {selectedForm.pages.map((page, pageIndex) => {
+                      const pageFields = getFieldsForPage(selectedForm, page.id);
+                      const targets = selectedForm.pages.filter((target) => target.id !== page.id);
+                      return (
+                        <article key={page.id}>
+                          <div className={styles.branchHeader}>
+                            <div>
+                              <span>PAGE {pageIndex + 1}</span>
+                              <strong>{page.title || "Untitled page"}</strong>
+                            </div>
+                            <label>
+                              <span>Default route</span>
+                              <select
+                                value={page.defaultNextPageId ?? ""}
+                                onChange={(event) =>
+                                  updatePage(page.id, {
+                                    defaultNextPageId: event.target.value || null
+                                  })
+                                }
+                              >
+                                <option value="">Next page in order / Submit</option>
+                                {targets.map((target) => (
+                                  <option key={target.id} value={target.id}>{target.title}</option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+
+                          <div className={styles.branchRules}>
+                            {page.branchRules.map((rule) => (
+                              <div key={rule.id} className={styles.branchRule}>
+                                <select
+                                  value={rule.sourceFieldId}
+                                  onChange={(event) =>
+                                    updatePage(page.id, {
+                                      branchRules: page.branchRules.map((item) =>
+                                        item.id === rule.id
+                                          ? { ...item, sourceFieldId: event.target.value }
+                                          : item
+                                      )
+                                    })
+                                  }
+                                >
+                                  {pageFields.map((field) => (
+                                    <option key={field.id} value={field.id}>{field.label}</option>
+                                  ))}
+                                </select>
+                                <select
+                                  value={rule.operator}
+                                  onChange={(event) =>
+                                    updatePage(page.id, {
+                                      branchRules: page.branchRules.map((item) =>
+                                        item.id === rule.id
+                                          ? { ...item, operator: event.target.value as FormLogicOperator }
+                                          : item
+                                      )
+                                    })
+                                  }
+                                >
+                                  {logicOperators.map((operator) => (
+                                    <option key={operator.value} value={operator.value}>{operator.label}</option>
+                                  ))}
+                                </select>
+                                {!["is-empty", "is-not-empty"].includes(rule.operator) && (
+                                  <input
+                                    value={rule.value ?? ""}
+                                    placeholder="Value"
+                                    onChange={(event) =>
+                                      updatePage(page.id, {
+                                        branchRules: page.branchRules.map((item) =>
+                                          item.id === rule.id
+                                            ? { ...item, value: event.target.value }
+                                            : item
+                                        )
+                                      })
+                                    }
+                                  />
+                                )}
+                                <select
+                                  value={rule.targetPageId}
+                                  onChange={(event) =>
+                                    updatePage(page.id, {
+                                      branchRules: page.branchRules.map((item) =>
+                                        item.id === rule.id
+                                          ? { ...item, targetPageId: event.target.value }
+                                          : item
+                                      )
+                                    })
+                                  }
+                                >
+                                  {targets.map((target) => (
+                                    <option key={target.id} value={target.id}>Go to {target.title}</option>
+                                  ))}
+                                </select>
+                                <button
+                                  onClick={() =>
+                                    updatePage(page.id, {
+                                      branchRules: page.branchRules.filter((item) => item.id !== rule.id)
+                                    })
+                                  }
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            ))}
+
+                            {pageFields.length > 0 && targets.length > 0 && (
+                              <button
+                                className={styles.addBranch}
+                                onClick={() =>
+                                  updatePage(page.id, {
+                                    branchRules: [
+                                      ...page.branchRules,
+                                      {
+                                        id: "branch_" + crypto.randomUUID(),
+                                        sourceFieldId: pageFields[0].id,
+                                        operator: "equals",
+                                        value: "",
+                                        targetPageId: targets[0].id
+                                      }
+                                    ]
+                                  })
+                                }
+                              >
+                                + Add branch rule
+                              </button>
+                            )}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             )}
 
