@@ -21,6 +21,7 @@ import {
   type AlignMode,
   type DistributeAxis
 } from "@tamishra/slides-core";
+import { upsertWorkspaceFile } from "@tamishra/file-core";
 import { exportDeckToPptx } from "./pptxExport";
 import {
   decodeTmsl,
@@ -29,6 +30,8 @@ import {
   TMSL_EXTENSION,
   TMSL_MIME
 } from "./nativeFormat";
+import { consumeNativeFileHandoff } from "../../../lib/native-file-handoff";
+import { mutateWorkspaceFileIndex } from "../../../lib/workspace-files";
 import styles from "./slides.module.css";
 
 type ElementType = "text" | "shape" | "image" | "line" | "table" | "chart";
@@ -431,6 +434,39 @@ export default function SlidesEditorAdvanced() {
   }, []);
 
   useEffect(() => {
+    const createRequest = sessionStorage.getItem("tamishra.workspace.create");
+    if (createRequest === "slides") {
+      sessionStorage.removeItem("tamishra.workspace.create");
+      const fresh = cloneSlides(starterSlides);
+      setDeckTitle("Untitled presentation");
+      setSlides(fresh);
+      setActiveId(fresh[0].id);
+      setSelectedIds([]);
+      setNativePath(null);
+      setSaveState("New presentation");
+      return;
+    }
+
+    void consumeNativeFileHandoff()
+      .then(async (handoff) => {
+        if (!handoff) return;
+        const name = handoff.name.toLowerCase();
+        if (!name.endsWith(TMSL_EXTENSION)) return;
+        const decoded = await decodeTmsl<Slide>(handoff.bytes);
+        applyImportedDeck({
+          title: decoded.document.title,
+          slides: decoded.document.slides
+        });
+        setNativePath(null);
+        setSaveState("TMSL opened from Workspace · integrity verified");
+      })
+      .catch((error) => {
+        console.error("Workspace Slides handoff failed", error);
+        setSaveState("Workspace file could not be opened");
+      });
+  }, []);
+
+  useEffect(() => {
     try {
       const rawHistory = localStorage.getItem("tamishra-slides-history-v1");
       if (rawHistory) {
@@ -458,7 +494,21 @@ export default function SlidesEditorAdvanced() {
   useEffect(() => {
     setSaveState("Saving…");
     const timer = window.setTimeout(() => {
-      localStorage.setItem("tamishra-slides-deck-v3", JSON.stringify({ title: deckTitle, slides }));
+      const serialized = JSON.stringify({ title: deckTitle, slides });
+      localStorage.setItem("tamishra-slides-deck-v3", serialized);
+      mutateWorkspaceFileIndex((index) =>
+        upsertWorkspaceFile(index, {
+          id: "slides:local",
+          title: deckTitle.trim() || "Untitled presentation",
+          kind: "slides",
+          appHref: "/apps/slides",
+          nativeExtension: ".tmsl",
+          nativeMime: TMSL_MIME,
+          sourceId: nativePath ?? "local",
+          sizeBytes: new Blob([serialized]).size,
+          storage: nativePath ? "external" : "local"
+        })
+      );
       setSaveState("Saved locally");
     }, 420);
     return () => window.clearTimeout(timer);
