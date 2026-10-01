@@ -1299,6 +1299,13 @@ export function MeetRoomClient() {
   const ownSignal = signals.find(
     (signal) => signal.participantId === context.participantId
   );
+  const latestCaption =
+    [...transcript]
+      .reverse()
+      .find((segment) => segment.text.trim()) ?? null;
+  const ownBreakoutAssignment = breakoutState.assignments.find(
+    (assignment) => assignment.participantId === context.participantId
+  );
 
   return (
     <LiveKitRoom
@@ -1355,10 +1362,19 @@ export function MeetRoomClient() {
           <span className={styles.brandMark}>T</span>
           <div>
             <strong>{context.title}</strong>
-            <small>{roomName}</small>
+            <small>
+              {activeBreakoutLabel
+                ? activeBreakoutLabel + " · " + roomName
+                : roomName}
+            </small>
           </div>
         </div>
         <div className={styles.liveHeaderActions}>
+          {activeBreakoutLabel && (
+            <span className={styles.breakoutBadge}>
+              {activeBreakoutLabel}
+            </span>
+          )}
           {isHost && hostJoinCode && (
             <button className={styles.compactCode} onClick={() => void copyJoinCode()}>
               {copied ? "Copied" : hostJoinCode}
@@ -1461,6 +1477,55 @@ export function MeetRoomClient() {
               </button>
             )}
 
+            <button
+              className={
+                captionsVisible &&
+                captionStatus.state.desiredState === "running"
+                  ? styles.toolbarButtonActive
+                  : styles.toolbarButton
+              }
+              onClick={() => setCaptionsVisible((value) => !value)}
+              title={
+                captionStatus.state.desiredState === "running"
+                  ? "Show or hide live captions"
+                  : "Live captions are not running"
+              }
+            >
+              CC
+              {captionStatus.state.desiredState === "running"
+                ? " · Live"
+                : ""}
+            </button>
+
+            <button
+              className={styles.toolbarButton}
+              onClick={() => {
+                setSidebarTab("notes");
+                setSidebarOpen(true);
+              }}
+            >
+              Notes
+            </button>
+
+            {isModerator && (
+              <button
+                className={
+                  breakoutState.rooms.length > 0
+                    ? styles.toolbarButtonActive
+                    : styles.toolbarButton
+                }
+                onClick={() => {
+                  setSidebarTab("breakouts");
+                  setSidebarOpen(true);
+                }}
+              >
+                Breakouts
+                {breakoutState.rooms.length > 0
+                  ? " · " + breakoutState.rooms.length
+                  : ""}
+              </button>
+            )}
+
             {!isHost && (
               <button
                 className={
@@ -1496,6 +1561,20 @@ export function MeetRoomClient() {
 
           <div className={styles.conferenceStage}>
             <VideoConference />
+            {captionsVisible &&
+              captionStatus.state.desiredState === "running" &&
+              latestCaption && (
+                <div
+                  className={styles.captionOverlay}
+                  aria-live="polite"
+                >
+                  <strong>
+                    {latestCaption.participantName ||
+                      latestCaption.participantIdentity}
+                  </strong>
+                  <span>{latestCaption.text}</span>
+                </div>
+              )}
             {reactionSignals.length > 0 && (
               <div className={styles.reactionOverlay} aria-live="polite">
                 {reactionSignals.slice(0, 5).map((signal) => (
@@ -1529,6 +1608,24 @@ export function MeetRoomClient() {
             >
               {isModerator ? "People" : "Signals"}
             </button>
+            <button
+              className={sidebarTab === "notes" ? styles.sidebarTabActive : ""}
+              onClick={() => setSidebarTab("notes")}
+            >
+              Notes
+            </button>
+            {isModerator && (
+              <button
+                className={
+                  sidebarTab === "breakouts"
+                    ? styles.sidebarTabActive
+                    : ""
+                }
+                onClick={() => setSidebarTab("breakouts")}
+              >
+                Breakouts
+              </button>
+            )}
             {isModerator && (
               <button
                 className={sidebarTab === "activity" ? styles.sidebarTabActive : ""}
@@ -1971,10 +2068,324 @@ export function MeetRoomClient() {
                 </div>
               )}
 
-              {!isModerator && raisedSignals.length === 0 && (
-                <p className={styles.emptyState}>
-                  No active hand raises right now.
-                </p>
+              {!isModerator && ownBreakoutAssignment && (
+                <div className={styles.breakoutParticipantCard}>
+                  <span className={styles.groupLabel}>BREAKOUT</span>
+                  <strong>
+                    {activeBreakoutLabel ||
+                      ownBreakoutAssignment.groupId}
+                  </strong>
+                  <small>
+                    You will return to the main room automatically when
+                    the host closes the breakout session.
+                  </small>
+                </div>
+              )}
+
+              {!isModerator &&
+                !ownBreakoutAssignment &&
+                raisedSignals.length === 0 && (
+                  <p className={styles.emptyState}>
+                    No active hand raises right now.
+                  </p>
+                )}
+            </div>
+          )}
+
+          {sidebarTab === "notes" && (
+            <div className={styles.notesPanel}>
+              <div className={styles.hostPanelHeading}>
+                <span>MEETING INTELLIGENCE</span>
+                <strong>Notes, captions & summary</strong>
+              </div>
+
+              <div className={styles.captionControlCard}>
+                <div>
+                  <span className={styles.groupLabel}>LIVE CAPTIONS</span>
+                  <strong>
+                    {captionStatus.state.desiredState === "running"
+                      ? "Caption agent is running"
+                      : captionStatus.configured
+                        ? "Caption agent is ready"
+                        : "Caption worker not configured"}
+                  </strong>
+                  <small>
+                    {captionStatus.state.lastHeartbeatAt
+                      ? "Last transcript heartbeat " +
+                        new Intl.DateTimeFormat(undefined, {
+                          hour: "numeric",
+                          minute: "2-digit"
+                        }).format(
+                          new Date(
+                            captionStatus.state.lastHeartbeatAt
+                          )
+                        )
+                      : "Transcript segments will appear below when available."}
+                  </small>
+                </div>
+
+                {isModerator && (
+                  <button
+                    disabled={
+                      captionBusy ||
+                      (!captionStatus.configured &&
+                        captionStatus.state.desiredState !== "running")
+                    }
+                    onClick={() =>
+                      void controlCaptions(
+                        captionStatus.state.desiredState === "running"
+                          ? "stop"
+                          : "start"
+                      )
+                    }
+                  >
+                    {captionBusy
+                      ? "Updating…"
+                      : captionStatus.state.desiredState === "running"
+                        ? "Stop captions"
+                        : "Start captions"}
+                  </button>
+                )}
+              </div>
+
+              <div className={styles.notesEditorCard}>
+                <div className={styles.notesCardHeader}>
+                  <div>
+                    <span className={styles.groupLabel}>SHARED NOTES</span>
+                    <strong>
+                      {isModerator
+                        ? "Host & co-host notes"
+                        : "Meeting notes"}
+                    </strong>
+                  </div>
+                  {notes?.updatedByDisplayName && (
+                    <small>
+                      Updated by {notes.updatedByDisplayName}
+                    </small>
+                  )}
+                </div>
+
+                <textarea
+                  value={notesDraft}
+                  readOnly={!isModerator}
+                  maxLength={50000}
+                  onChange={(event) => {
+                    setNotesDraft(event.target.value);
+                    setNotesDirty(true);
+                  }}
+                  placeholder={
+                    isModerator
+                      ? "Capture decisions, context and follow-up notes…"
+                      : "No shared notes yet."
+                  }
+                />
+
+                {isModerator && (
+                  <button
+                    disabled={!notesDirty || notesBusy}
+                    onClick={() => void saveSharedNotes()}
+                  >
+                    {notesBusy ? "Saving…" : "Save notes"}
+                  </button>
+                )}
+              </div>
+
+              <div className={styles.summaryCard}>
+                <div className={styles.notesCardHeader}>
+                  <div>
+                    <span className={styles.groupLabel}>SUMMARY</span>
+                    <strong>
+                      {summary
+                        ? "Latest meeting summary"
+                        : "No summary generated yet"}
+                    </strong>
+                  </div>
+                  {isModerator && (
+                    <button
+                      disabled={notesBusy}
+                      onClick={() => void generateSummary()}
+                    >
+                      {notesBusy
+                        ? "Generating…"
+                        : summary
+                          ? "Regenerate"
+                          : "Generate summary"}
+                    </button>
+                  )}
+                </div>
+
+                {summary ? (
+                  <>
+                    <p>{summary.summary}</p>
+                    {summary.actionItems.length > 0 && (
+                      <div className={styles.actionItems}>
+                        <span className={styles.groupLabel}>
+                          ACTION ITEMS
+                        </span>
+                        {summary.actionItems.map((item, index) => (
+                          <div key={index}>
+                            <span>{index + 1}</span>
+                            <p>{item}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <small>
+                      Generated by {summary.provider}
+                    </small>
+                  </>
+                ) : (
+                  <p className={styles.emptyState}>
+                    Generate a summary from finalized transcript
+                    segments and shared notes.
+                  </p>
+                )}
+              </div>
+
+              <div className={styles.transcriptPanel}>
+                <div className={styles.notesCardHeader}>
+                  <div>
+                    <span className={styles.groupLabel}>TRANSCRIPT</span>
+                    <strong>
+                      {transcript.length} segments
+                    </strong>
+                  </div>
+                  <button
+                    onClick={() =>
+                      void loadTranscript(roomName, accessKey)
+                    }
+                  >
+                    Refresh
+                  </button>
+                </div>
+
+                {transcript.length === 0 ? (
+                  <p className={styles.emptyState}>
+                    No transcript segments have been received yet.
+                  </p>
+                ) : (
+                  <div className={styles.transcriptList}>
+                    {transcript.slice(-80).map((segment) => (
+                      <article key={segment.segmentId}>
+                        <div>
+                          <strong>
+                            {segment.participantName ||
+                              segment.participantIdentity}
+                          </strong>
+                          <span>
+                            {segment.isFinal ? "Final" : "Live"}
+                          </span>
+                        </div>
+                        <p>{segment.text}</p>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {isModerator && sidebarTab === "breakouts" && (
+            <div className={styles.breakoutPanel}>
+              <div className={styles.hostPanelHeading}>
+                <span>BREAKOUT ROOMS</span>
+                <strong>Small-group sessions</strong>
+              </div>
+
+              {breakoutState.rooms.length === 0 ? (
+                <div className={styles.breakoutSetup}>
+                  <label>
+                    Rooms
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={breakoutCount}
+                      onChange={(event) =>
+                        setBreakoutCount(
+                          Math.max(
+                            1,
+                            Math.min(20, Number(event.target.value) || 1)
+                          )
+                        )
+                      }
+                    />
+                  </label>
+                  <label>
+                    Minutes
+                    <input
+                      type="number"
+                      min={1}
+                      max={120}
+                      value={breakoutMinutes}
+                      onChange={(event) =>
+                        setBreakoutMinutes(
+                          Math.max(
+                            1,
+                            Math.min(120, Number(event.target.value) || 1)
+                          )
+                        )
+                      }
+                    />
+                  </label>
+                  <button
+                    disabled={breakoutBusy}
+                    onClick={() => void startBreakouts()}
+                  >
+                    {breakoutBusy
+                      ? "Opening…"
+                      : "Auto-assign & open"}
+                  </button>
+                  <small>
+                    Admitted participants are distributed round-robin.
+                    Hosts and co-hosts remain in the main room.
+                  </small>
+                </div>
+              ) : (
+                <>
+                  <div className={styles.breakoutLiveHeader}>
+                    <div>
+                      <span className={styles.liveDot} />
+                      <strong>
+                        {breakoutState.rooms.length} rooms open
+                      </strong>
+                    </div>
+                    <button
+                      disabled={breakoutBusy}
+                      onClick={() => void returnAllBreakouts()}
+                    >
+                      {breakoutBusy ? "Closing…" : "Return everyone"}
+                    </button>
+                  </div>
+
+                  <div className={styles.breakoutRoomList}>
+                    {breakoutState.rooms.map((room) => {
+                      const assigned =
+                        breakoutState.assignments.filter(
+                          (item) => item.groupId === room.groupId
+                        );
+                      return (
+                        <article key={room.groupId}>
+                          <div>
+                            <strong>{room.groupLabel}</strong>
+                            <small>
+                              {room.durationMinutes
+                                ? room.durationMinutes + " min"
+                                : "No timer"}
+                            </small>
+                          </div>
+                          <div className={styles.breakoutMembers}>
+                            {assigned.map((item) => (
+                              <span key={item.participantId}>
+                                {item.displayName}
+                              </span>
+                            ))}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </div>
           )}
