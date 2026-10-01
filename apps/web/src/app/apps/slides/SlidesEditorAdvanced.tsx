@@ -43,6 +43,10 @@ import {
   mutateWorkspaceBlockShelf,
   subscribeWorkspaceBlocks
 } from "../../../lib/workspace-blocks";
+import {
+  registerWorkspaceConsumerLink,
+  unregisterWorkspaceConsumerLink
+} from "../../../lib/workspace-links";
 import styles from "./slides.module.css";
 
 type ElementType = "text" | "shape" | "image" | "line" | "table" | "chart";
@@ -586,6 +590,36 @@ export default function SlidesEditorAdvanced() {
   }, []);
 
   useEffect(() => {
+    const shelf = loadWorkspaceBlockShelf();
+    const byId = new Map(shelf.blocks.map((block) => [block.id, block]));
+    const targetResourceId = nativePath ?? "slides:local";
+
+    slides.forEach((slide) => {
+      slide.elements.forEach((element) => {
+        if (
+          !element.workspaceBlockId ||
+          element.workspaceBlockMode !== "live"
+        ) {
+          return;
+        }
+
+        const block = byId.get(element.workspaceBlockId);
+        if (!block) return;
+
+        registerWorkspaceConsumerLink({
+          block,
+          targetApp: "slides",
+          targetResourceId,
+          targetLocator: element.id,
+          targetTitle: deckTitle.trim() || "Untitled presentation",
+          targetHref: "/apps/slides",
+          consumerVersion: element.workspaceBlockVersion ?? 1
+        });
+      });
+    });
+  }, [slides, deckTitle, nativePath]);
+
+  useEffect(() => {
     try {
       const rawHistory = localStorage.getItem("tamishra-slides-history-v1");
       if (rawHistory) {
@@ -1113,10 +1147,21 @@ export default function SlidesEditorAdvanced() {
 
   const unlinkSelectedWorkspaceBlock = () => {
     if (!primaryElement?.workspaceBlockId) return;
+    const blockId = primaryElement.workspaceBlockId;
+    const targetLocator = primaryElement.id;
+    const targetResourceId = nativePath ?? "slides:local";
+
     updateElement(primaryElement.id, {
       workspaceBlockId: undefined,
       workspaceBlockVersion: undefined,
       workspaceBlockMode: undefined
+    });
+
+    unregisterWorkspaceConsumerLink({
+      blockId,
+      targetApp: "slides",
+      targetResourceId,
+      targetLocator
     });
     setSaveState("Workspace Block unlinked");
   };
