@@ -191,6 +191,35 @@ export default function FormsWorkspace() {
   }, []);
 
   useEffect(() => {
+    if (
+      !loaded ||
+      typeof window === "undefined" ||
+      !("__TAURI_INTERNALS__" in window)
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) => invoke<string | null>("startup_tmfm"))
+      .then((raw) => {
+        if (cancelled || !raw) return;
+        importNativeBytes(new TextEncoder().encode(raw));
+        setStatus(".tmfm opened from desktop");
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error("Could not open startup .tmfm", error);
+        setStatus("Startup .tmfm could not be opened");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loaded]);
+
+  useEffect(() => {
     if (!loaded) return;
     const request = sessionStorage.getItem("tamishra.workspace.create");
     if (request === "forms") {
