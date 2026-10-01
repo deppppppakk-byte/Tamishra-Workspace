@@ -221,3 +221,81 @@ The People panel reports current server-observed microphone, camera, and screen-
 - `apps/gateway/db/003_meet_cohost_media.sql` — participant media policy columns and role lookup index
 
 The runtime also auto-upgrades existing `workspace_meeting_controls` tables with the new policy columns using `ADD COLUMN IF NOT EXISTS`.
+
+
+## Recording, history and attendance reports
+
+Workspace Meet now includes a durable recording and post-meeting operations layer.
+
+### Consent-aware recording
+
+- only the meeting host can start or stop a recording
+- recording uses server-side LiveKit Egress
+- output is written to Workspace-configured S3-compatible object storage
+- object-storage credentials remain server-side
+- all currently admitted non-host participants must explicitly accept recording before the host can start
+- participants can pre-consent before joining media
+- participants joining while recording is active must accept consent before a media token is issued
+- withdrawing consent while recording is active stops the recording
+- recording start / stop / consent events are written to the meeting audit log
+
+### Recording persistence
+
+`workspace_meeting_recordings` stores:
+
+- Egress identifier
+- lifecycle state
+- output filepath and location
+- start / end timestamps
+- file duration
+- file size
+- errors
+
+`workspace_meeting_recording_consents` stores the current meeting recording-consent cycle. Consent records are reset after a recording stops so a later recording requires fresh consent.
+
+Migration:
+
+- `apps/gateway/db/004_meet_recordings.sql`
+
+### Recording environment
+
+The gateway supports any S3-compatible object store through:
+
+- `WORKSPACE_MEET_RECORDING_BUCKET`
+- `WORKSPACE_MEET_RECORDING_REGION`
+- `WORKSPACE_MEET_RECORDING_ENDPOINT`
+- `WORKSPACE_MEET_RECORDING_ACCESS_KEY`
+- `WORKSPACE_MEET_RECORDING_SECRET`
+- `WORKSPACE_MEET_RECORDING_FORCE_PATH_STYLE`
+- `WORKSPACE_MEET_RECORDING_PREFIX`
+
+Recording remains unavailable until LiveKit and recording storage are both configured.
+
+### Recent meeting history
+
+The Meet home screen reads capability keys already stored on the current Workspace client and asks the gateway to validate them. The gateway returns only meetings for which the supplied capability is still valid.
+
+History includes:
+
+- meeting title and lifecycle status
+- current role
+- scheduled / started / ended timestamps
+- host join code
+- admitted participant count
+- attendance count
+- recording count
+
+This preserves the current capability-based security model without inventing a separate identity system.
+
+### Attendance reports
+
+Hosts and co-hosts can request an attendance report for a meeting. The report includes:
+
+- join time
+- last seen time
+- leave time
+- per-participant duration
+- total meeting duration
+- total attendance time
+
+The Meet home client can export this report as CSV.
