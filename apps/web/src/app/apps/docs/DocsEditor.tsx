@@ -1213,6 +1213,13 @@ export default function DocsEditor() {
 
     setCharCount(text.length);
     setWordCount(trimmed ? trimmed.split(/\s+/).length : 0);
+    const stats = calculateDocsProofingStats(text);
+    setProofing({
+      ...stats,
+      paragraphs: queryDocumentAll("p, li, blockquote").length,
+      headings: queryDocumentAll("h1, h2, h3, h4").length
+    });
+    setOutline(getEditors().flatMap((editor) => extractDocsOutline(editor)));
     setSavedState("Saving…");
   };
 
@@ -1813,19 +1820,19 @@ td,th{border:1px solid #d0d5dd;padding:8px}
             <span className="docsSaveState">{savedState}</span>
           </div>
           <div className="docsMenuRow" aria-label="Document menu">
-            <button>File</button>
-            <button>Edit</button>
-            <button>Insert</button>
-            <button>Format</button>
-            <button>Tools</button>
-            <button>Help</button>
+            <button onClick={() => setActivePanel("files")}>File</button>
+            <button onClick={() => setActivePanel("comments")}>Review</button>
+            <button onClick={() => setActivePanel("insert")}>Insert</button>
+            <button onClick={() => setActivePanel("format")}>Format</button>
+            <button onClick={() => setActivePanel("proofing")}>Tools</button>
+            <button onClick={() => window.alert("Tamishra Docs keyboard shortcuts: Ctrl/Cmd+S save version, Ctrl/Cmd+F find, Ctrl/Cmd+P print/PDF.")}>Help</button>
           </div>
         </div>
 
         <div className="docsTopActions">
-          <button className="docsIconButton" onClick={saveDocument} title="Save">✓</button>
+          <button className="docsIconButton" onClick={() => createVersionSnapshot()} title="Save version">✓</button>
           <button className="docsIconButton" onClick={handlePrint} title="Print or save as PDF">⎙</button>
-          <button className="docsShareButton">Share</button>
+          <button className="docsShareButton" onClick={() => setActivePanel("share")}>Share</button>
           <button className="docsProfile">DK</button>
         </div>
       </header>
@@ -1993,12 +2000,25 @@ td,th{border:1px solid #d0d5dd;padding:8px}
         hidden
         onChange={handleImageInput}
       />
+      <input
+        ref={docxInputRef}
+        type="file"
+        accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        hidden
+        onChange={handleDocxInput}
+      />
 
       <div className="docsWorkArea">
         <aside className="docsLeftRail">
-          <button className="docsRailButton active" title="Document outline">☷</button>
-          <button className="docsRailButton" title="Comments">◫</button>
-          <button className="docsRailButton" title="Versions">◴</button>
+          <button className={`docsRailButton ${activePanel === "files" ? "active" : ""}`} title="Documents" onClick={() => setActivePanel("files")}>▤</button>
+          <button className={`docsRailButton ${activePanel === "outline" ? "active" : ""}`} title="Document outline" onClick={() => setActivePanel("outline")}>☷</button>
+          <button className={`docsRailButton ${activePanel === "comments" ? "active" : ""}`} title="Comments & review" onClick={() => setActivePanel("comments")}>◫</button>
+          <button className={`docsRailButton ${activePanel === "versions" ? "active" : ""}`} title="Versions" onClick={() => setActivePanel("versions")}>◴</button>
+          <button className={`docsRailButton ${activePanel === "share" ? "active" : ""}`} title="Share" onClick={() => setActivePanel("share")}>◎</button>
+          <button className={`docsRailButton ${activePanel === "format" ? "active" : ""}`} title="Advanced format" onClick={() => setActivePanel("format")}>Aa</button>
+          <button className={`docsRailButton ${activePanel === "table" ? "active" : ""}`} title="Table tools" onClick={() => setActivePanel("table")}>▦</button>
+          <button className={`docsRailButton ${activePanel === "insert" ? "active" : ""}`} title="Insert tools" onClick={() => setActivePanel("insert")}>＋</button>
+          <button className={`docsRailButton ${activePanel === "proofing" ? "active" : ""}`} title="Proofing" onClick={() => setActivePanel("proofing")}>✓</button>
         </aside>
 
         <section className="docsCanvasWrap">
@@ -2018,7 +2038,7 @@ td,th{border:1px solid #d0d5dd;padding:8px}
                   ref={(element) => setActiveEditor(index, element)}
                   className="docsEditor docsPageEditor"
                   style={editorStyle}
-                  contentEditable
+                  contentEditable={editingMode !== "viewing"}
                   suppressContentEditableWarning
                   onFocus={(event) => activatePageEditor(index, event.currentTarget)}
                   onInput={() => {
@@ -2037,8 +2057,13 @@ td,th{border:1px solid #d0d5dd;padding:8px}
                     if (editor) activatePageEditor(index, editor);
                     const target = event.target;
                     selectImageElement(target instanceof HTMLImageElement ? target : null);
+                    const element = target instanceof HTMLElement ? target : null;
+                    const cell = element?.closest("td, th") as HTMLTableCellElement | null;
+                    selectedTableCellRef.current = cell;
+                    setTableActive(Boolean(cell));
                   }}
-                  spellCheck
+                  spellCheck={spellcheck}
+                  lang={language}
                   aria-label={`Document page ${index + 1}`}
                 />
                 {(headerFooter.headerEnabled ||
@@ -2089,106 +2114,154 @@ td,th{border:1px solid #d0d5dd;padding:8px}
           </div>
         </section>
 
-        <aside className="docsRightRail">
-          <div className="docsInfoCard">
-            <span className="docsInfoLabel">Page setup</span>
-            <PageSettings page={page} onChange={updatePageConfig} />
-          </div>
-
-          <div className="docsInfoCard">
-            <span className="docsInfoLabel">Header & footer</span>
-            <HeaderFooterSettingsPanel
-              settings={headerFooter}
-              headerText={headerText}
-              footerText={footerText}
-              onSettingsChange={(next) => {
-                setHeaderFooter(next);
-                setSavedState("Saving…");
-              }}
-              onHeaderTextChange={(value) => {
-                setHeaderText(value);
-                setSavedState("Saving…");
-              }}
-              onFooterTextChange={(value) => {
-                setFooterText(value);
-                setSavedState("Saving…");
-              }}
-            />
-          </div>
-
-          {selectedImageId && (
+        {activePanel ? (
+          <DocsProductionPanel
+            tab={activePanel}
+            workspace={workspace}
+            currentDocumentId={currentDocumentId}
+            outline={outline}
+            comments={currentComments}
+            versions={currentVersions}
+            grants={currentGrants}
+            proofing={proofing}
+            editingMode={editingMode}
+            language={language}
+            spellcheck={spellcheck}
+            tableActive={tableActive}
+            onClose={() => setActivePanel(null)}
+            onNew={handleNewDocument}
+            onSaveAs={handleSaveAs}
+            onOpen={handleOpenRecord}
+            onDuplicate={handleDuplicateRecord}
+            onTrash={handleTrashRecord}
+            onRestore={handleRestoreRecord}
+            onDeleteForever={handleDeleteRecordForever}
+            onImportDocx={() => docxInputRef.current?.click()}
+            onExportDocx={handleExportDocx}
+            onGoToOutline={handleGoToOutline}
+            onAddComment={handleAddComment}
+            onReplyComment={handleReplyComment}
+            onToggleResolveComment={handleToggleResolveComment}
+            onCreateVersion={createVersionSnapshot}
+            onRestoreVersion={restoreVersionSnapshot}
+            onAddGrant={handleAddGrant}
+            onRemoveGrant={handleRemoveGrant}
+            onEditingModeChange={setEditingMode}
+            onLanguageChange={setLanguage}
+            onSpellcheckChange={setSpellcheck}
+            onApplyFontFamily={applyFontFamily}
+            onApplyExactFontSize={applyExactFontSize}
+            onApplyLineHeight={applyLineHeight}
+            onApplyParagraphSpacing={applyParagraphSpacing}
+            onApplyIndent={applyIndent}
+            onTableAction={handleTableAction}
+            onInsertAction={handleInsertAction}
+          />
+        ) : (
+          <aside className="docsRightRail">
             <div className="docsInfoCard">
-              <span className="docsInfoLabel">Image</span>
-              <div className="docsImageInspector">
-                <label>
-                  <span>Width</span>
-                  <input
-                    type="range"
-                    min="80"
-                    max="700"
-                    step="10"
-                    value={selectedImageWidth}
-                    onChange={(event) => updateSelectedImageWidth(Number(event.target.value))}
-                  />
-                  <small>{selectedImageWidth}px</small>
-                </label>
-
-                <label>
-                  <span>Layout</span>
-                  <select
-                    value={selectedImageLayout}
-                    onChange={(event) => updateSelectedImageLayout(event.target.value)}
-                  >
-                    <option value="inline">Inline</option>
-                    <option value="block">Block</option>
-                    <option value="center">Centered</option>
-                    <option value="wrap-left">Wrap left</option>
-                    <option value="wrap-right">Wrap right</option>
-                  </select>
-                </label>
-
-                <label>
-                  <span>Alt text</span>
-                  <input
-                    type="text"
-                    value={selectedImageAlt}
-                    onChange={(event) => updateSelectedImageAlt(event.target.value)}
-                    placeholder="Describe this image"
-                  />
-                </label>
-
-                <button className="docsDangerButton" onClick={deleteSelectedImage}>
-                  Delete image
-                </button>
-              </div>
+              <span className="docsInfoLabel">Page setup</span>
+              <PageSettings page={page} onChange={updatePageConfig} />
             </div>
-          )}
-
-          <div className="docsInfoCard">
-            <span className="docsInfoLabel">Document</span>
-            <strong>{wordCount} words</strong>
-            <span>{charCount} characters</span>
-          </div>
-
-          <div className="docsInfoCard">
-            <span className="docsInfoLabel">Storage</span>
-            <strong>Local autosave</strong>
-            <span>Cloud sync comes next</span>
-          </div>
-
-          <div className="docsInfoCard">
-            <span className="docsInfoLabel">Output</span>
-            <strong>Print / PDF</strong>
-            <span>HTML export available</span>
-          </div>
-        </aside>
-      </div>
+  
+            <div className="docsInfoCard">
+              <span className="docsInfoLabel">Header & footer</span>
+              <HeaderFooterSettingsPanel
+                settings={headerFooter}
+                headerText={headerText}
+                footerText={footerText}
+                onSettingsChange={(next) => {
+                  setHeaderFooter(next);
+                  setSavedState("Saving…");
+                }}
+                onHeaderTextChange={(value) => {
+                  setHeaderText(value);
+                  setSavedState("Saving…");
+                }}
+                onFooterTextChange={(value) => {
+                  setFooterText(value);
+                  setSavedState("Saving…");
+                }}
+              />
+            </div>
+  
+            {selectedImageId && (
+              <div className="docsInfoCard">
+                <span className="docsInfoLabel">Image</span>
+                <div className="docsImageInspector">
+                  <label>
+                    <span>Width</span>
+                    <input
+                      type="range"
+                      min="80"
+                      max="700"
+                      step="10"
+                      value={selectedImageWidth}
+                      onChange={(event) => updateSelectedImageWidth(Number(event.target.value))}
+                    />
+                    <small>{selectedImageWidth}px</small>
+                  </label>
+  
+                  <label>
+                    <span>Layout</span>
+                    <select
+                      value={selectedImageLayout}
+                      onChange={(event) => updateSelectedImageLayout(event.target.value)}
+                    >
+                      <option value="inline">Inline</option>
+                      <option value="block">Block</option>
+                      <option value="center">Centered</option>
+                      <option value="wrap-left">Wrap left</option>
+                      <option value="wrap-right">Wrap right</option>
+                    </select>
+                  </label>
+  
+                  <label>
+                    <span>Alt text</span>
+                    <input
+                      type="text"
+                      value={selectedImageAlt}
+                      onChange={(event) => updateSelectedImageAlt(event.target.value)}
+                      placeholder="Describe this image"
+                    />
+                  </label>
+  
+                  <button className="docsDangerButton" onClick={deleteSelectedImage}>
+                    Delete image
+                  </button>
+                </div>
+              </div>
+            )}
+  
+            <div className="docsInfoCard">
+              <span className="docsInfoLabel">Document</span>
+              <strong>{wordCount} words</strong>
+              <span>{charCount} characters</span>
+            </div>
+  
+            <div className="docsInfoCard">
+              <span className="docsInfoLabel">Storage</span>
+              <strong>Local autosave</strong>
+              <span>Cloud sync comes next</span>
+            </div>
+  
+            <div className="docsInfoCard">
+              <span className="docsInfoLabel">Output</span>
+              <strong>Print / PDF</strong>
+              <span>HTML export available</span>
+            </div>
+          </aside>
+        </div>
+  
+  
+        )}
 
       <footer className="docsStatusBar">
         <span>Page {activePage} of {pageCount}</span>
         <span>{wordCount} words</span>
         <span>{page.size} · {page.orientation}</span>
-        <span>English</span>
+        <span>{language}</span>
+        <span>{editingMode}</span>
         <span className="docsStatusSpacer" />
         <span>{savedState}</span>
         <span>{zoom}%</span>
