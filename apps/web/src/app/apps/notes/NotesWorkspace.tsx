@@ -16,6 +16,7 @@ import {
   type NotesSnapshot,
   type TamishraNote
 } from "@tamishra/notes-core";
+import { createBlock, upsertBlock } from "@tamishra/blocks-core";
 import {
   permanentlyDeleteWorkspaceFile,
   trashWorkspaceFile,
@@ -23,6 +24,10 @@ import {
 } from "@tamishra/file-core";
 import { consumeNativeFileHandoff } from "../../../lib/native-file-handoff";
 import { mutateWorkspaceFileIndex } from "../../../lib/workspace-files";
+import {
+  consumeBlockHandoff,
+  mutateWorkspaceBlockShelf
+} from "../../../lib/workspace-blocks";
 import {
   hydrateWorkspaceContent,
   pushWorkspaceContent
@@ -276,6 +281,39 @@ export default function NotesWorkspace() {
   }, [loaded]);
 
   useEffect(() => {
+    if (!loaded) return;
+    const block = consumeBlockHandoff("notes");
+    if (!block) return;
+
+    if (block.kind !== "rich-text" || !block.payload || typeof block.payload !== "object") {
+      setStatus("This Block type is not supported in Notes yet");
+      return;
+    }
+
+    const payload = block.payload as { html?: string; plainText?: string };
+    const html = sanitizeHtml(
+      typeof payload.html === "string"
+        ? payload.html
+        : `<p>${payload.plainText ?? ""}</p>`
+    );
+    const note = createNote({
+      title: block.title,
+      html,
+      notebook: snapshot.notebooks[0] ?? "Notes"
+    });
+    note.tags = block.tags.slice(0, 20);
+    note.plainText = stripHtml(html);
+
+    setSnapshot((current) => ({
+      ...current,
+      notes: [note, ...current.notes]
+    }));
+    setView("notes");
+    selectNote(note.id);
+    setStatus("Workspace Block added as note");
+  }, [loaded]);
+
+  useEffect(() => {
     if (!selectedNote || !editorRef.current) return;
     editorRef.current.innerHTML = sanitizeHtml(selectedNote.html);
   }, [selectedId]);
@@ -334,6 +372,25 @@ export default function NotesWorkspace() {
 
     return () => window.clearTimeout(timer);
   }, [snapshot, loaded, selectedId]);
+
+  const publishSelectedNoteAsBlock = () => {
+    if (!selectedNote) return;
+    saveEditorHtml();
+
+    const block = createBlock({
+      title: selectedNote.title || "Untitled note",
+      kind: "rich-text",
+      sourceApp: "notes",
+      payload: {
+        html: selectedNote.html,
+        plainText: selectedNote.plainText
+      },
+      tags: selectedNote.tags
+    });
+
+    mutateWorkspaceBlockShelf((current) => upsertBlock(current, block));
+    setStatus("Published to Tamishra Blocks");
+  };
 
   const exportNative = () => {
     if (!selectedNote) return;
@@ -422,6 +479,7 @@ export default function NotesWorkspace() {
       <aside className={styles.sidebar}>
         <Link href="/" className={styles.brand}>← Tamishra Workspace</Link>
         <button className={styles.newButton} onClick={createNewNote}>+ New note</button>
+        <Link href="/apps/blocks" className={styles.brand}>Tamishra Blocks →</Link>
 
         <nav>
           {(["notes", "pinned", "archive", "trash"] as View[]).map((item) => (
@@ -552,6 +610,7 @@ export default function NotesWorkspace() {
                 >
                   {selectedNote.pinned ? "★ Pinned" : "☆ Pin"}
                 </button>
+                <button onClick={publishSelectedNoteAsBlock}>Publish Block</button>
                 <button onClick={exportNative}>Export .tmnt</button>
                 {view === "trash" ? (
                   <>
