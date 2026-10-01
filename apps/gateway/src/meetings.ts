@@ -159,6 +159,125 @@ function liveKitConfig() {
   return { url, apiUrl, apiKey, apiSecret };
 }
 
+function canModerate(participant: StoredParticipant | null) {
+  return Boolean(
+    participant &&
+      (participant.role === "host" || participant.role === "cohost")
+  );
+}
+
+function isOwner(participant: StoredParticipant | null) {
+  return participant?.role === "host";
+}
+
+function roomServiceClient() {
+  const livekit = liveKitConfig();
+  if (!livekit) return null;
+  return new RoomServiceClient(
+    livekit.apiUrl,
+    livekit.apiKey,
+    livekit.apiSecret
+  );
+}
+
+function participantPublishSources(
+  meeting: StoredMeeting,
+  controls: Awaited<ReturnType<typeof collaboration.getControls>>,
+  role: StoredParticipant["role"]
+) {
+  if (role === "host" || role === "cohost") return undefined;
+
+  const sources: TrackSource[] = [];
+  if (controls.participantMicrophoneEnabled) {
+    sources.push(TrackSource.MICROPHONE);
+  }
+  if (controls.participantCameraEnabled) {
+    sources.push(TrackSource.CAMERA);
+  }
+  if (meeting.allowParticipantScreenShare) {
+    sources.push(TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO);
+  }
+  return sources;
+}
+
+async function applyLiveKitPermissions(
+  meeting: StoredMeeting,
+  participant: StoredParticipant,
+  controls: Awaited<ReturnType<typeof collaboration.getControls>>
+) {
+  const rooms = roomServiceClient();
+  if (!rooms) return false;
+
+  await rooms.updateParticipant(meeting.roomName, participant.id, {
+    permission: {
+      canSubscribe: true,
+      canPublish: true,
+      canPublishData: true,
+      canPublishSources: participantPublishSources(
+        meeting,
+        controls,
+        participant.role
+      )
+    }
+  });
+  return true;
+}
+
+async function muteParticipantSource(
+  roomNameValue: string,
+  identity: string,
+  source: TrackSource
+) {
+  const rooms = roomServiceClient();
+  if (!rooms) return 0;
+
+  const info = await rooms.getParticipant(roomNameValue, identity);
+  const tracks = info.tracks.filter(
+    (track) => track.source === source && !track.muted
+  );
+
+  await Promise.all(
+    tracks.map((track) =>
+      rooms.mutePublishedTrack(roomNameValue, identity, track.sid, true)
+    )
+  );
+
+  return tracks.length;
+}
+
+async function liveMediaStates(roomNameValue: string) {
+  const rooms = roomServiceClient();
+  if (!rooms) return new Map<string, {
+    microphoneActive: boolean;
+    cameraActive: boolean;
+    screenShareActive: boolean;
+  }>();
+
+  try {
+    const liveParticipants = await rooms.listParticipants(roomNameValue);
+    return new Map(
+      liveParticipants.map((participant) => {
+        const active = (source: TrackSource) =>
+          participant.tracks.some(
+            (track) => track.source === source && !track.muted
+          );
+        return [
+          participant.identity,
+          {
+            microphoneActive: active(TrackSource.MICROPHONE),
+            cameraActive: active(TrackSource.CAMERA),
+            screenShareActive:
+              active(TrackSource.SCREEN_SHARE) ||
+              active(TrackSource.SCREEN_SHARE_AUDIO)
+          }
+        ] as const;
+      })
+    );
+  } catch {
+    return new Map();
+  }
+}
+
 async function removeFromLiveKit(roomNameValue: string, identity: string) {
   const livekit = liveKitConfig();
   if (!livekit) return false;
@@ -254,7 +373,10 @@ export async function handleMeetingRequest(
           handRaise: true,
           roomLock: true,
           participantRemoval: true,
-          auditLog: true
+          auditLog: true,
+          cohost: true,
+          serverMediaModeration: true,
+          participantMediaPolicies: true
         }
       },
       origin,
@@ -315,6 +437,49 @@ export async function handleMeetingRequest(
 
       await store.createMeeting(meeting, host);
       await collaboration.ensureRoom(meeting.roomName);
+      const mediaPolicyChanged =
+        previousControls.participantMicrophoneEnabled !==
+          controls.participantMicrophoneEnabled ||
+        previousControls.participantCameraEnabled !==
+          controls.participantCameraEnabled;
+
+      if (mediaPolicyChanged) {
+        const participants = await store.listParticipants(meeting.roomName);
+        const admittedParticipants = participants.filter(
+          (participant) =>
+            participant.role === "participant" &&
+            participant.admissionStatus === "admitted"
+        );
+
+        await Promise.all(
+          admittedParticipants.map(async (participant) => {
+            try {
+              await applyLiveKitPermissions(
+                meeting,
+                participant,
+                controls
+              );
+              if (!controls.participantMicrophoneEnabled) {
+                await muteParticipantSource(
+                  meeting.roomName,
+                  participant.id,
+                  TrackSource.MICROPHONE
+                );
+              }
+              if (!controls.participantCameraEnabled) {
+                await muteParticipantSource(
+                  meeting.roomName,
+                  participant.id,
+                  TrackSource.CAMERA
+                );
+              }
+            } catch {
+              // Participant may not currently be connected.
+            }
+          })
+        );
+      }
+
       await collaboration.appendAudit({
         roomName: meeting.roomName,
         actorParticipantId: host.id,
@@ -538,18 +703,21 @@ export async function handleMeetingRequest(
       url.searchParams.get("accessKey")
     );
 
-    if (!host || host.role !== "host") {
+    if (!canModerate(host)) {
       sendJson(
         response,
         403,
-        { error: "host_access_required" },
+        { error: "moderator_access_required" },
         origin,
         allowedOrigins
       );
       return true;
     }
 
-    const participants = await store.listParticipants(meeting.roomName);
+    const [participants, mediaStates] = await Promise.all([
+      store.listParticipants(meeting.roomName),
+      liveMediaStates(meeting.roomName)
+    ]);
 
     sendJson(
       response,
@@ -561,7 +729,12 @@ export async function handleMeetingRequest(
           role: participant.role,
           admissionStatus: participant.admissionStatus,
           createdAt: participant.createdAt,
-          lastSeenAt: participant.lastSeenAt
+          lastSeenAt: participant.lastSeenAt,
+          ...(mediaStates.get(participant.id) ?? {
+            microphoneActive: false,
+            cameraActive: false,
+            screenShareActive: false
+          })
         }))
       },
       origin,
@@ -779,6 +952,8 @@ export async function handleMeetingRequest(
         chatEnabled?: boolean;
         reactionsEnabled?: boolean;
         handRaiseEnabled?: boolean;
+        participantMicrophoneEnabled?: boolean;
+        participantCameraEnabled?: boolean;
       } = {};
 
       if (typeof body.locked === "boolean") patch.locked = body.locked;
@@ -791,7 +966,18 @@ export async function handleMeetingRequest(
       if (typeof body.handRaiseEnabled === "boolean") {
         patch.handRaiseEnabled = body.handRaiseEnabled;
       }
+      if (typeof body.participantMicrophoneEnabled === "boolean") {
+        patch.participantMicrophoneEnabled =
+          body.participantMicrophoneEnabled;
+      }
+      if (typeof body.participantCameraEnabled === "boolean") {
+        patch.participantCameraEnabled =
+          body.participantCameraEnabled;
+      }
 
+      const previousControls = await collaboration.getControls(
+        meeting.roomName
+      );
       const controls = await collaboration.updateControls(
         meeting.roomName,
         patch
@@ -829,7 +1015,7 @@ export async function handleMeetingRequest(
     }
   }
 
-  if (request.method === "POST" && parsed.action === "moderate") {
+  if (request.method === "POST" && parsed.action === "role") {
     try {
       const body = await readJson(request);
       const host = await findAccess(
@@ -837,7 +1023,7 @@ export async function handleMeetingRequest(
         String(body.accessKey ?? "")
       );
 
-      if (!host || host.role !== "host") {
+      if (!isOwner(host)) {
         sendJson(
           response,
           403,
@@ -848,11 +1034,282 @@ export async function handleMeetingRequest(
         return true;
       }
 
+      const role =
+        body.role === "cohost"
+          ? "cohost"
+          : body.role === "participant"
+            ? "participant"
+            : null;
+
+      if (!role) {
+        sendJson(
+          response,
+          400,
+          { error: "invalid_meeting_role" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const target = await store.updateParticipantRole(
+        meeting.roomName,
+        String(body.participantId ?? ""),
+        role
+      );
+
+      if (!target || target.admissionStatus !== "admitted") {
+        sendJson(
+          response,
+          404,
+          { error: "participant_not_found" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const controls = await collaboration.getControls(meeting.roomName);
+      let permissionsUpdated = false;
+      try {
+        permissionsUpdated = await applyLiveKitPermissions(
+          meeting,
+          target,
+          controls
+        );
+      } catch {
+        // Role still persists if participant is currently offline.
+      }
+
+      await collaboration.appendAudit({
+        roomName: meeting.roomName,
+        actorParticipantId: host.id,
+        actorDisplayName: host.displayName,
+        eventType:
+          role === "cohost" ? "cohost_promoted" : "cohost_demoted",
+        targetParticipantId: target.id,
+        metadata: { permissionsUpdated }
+      });
+
+      sendJson(
+        response,
+        200,
+        {
+          participant: {
+            id: target.id,
+            displayName: target.displayName,
+            role: target.role,
+            admissionStatus: target.admissionStatus
+          }
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error ? error.message : "role_update_failed"
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (request.method === "POST" && parsed.action === "media") {
+    try {
+      const body = await readJson(request);
+      const moderator = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
+      if (!canModerate(moderator)) {
+        sendJson(
+          response,
+          403,
+          { error: "moderator_access_required" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const action = String(body.action ?? "");
+      const participants = await store.listParticipants(meeting.roomName);
+
+      if (action === "mute-all-mics" || action === "stop-all-cameras") {
+        const source =
+          action === "mute-all-mics"
+            ? TrackSource.MICROPHONE
+            : TrackSource.CAMERA;
+        const targets = participants.filter(
+          (participant) =>
+            participant.role === "participant" &&
+            participant.admissionStatus === "admitted"
+        );
+
+        let affectedTracks = 0;
+        await Promise.all(
+          targets.map(async (target) => {
+            try {
+              affectedTracks += await muteParticipantSource(
+                meeting.roomName,
+                target.id,
+                source
+              );
+            } catch {
+              // Ignore disconnected participants.
+            }
+          })
+        );
+
+        await collaboration.appendAudit({
+          roomName: meeting.roomName,
+          actorParticipantId: moderator!.id,
+          actorDisplayName: moderator!.displayName,
+          eventType: action.replaceAll("-", "_"),
+          targetParticipantId: null,
+          metadata: {
+            participantCount: targets.length,
+            affectedTracks
+          }
+        });
+
+        sendJson(
+          response,
+          200,
+          { ok: true, affectedTracks },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      if (action !== "mute-mic" && action !== "stop-camera") {
+        sendJson(
+          response,
+          400,
+          { error: "invalid_media_action" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const targetId = String(body.participantId ?? "");
+      const target = participants.find(
+        (participant) => participant.id === targetId
+      );
+
+      const canTarget =
+        target &&
+        target.role !== "host" &&
+        (
+          moderator!.role === "host" ||
+          target.role === "participant"
+        );
+
+      if (!canTarget || !target) {
+        sendJson(
+          response,
+          403,
+          { error: "participant_media_control_not_allowed" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const source =
+        action === "mute-mic"
+          ? TrackSource.MICROPHONE
+          : TrackSource.CAMERA;
+
+      let affectedTracks = 0;
+      try {
+        affectedTracks = await muteParticipantSource(
+          meeting.roomName,
+          target.id,
+          source
+        );
+      } catch {
+        // Participant may not currently publish that source.
+      }
+
+      await collaboration.appendAudit({
+        roomName: meeting.roomName,
+        actorParticipantId: moderator!.id,
+        actorDisplayName: moderator!.displayName,
+        eventType:
+          action === "mute-mic"
+            ? "participant_microphone_muted"
+            : "participant_camera_stopped",
+        targetParticipantId: target.id,
+        metadata: { affectedTracks }
+      });
+
+      sendJson(
+        response,
+        200,
+        {
+          ok: true,
+          participantId: target.id,
+          affectedTracks
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error ? error.message : "media_control_failed"
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (request.method === "POST" && parsed.action === "moderate") {
+    try {
+      const body = await readJson(request);
+      const host = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
+      if (!canModerate(host)) {
+        sendJson(
+          response,
+          403,
+          { error: "moderator_access_required" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
       const targetId = String(body.participantId ?? "");
       const participants = await store.listParticipants(meeting.roomName);
       const target = participants.find(
         (participant) =>
-          participant.id === targetId && participant.role !== "host"
+          participant.id === targetId &&
+          participant.role !== "host" &&
+          (
+            host.role === "host" ||
+            participant.role === "participant"
+          )
       );
 
       if (!target) {
@@ -973,7 +1430,7 @@ export async function handleMeetingRequest(
       url.searchParams.get("accessKey")
     );
 
-    if (!host || host.role !== "host") {
+    if (!canModerate(host)) {
       sendJson(
         response,
         403,
@@ -1001,7 +1458,7 @@ export async function handleMeetingRequest(
       url.searchParams.get("accessKey")
     );
 
-    if (!host || host.role !== "host") {
+    if (!canModerate(host)) {
       sendJson(
         response,
         403,
@@ -1154,7 +1611,7 @@ export async function handleMeetingRequest(
         String(body.accessKey ?? "")
       );
 
-      if (!host || host.role !== "host") {
+      if (!canModerate(host)) {
         sendJson(
           response,
           403,
@@ -1408,23 +1865,17 @@ export async function handleMeetingRequest(
         }
       );
 
+      const controls = await collaboration.getControls(meeting.roomName);
       const canShareScreen =
         participant.role === "host" ||
+        participant.role === "cohost" ||
         meeting.allowParticipantScreenShare;
 
-      const publishSources =
-        participant.role === "host"
-          ? undefined
-          : [
-              TrackSource.MICROPHONE,
-              TrackSource.CAMERA,
-              ...(canShareScreen
-                ? [
-                    TrackSource.SCREEN_SHARE,
-                    TrackSource.SCREEN_SHARE_AUDIO
-                  ]
-                : [])
-            ];
+      const publishSources = participantPublishSources(
+        meeting,
+        controls,
+        participant.role
+      );
 
       token.addGrant({
         roomJoin: true,
@@ -1443,7 +1894,11 @@ export async function handleMeetingRequest(
           token: await token.toJwt(),
           url: livekit.url,
           role: participant.role,
-          allowParticipantScreenShare: canShareScreen
+          allowParticipantScreenShare: canShareScreen,
+          participantMicrophoneEnabled:
+            controls.participantMicrophoneEnabled,
+          participantCameraEnabled:
+            controls.participantCameraEnabled
         },
         origin,
         allowedOrigins
