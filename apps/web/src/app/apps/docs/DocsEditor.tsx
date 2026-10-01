@@ -15,6 +15,7 @@ import {
   addDocsSuggestion,
   addDocsVersion,
   calculateDocsProofingStats,
+  createDocsFolder,
   createDraftFromHtml,
   duplicateDocsRecord,
   exportDocsDocx,
@@ -23,6 +24,7 @@ import {
   loadDocsWorkspace,
   migrateLegacyDraft,
   mmToCssPx,
+  moveDocsRecordToFolder,
   permanentlyDeleteDocsRecord,
   registerDocsDocxAdapter,
   removeDocsShareGrant,
@@ -862,6 +864,19 @@ export default function DocsEditor() {
 
     applyDraftToEditor(version.draft, version.documentId, "Version restored");
     saveDocument();
+  };
+
+  const handleCreateFolder = (name: string) => {
+    const result = createDocsFolder(workspaceRef.current, name);
+    commitWorkspace(result.snapshot);
+  };
+
+  const handleMoveCurrentToFolder = (folderId: string | null) => {
+    const documentId = currentDocumentIdRef.current;
+    if (!documentId) return;
+    commitWorkspace(
+      moveDocsRecordToFolder(workspaceRef.current, documentId, folderId)
+    );
   };
 
   const handleDocxInput = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -2299,6 +2314,8 @@ td,th{border:1px solid #d0d5dd;padding:8px}
             onTrash={handleTrashRecord}
             onRestore={handleRestoreRecord}
             onDeleteForever={handleDeleteRecordForever}
+            onCreateFolder={handleCreateFolder}
+            onMoveCurrentToFolder={handleMoveCurrentToFolder}
             onImportDocx={() => docxInputRef.current?.click()}
             onExportDocx={handleExportDocx}
             onGoToOutline={handleGoToOutline}
