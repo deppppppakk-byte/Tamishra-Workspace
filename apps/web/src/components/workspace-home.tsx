@@ -102,7 +102,7 @@ export function WorkspaceHomeClient() {
     setOpenError("");
     const target = targetAppForNativeFile(file.name);
     if (!target) {
-      setOpenError("Unsupported file. Use .tmdoc, .tmsh, .tmsl, .docx, .csv or PDF.");
+      setOpenError("Unsupported file. Use .tmdoc, .tmsh, .tmsl, .docx, .csv.");
       return;
     }
 
@@ -199,7 +199,7 @@ export function WorkspaceHomeClient() {
               ref={fileInputRef}
               hidden
               type="file"
-              accept=".tmdoc,.tmsh,.tmsl,.docx,.csv,.json,.pdf"
+              accept=".tmdoc,.tmsh,.tmsl,.docx,.csv,.json"
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 event.target.value = "";
