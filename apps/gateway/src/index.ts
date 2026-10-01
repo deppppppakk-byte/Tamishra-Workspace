@@ -5,6 +5,7 @@ import { handlePatraRequest } from "./patra.js";
 import { handleDocsRequest } from "./docs.js";
 import { handleFilesRequest } from "./files.js";
 import { handleChatRequest } from "./chat.js";
+import { handleFormsRequest } from "./forms.js";
 
 const port = Number(process.env.WORKSPACE_GATEWAY_PORT ?? process.env.PORT ?? 4100);
 const isProduction = process.env.NODE_ENV === "production";
@@ -232,6 +233,18 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
 
   if (
     await handleChatRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return;
+  }
+
+  if (
+    await handleFormsRequest(
       request,
       response,
       url,
