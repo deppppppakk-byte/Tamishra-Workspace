@@ -340,3 +340,6 @@ export function migrateLegacyDraft(input: {
 export function mmToCssPx(mm: number): number {
   return (mm / 25.4) * 96;
 }
+
+export * from "./workspace";
+export * from "./docx";
