@@ -121,7 +121,16 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       200,
       {
         providers: [
-          { key: "tamishra", name: "Tamishra Patra", domain: "patra.in", method: "native", status: "primary" },
+          {
+            key: "tamishra",
+            name: "Tamishra Patra",
+            domains: [
+              { domain: "patra.in", audience: "public", selfRegistration: true },
+              { domain: "tamishra.in", audience: "company", selfRegistration: false }
+            ],
+            method: "native",
+            status: "primary"
+          },
           {
             key: "imap-smtp",
             method: "gateway-secret",
