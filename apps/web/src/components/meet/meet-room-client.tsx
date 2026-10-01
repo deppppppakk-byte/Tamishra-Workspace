@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   LiveKitRoom,
   PreJoin,
@@ -11,11 +11,16 @@ import {
   loadMeetingAccess,
   type MeetingAttendance,
   type MeetingAuditEvent,
+  type MeetingBreakoutState,
+  type MeetingCaptionStatus,
   type MeetingControls,
   type MeetingMessage,
   type MeetingParticipant,
+  type MeetingNotes,
   type MeetingRecordingState,
   type MeetingSignal,
+  type MeetingSummary,
+  type MeetingTranscriptSegment,
   WorkspaceMeetingGateway
 } from "@tamishra/meet-core/workspace-gateway";
 import styles from "./meet-room.module.css";
@@ -31,7 +36,12 @@ type JoinChoices = {
   videoDeviceId?: string;
 };
 
-type SidebarTab = "chat" | "people" | "activity";
+type SidebarTab =
+  | "chat"
+  | "people"
+  | "breakouts"
+  | "notes"
+  | "activity";
 
 const initialControls: MeetingControls = {
   locked: false,
@@ -65,7 +75,13 @@ function auditLabel(event: MeetingAuditEvent) {
     recording_started: "Recording started",
     recording_stopped: "Recording stopped",
     recording_consent_accepted: "Recording consent accepted",
-    recording_consent_declined: "Recording consent declined"
+    recording_consent_declined: "Recording consent declined",
+    breakouts_published: "Breakout rooms opened",
+    breakouts_returned: "Breakout rooms closed",
+    captions_started: "Live captions started",
+    captions_stopped: "Live captions stopped",
+    meeting_notes_updated: "Meeting notes updated",
+    meeting_summary_generated: "Meeting summary generated"
   };
   return labels[event.eventType] ?? event.eventType.replaceAll("_", " ");
 }
@@ -109,6 +125,40 @@ export function MeetRoomClient() {
       recordings: []
     });
   const [recordingBusy, setRecordingBusy] = useState(false);
+  const [breakoutState, setBreakoutState] = useState<MeetingBreakoutState>({
+    rooms: [],
+    assignments: []
+  });
+  const [breakoutCount, setBreakoutCount] = useState(2);
+  const [breakoutMinutes, setBreakoutMinutes] = useState(10);
+  const [breakoutBusy, setBreakoutBusy] = useState(false);
+  const [activeMediaRoom, setActiveMediaRoom] = useState("");
+  const [activeBreakoutLabel, setActiveBreakoutLabel] = useState("");
+  const [captionStatus, setCaptionStatus] =
+    useState<MeetingCaptionStatus>({
+      configured: false,
+      state: {
+        roomName: "",
+        desiredState: "stopped",
+        agentName: null,
+        dispatchId: null,
+        model: null,
+        language: null,
+        lastHeartbeatAt: null,
+        lastError: null,
+        updatedAt: ""
+      }
+    });
+  const [captionsVisible, setCaptionsVisible] = useState(true);
+  const [captionBusy, setCaptionBusy] = useState(false);
+  const [transcript, setTranscript] =
+    useState<MeetingTranscriptSegment[]>([]);
+  const [notes, setNotes] = useState<MeetingNotes | null>(null);
+  const [notesDraft, setNotesDraft] = useState("");
+  const [notesDirty, setNotesDirty] = useState(false);
+  const [notesBusy, setNotesBusy] = useState(false);
+  const [summary, setSummary] = useState<MeetingSummary | null>(null);
+  const handoffRef = useRef(false);
 
   const isHost = context?.role === "host";
   const isModerator =
@@ -174,6 +224,52 @@ export function MeetRoomClient() {
     [gateway]
   );
 
+  const loadBreakouts = useCallback(
+    async (room: string, key: string) => {
+      const result = await gateway.getBreakouts(room, key);
+      setBreakoutState(result);
+      return result;
+    },
+    [gateway]
+  );
+
+  const loadCaptionStatus = useCallback(
+    async (room: string, key: string) => {
+      const result = await gateway.getCaptionStatus(room, key);
+      setCaptionStatus(result);
+      return result;
+    },
+    [gateway]
+  );
+
+  const loadTranscript = useCallback(
+    async (room: string, key: string) => {
+      const result = await gateway.getTranscript(room, key, 500);
+      setTranscript(result);
+      return result;
+    },
+    [gateway]
+  );
+
+  const loadNotes = useCallback(
+    async (room: string, key: string) => {
+      const result = await gateway.getNotes(room, key);
+      setNotes(result);
+      setNotesDraft((current) => (notesDirty ? current : result.body));
+      return result;
+    },
+    [gateway, notesDirty]
+  );
+
+  const loadSummary = useCallback(
+    async (room: string, key: string) => {
+      const result = await gateway.getSummary(room, key);
+      setSummary(result);
+      return result;
+    },
+    [gateway]
+  );
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const room = params.get("room")?.trim() ?? "";
@@ -199,15 +295,25 @@ export function MeetRoomClient() {
 
     void loadContext(room, access.accessKey)
       .then((result) => {
+        const sharedLoads = [
+          loadRecording(room, access.accessKey).catch(() => undefined),
+          loadBreakouts(room, access.accessKey).catch(() => undefined),
+          loadCaptionStatus(room, access.accessKey).catch(() => undefined),
+          loadTranscript(room, access.accessKey).catch(() => undefined),
+          loadNotes(room, access.accessKey).catch(() => undefined),
+          loadSummary(room, access.accessKey).catch(() => undefined)
+        ];
+
         if (result.role === "host" || result.role === "cohost") {
           setSidebarTab("people");
           return Promise.all([
+            ...sharedLoads,
             loadParticipants(room, access.accessKey).catch(() => undefined),
-            loadAttendance(room, access.accessKey).catch(() => undefined),
-            loadRecording(room, access.accessKey).catch(() => undefined)
+            loadAttendance(room, access.accessKey).catch(() => undefined)
           ]);
         }
-        return undefined;
+
+        return Promise.all(sharedLoads);
       })
       .catch((reason) => {
         setError(
@@ -215,7 +321,17 @@ export function MeetRoomClient() {
         );
       })
       .finally(() => setLoading(false));
-  }, [loadAttendance, loadContext, loadParticipants, loadRecording]);
+  }, [
+    loadAttendance,
+    loadBreakouts,
+    loadCaptionStatus,
+    loadContext,
+    loadNotes,
+    loadParticipants,
+    loadRecording,
+    loadSummary,
+    loadTranscript
+  ]);
 
   useEffect(() => {
     if (!roomName || !accessKey || !context || token) return;
@@ -314,6 +430,118 @@ export function MeetRoomClient() {
     context?.status,
     context?.admissionStatus,
     loadRecording
+  ]);
+
+  useEffect(() => {
+    if (
+      !roomName ||
+      !accessKey ||
+      !context ||
+      context.status !== "live" ||
+      context.admissionStatus !== "admitted"
+    ) {
+      return;
+    }
+
+    const refresh = () => {
+      void loadBreakouts(roomName, accessKey).catch(() => undefined);
+      void loadCaptionStatus(roomName, accessKey)
+        .then((status) => {
+          if (status.state.desiredState === "running") {
+            void loadTranscript(roomName, accessKey).catch(() => undefined);
+          }
+        })
+        .catch(() => undefined);
+    };
+
+    refresh();
+    const timer = window.setInterval(refresh, 2200);
+    return () => window.clearInterval(timer);
+  }, [
+    roomName,
+    accessKey,
+    context,
+    context?.status,
+    context?.admissionStatus,
+    loadBreakouts,
+    loadCaptionStatus,
+    loadTranscript
+  ]);
+
+  useEffect(() => {
+    if (
+      !roomName ||
+      !accessKey ||
+      !context ||
+      context.role !== "participant" ||
+      context.status !== "live" ||
+      context.admissionStatus !== "admitted" ||
+      !choices ||
+      !token
+    ) {
+      return;
+    }
+
+    const assignment = breakoutState.assignments.find(
+      (item) => item.participantId === context.participantId
+    );
+    const targetRoom = assignment?.livekitRoomName ?? roomName;
+
+    if ((activeMediaRoom || roomName) === targetRoom) return;
+
+    let cancelled = false;
+    handoffRef.current = true;
+
+    const handoff = assignment
+      ? gateway.issueBreakoutToken(roomName, accessKey)
+      : gateway.issueToken(roomName, accessKey, displayName);
+
+    void handoff
+      .then((result) => {
+        if (cancelled) return;
+        setServerUrl(result.url);
+        setToken(result.token);
+        setActiveMediaRoom(
+          assignment
+            ? (result as { mediaRoom: string }).mediaRoom
+            : roomName
+        );
+        setActiveBreakoutLabel(
+          assignment
+            ? (result as { groupLabel: string }).groupLabel
+            : ""
+        );
+        setRoomError(
+          assignment
+            ? "Joined " +
+                (result as { groupLabel: string }).groupLabel +
+                "."
+            : "Returned to the main meeting."
+        );
+      })
+      .catch((reason) => {
+        handoffRef.current = false;
+        if (cancelled) return;
+        setRoomError(
+          reason instanceof Error
+            ? reason.message
+            : "Unable to switch meeting room."
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    roomName,
+    accessKey,
+    context,
+    choices,
+    token,
+    activeMediaRoom,
+    breakoutState.assignments,
+    displayName,
+    gateway
   ]);
 
   useEffect(() => {
@@ -627,6 +855,148 @@ export function MeetRoomClient() {
     }
   }
 
+  async function startBreakouts() {
+    if (!roomName || !accessKey || !isModerator || breakoutBusy) return;
+
+    const candidates = participants.filter(
+      (participant) =>
+        participant.role === "participant" &&
+        participant.admissionStatus === "admitted"
+    );
+
+    if (candidates.length === 0) {
+      setRoomError("Admit participants before opening breakout rooms.");
+      return;
+    }
+
+    const roomCount = Math.max(
+      1,
+      Math.min(Math.round(breakoutCount), Math.min(20, candidates.length))
+    );
+
+    const assignments = candidates.map((participant, index) => {
+      const groupNumber = (index % roomCount) + 1;
+      return {
+        participantId: participant.id,
+        groupId: "group-" + groupNumber,
+        groupLabel: "Breakout " + groupNumber
+      };
+    });
+
+    setBreakoutBusy(true);
+    setRoomError("");
+    try {
+      await gateway.publishBreakouts(
+        roomName,
+        accessKey,
+        assignments,
+        breakoutMinutes
+      );
+      await Promise.all([
+        loadBreakouts(roomName, accessKey),
+        loadAudit(roomName, accessKey)
+      ]);
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error
+          ? reason.message
+          : "Unable to open breakout rooms."
+      );
+    } finally {
+      setBreakoutBusy(false);
+    }
+  }
+
+  async function returnAllBreakouts() {
+    if (!roomName || !accessKey || !isModerator || breakoutBusy) return;
+    setBreakoutBusy(true);
+    setRoomError("");
+    try {
+      await gateway.returnAllBreakouts(roomName, accessKey);
+      await Promise.all([
+        loadBreakouts(roomName, accessKey),
+        loadAudit(roomName, accessKey)
+      ]);
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error
+          ? reason.message
+          : "Unable to close breakout rooms."
+      );
+    } finally {
+      setBreakoutBusy(false);
+    }
+  }
+
+  async function controlCaptions(action: "start" | "stop") {
+    if (!roomName || !accessKey || !isModerator || captionBusy) return;
+    setCaptionBusy(true);
+    setRoomError("");
+    try {
+      const status = await gateway.controlCaptions(
+        roomName,
+        accessKey,
+        action
+      );
+      setCaptionStatus(status);
+      if (action === "start") {
+        setCaptionsVisible(true);
+      }
+      await loadAudit(roomName, accessKey);
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error
+          ? reason.message
+          : "Unable to control live captions."
+      );
+    } finally {
+      setCaptionBusy(false);
+    }
+  }
+
+  async function saveSharedNotes() {
+    if (!roomName || !accessKey || !isModerator || notesBusy) return;
+    setNotesBusy(true);
+    setRoomError("");
+    try {
+      const result = await gateway.saveNotes(
+        roomName,
+        accessKey,
+        notesDraft
+      );
+      setNotes(result);
+      setNotesDirty(false);
+      await loadAudit(roomName, accessKey);
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error
+          ? reason.message
+          : "Unable to save meeting notes."
+      );
+    } finally {
+      setNotesBusy(false);
+    }
+  }
+
+  async function generateSummary() {
+    if (!roomName || !accessKey || !isModerator || notesBusy) return;
+    setNotesBusy(true);
+    setRoomError("");
+    try {
+      const result = await gateway.generateSummary(roomName, accessKey);
+      setSummary(result);
+      await loadAudit(roomName, accessKey);
+    } catch (reason) {
+      setRoomError(
+        reason instanceof Error
+          ? reason.message
+          : "Unable to generate meeting summary."
+      );
+    } finally {
+      setNotesBusy(false);
+    }
+  }
+
   async function connect(values: JoinChoices) {
     if (!roomName || !accessKey || joining) return;
     setJoining(true);
@@ -659,6 +1029,7 @@ export function MeetRoomClient() {
       });
       setToken(result.token);
       setServerUrl(result.url);
+      setActiveMediaRoom(roomName);
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : "Unable to join meeting."
