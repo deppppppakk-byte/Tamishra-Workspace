@@ -10,6 +10,7 @@ const nextConfig: NextConfig = {
   },
   transpilePackages: [
     "@tamishra/workspace-core",
+    "@tamishra/chat-core",
     "@tamishra/document-model",
     "@tamishra/docs-engine",
     "@tamishra/history",

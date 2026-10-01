@@ -25,7 +25,8 @@
     "pptxgenjs": "4.0.1",
     "docx": "9.5.1",
     "mammoth": "1.10.0",
-    "@tauri-apps/api": "^2.0.0"
+    "@tauri-apps/api": "^2.0.0",
+    "@tamishra/chat-core": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

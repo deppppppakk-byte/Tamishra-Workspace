@@ -344,6 +344,19 @@ export async function resolveWorkspaceIdentity(request: IncomingMessage) {
   return currentIdentity(request);
 }
 
+export async function resolveWorkspaceAuthorization(request: IncomingMessage) {
+  await store.ready();
+  const identity = await currentIdentity(request);
+  if (!identity) return null;
+  const memberships = await store.listMemberships(identity.user.id);
+  return { ...identity, memberships };
+}
+
+export async function listWorkspaceOrganizationMembers(organizationId: string) {
+  await store.ready();
+  return store.listOrganizationMembers(organizationId);
+}
+
 function errorStatus(error: unknown) {
   return Number((error as { status?: number }).status ?? 500);
 }
@@ -669,6 +682,44 @@ export async function handleIdentityRequest(
       );
       return true;
     }
+  }
+
+  const organizationMembersMatch = url.pathname.match(
+    /^\/v1\/auth\/organizations\/([^/]+)\/members$/
+  );
+  if (request.method === "GET" && organizationMembersMatch) {
+    const identity = await currentIdentity(request);
+    if (!identity) {
+      sendJson(response, 401, { error: "authentication_required" }, origin, allowedOrigins);
+      return true;
+    }
+
+    const organizationId = decodeURIComponent(organizationMembersMatch[1]);
+    const memberships = await store.listMemberships(identity.user.id);
+    const membership = memberships.find(
+      (item) =>
+        item.membership.organizationId === organizationId &&
+        !item.membership.disabled
+    );
+    if (!membership || membership.membership.role === "guest") {
+      sendJson(response, 403, { error: "organization_access_denied" }, origin, allowedOrigins);
+      return true;
+    }
+
+    const members = await store.listOrganizationMembers(organizationId);
+    sendJson(
+      response,
+      200,
+      {
+        members: members.map(({ membership: memberMembership, user }) => ({
+          membership: memberMembership,
+          user: publicUser(user)
+        }))
+      },
+      origin,
+      allowedOrigins
+    );
+    return true;
   }
 
   return false;

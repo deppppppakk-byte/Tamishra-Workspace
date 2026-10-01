@@ -3,6 +3,7 @@ import { handleMeetingRequest } from "./meetings.js";
 import { handleIdentityRequest } from "./identity.js";
 import { handlePatraRequest } from "./patra.js";
 import { handleDocsRequest } from "./docs.js";
+import { handleChatRequest } from "./chat.js";
 
 const port = Number(process.env.WORKSPACE_GATEWAY_PORT ?? process.env.PORT ?? 4100);
 const isProduction = process.env.NODE_ENV === "production";
@@ -206,6 +207,18 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
 
   if (
     await handleIdentityRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return;
+  }
+
+  if (
+    await handleChatRequest(
       request,
       response,
       url,
