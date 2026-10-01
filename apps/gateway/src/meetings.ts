@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { AccessToken } from "livekit-server-sdk";
+import { AccessToken, TrackSource } from "livekit-server-sdk";
 
 type MeetingStatus = "scheduled" | "live" | "ended" | "cancelled";
 type MeetingRole = "host" | "participant";
@@ -456,12 +456,27 @@ export async function handleMeetingRequest(
           ttl: "2h"
         }
       );
+      const canShareScreen =
+        participant.role === "host" || meeting.allowParticipantScreenShare;
+      const publishSources =
+        participant.role === "host"
+          ? undefined
+          : [
+              TrackSource.MICROPHONE,
+              TrackSource.CAMERA,
+              ...(canShareScreen
+                ? [TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO]
+                : [])
+            ];
+
       token.addGrant({
         roomJoin: true,
         room: meeting.roomName,
         canPublish: true,
+        canPublishSources: publishSources,
         canSubscribe: true,
-        canPublishData: true
+        canPublishData: true,
+        roomAdmin: participant.role === "host"
       });
 
       sendJson(response, 200, {
