@@ -8,7 +8,13 @@ const HEADER_SIZE_BYTES = 4;
 
 type CompressionMode = "gzip" | "none";
 
-type TmslHeader = {
+export type TmslPreview = {
+  background?: string;
+  title?: string;
+  subtitle?: string;
+};
+
+export type TmslHeader = {
   format: typeof TMSL_FORMAT;
   containerVersion: number;
   schemaVersion: number;
@@ -16,7 +22,11 @@ type TmslHeader = {
   compression: CompressionMode;
   checksum: string;
   createdAt: string;
+  modifiedAt: string;
   generator: string;
+  title: string;
+  slideCount: number;
+  preview?: TmslPreview;
 };
 
 export type TamishraSlidesDocument<TSlide = unknown> = {
@@ -108,6 +118,62 @@ const concat = (...parts: Uint8Array[]) => {
 const safeFileName = (value: string) =>
   (value.trim() || "presentation").replace(/[^a-z0-9-_]+/gi, "-");
 
+const extractPreview = (slides: unknown[]): TmslPreview | undefined => {
+  const first = slides[0];
+  if (!first || typeof first !== "object") return undefined;
+
+  const slide = first as {
+    background?: unknown;
+    elements?: unknown;
+  };
+  const elements = Array.isArray(slide.elements) ? slide.elements : [];
+  const texts = elements
+    .filter((element): element is { type?: unknown; text?: unknown; hidden?: unknown } =>
+      Boolean(element) && typeof element === "object"
+    )
+    .filter((element) => element.type === "text" && element.hidden !== true)
+    .map((element) => typeof element.text === "string" ? element.text.trim() : "")
+    .filter(Boolean);
+
+  return {
+    background: typeof slide.background === "string" ? slide.background : undefined,
+    title: texts[0]?.slice(0, 180),
+    subtitle: texts[1]?.slice(0, 240)
+  };
+};
+
+export function decodeTmslHeader(
+  source: ArrayBuffer | Uint8Array
+): TmslHeader {
+  const bytes = source instanceof Uint8Array ? source : new Uint8Array(source);
+
+  if (!equalMagic(bytes)) {
+    throw new Error("Not a Tamishra Slides (.tmsl) file.");
+  }
+
+  const headerOffset = MAGIC.byteLength;
+  const minimumLength = headerOffset + HEADER_SIZE_BYTES;
+  if (bytes.byteLength < minimumLength) {
+    throw new Error("TMSL file is incomplete.");
+  }
+
+  const headerLength = new DataView(
+    bytes.buffer,
+    bytes.byteOffset + headerOffset,
+    HEADER_SIZE_BYTES
+  ).getUint32(0, false);
+  const headerStart = minimumLength;
+  const headerEnd = headerStart + headerLength;
+
+  if (headerLength <= 0 || headerEnd > bytes.byteLength) {
+    throw new Error("TMSL header is invalid.");
+  }
+
+  return JSON.parse(
+    decoder.decode(bytes.subarray(headerStart, headerEnd))
+  ) as TmslHeader;
+}
+
 export async function encodeTmsl<TSlide>(
   document: TamishraSlidesDocument<TSlide>
 ): Promise<Uint8Array> {
@@ -125,6 +191,7 @@ export async function encodeTmsl<TSlide>(
   const checksum = await sha256(rawPayload);
   const packed = await compress(rawPayload);
 
+  const now = new Date().toISOString();
   const header: TmslHeader = {
     format: TMSL_FORMAT,
     containerVersion: TMSL_CONTAINER_VERSION,
@@ -132,8 +199,12 @@ export async function encodeTmsl<TSlide>(
     mime: TMSL_MIME,
     compression: packed.compression,
     checksum,
-    createdAt: normalized.metadata?.createdAt ?? new Date().toISOString(),
-    generator: "Tamishra Slides"
+    createdAt: normalized.metadata?.createdAt ?? now,
+    modifiedAt: normalized.metadata?.modifiedAt ?? now,
+    generator: "Tamishra Slides",
+    title: normalized.title,
+    slideCount: normalized.slides.length,
+    preview: extractPreview(normalized.slides)
   };
 
   const headerBytes = encoder.encode(JSON.stringify(header));
@@ -154,27 +225,14 @@ export async function decodeTmsl<TSlide>(
 
   const headerOffset = MAGIC.byteLength;
   const minimumLength = headerOffset + HEADER_SIZE_BYTES;
-
-  if (bytes.byteLength < minimumLength) {
-    throw new Error("TMSL file is incomplete.");
-  }
-
   const headerLength = new DataView(
     bytes.buffer,
     bytes.byteOffset + headerOffset,
     HEADER_SIZE_BYTES
   ).getUint32(0, false);
-
   const headerStart = minimumLength;
   const headerEnd = headerStart + headerLength;
-
-  if (headerLength <= 0 || headerEnd > bytes.byteLength) {
-    throw new Error("TMSL header is invalid.");
-  }
-
-  const header = JSON.parse(
-    decoder.decode(bytes.subarray(headerStart, headerEnd))
-  ) as TmslHeader;
+  const header = decodeTmslHeader(bytes);
 
   if (
     header.format !== TMSL_FORMAT ||
