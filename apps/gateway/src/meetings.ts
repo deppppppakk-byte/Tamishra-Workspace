@@ -1,42 +1,17 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { AccessToken, TrackSource } from "livekit-server-sdk";
-
-type MeetingStatus = "scheduled" | "live" | "ended" | "cancelled";
-type MeetingRole = "host" | "participant";
-type AdmissionStatus = "waiting" | "admitted" | "denied";
-
-type ParticipantRecord = {
-  id: string;
-  displayName: string;
-  role: MeetingRole;
-  accessKey: string;
-  admissionStatus: AdmissionStatus;
-  createdAt: string;
-  lastSeenAt: string;
-};
-
-type MeetingRecord = {
-  roomName: string;
-  title: string;
-  status: MeetingStatus;
-  joinCode: string;
-  scheduledStartAt: string | null;
-  startedAt: string | null;
-  endedAt: string | null;
-  waitingRoomEnabled: boolean;
-  allowParticipantScreenShare: boolean;
-  createdAt: string;
-  hostParticipantId: string;
-  participants: Map<string, ParticipantRecord>;
-};
+import {
+  createMeetingStore,
+  type StoredMeeting,
+  type StoredParticipant
+} from "./meeting-store.js";
 
 type JsonObject = Record<string, unknown>;
 
-const meetings = new Map<string, MeetingRecord>();
-const roomByJoinCode = new Map<string, string>();
-
+const store = createMeetingStore();
 const MAX_BODY_BYTES = 32_768;
+const MAX_PARTICIPANTS = 100;
 const joinAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 function sendJson(
@@ -56,8 +31,12 @@ function sendJson(
   response.end(JSON.stringify(body));
 }
 
-function accessKey() {
+function rawAccessKey() {
   return randomBytes(32).toString("base64url");
+}
+
+function hashAccessKey(value: string) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function participantId() {
@@ -68,14 +47,19 @@ function roomName() {
   return "meet-" + Date.now().toString(36) + "-" + randomBytes(5).toString("hex");
 }
 
-function joinCode() {
+function candidateJoinCode() {
+  let code = "";
+  const bytes = randomBytes(10);
+  for (let index = 0; index < 10; index += 1) {
+    code += joinAlphabet[bytes[index] % joinAlphabet.length];
+  }
+  return code;
+}
+
+async function joinCode() {
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    let code = "";
-    const bytes = randomBytes(10);
-    for (let index = 0; index < 10; index += 1) {
-      code += joinAlphabet[bytes[index] % joinAlphabet.length];
-    }
-    if (!roomByJoinCode.has(code)) return code;
+    const code = candidateJoinCode();
+    if (!(await store.findMeetingByJoinCode(code))) return code;
   }
   throw new Error("Unable to generate unique meeting code.");
 }
@@ -109,6 +93,7 @@ async function readJson(request: IncomingMessage): Promise<JsonObject> {
   }
 
   if (!chunks.length) return {};
+
   try {
     const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
@@ -119,19 +104,18 @@ async function readJson(request: IncomingMessage): Promise<JsonObject> {
   }
 }
 
-function findAccess(
-  meeting: MeetingRecord,
-  key: string | null | undefined
-) {
+async function findAccess(roomNameValue: string, key: string | null | undefined) {
   if (!key) return null;
-  for (const participant of meeting.participants.values()) {
-    if (participant.accessKey === key) return participant;
-  }
-  return null;
+  return store.findParticipantByAccessHash(
+    roomNameValue,
+    hashAccessKey(key)
+  );
 }
 
-function publicContext(meeting: MeetingRecord, participant: ParticipantRecord) {
-  participant.lastSeenAt = new Date().toISOString();
+function publicContext(
+  meeting: StoredMeeting,
+  participant: StoredParticipant
+) {
   return {
     roomName: meeting.roomName,
     title: meeting.title,
@@ -146,7 +130,8 @@ function publicContext(meeting: MeetingRecord, participant: ParticipantRecord) {
     canEnter:
       meeting.status === "live" &&
       participant.admissionStatus === "admitted",
-    ephemeralStore: true
+    persistence: store.kind,
+    ephemeralStore: store.kind === "ephemeral-memory"
   };
 }
 
@@ -161,10 +146,15 @@ function liveKitConfig() {
 function meetingFromPath(pathname: string) {
   const match = pathname.match(/^\/v1\/meetings\/([^/]+)(?:\/(.+))?$/);
   if (!match) return null;
+
   return {
     roomName: decodeURIComponent(match[1]),
     action: match[2] ?? ""
   };
+}
+
+function statusFromError(error: unknown) {
+  return Number((error as { status?: number }).status ?? 500);
 }
 
 export async function handleMeetingRequest(
@@ -174,25 +164,53 @@ export async function handleMeetingRequest(
   origin: string | undefined,
   allowedOrigins: ReadonlySet<string>
 ) {
+  if (
+    !url.pathname.startsWith("/v1/meet") &&
+    !url.pathname.startsWith("/v1/meetings")
+  ) {
+    return false;
+  }
+
+  try {
+    await store.ready();
+  } catch (error) {
+    console.error("Workspace meeting store initialization failed", error);
+    sendJson(
+      response,
+      503,
+      { error: "meeting_store_unavailable" },
+      origin,
+      allowedOrigins
+    );
+    return true;
+  }
+
   if (request.method === "GET" && url.pathname === "/v1/meet/capabilities") {
-    sendJson(response, 200, {
-      service: "tamishra-workspace-meet",
-      nativeWorkspaceRuntime: true,
-      persistence: "ephemeral-memory",
-      mediaProvider: "livekit",
-      mediaConfigured: Boolean(liveKitConfig()),
-      capabilities: {
-        privateCodes: true,
-        waitingRoom: true,
-        audio: true,
-        video: true,
-        screenShare: true,
-        chat: true,
-        participantControls: true,
-        scheduledMeetings: true,
-        hostLifecycle: true
-      }
-    }, origin, allowedOrigins);
+    sendJson(
+      response,
+      200,
+      {
+        service: "tamishra-workspace-meet",
+        nativeWorkspaceRuntime: true,
+        persistence: store.kind,
+        mediaProvider: "livekit",
+        mediaConfigured: Boolean(liveKitConfig()),
+        capabilities: {
+          privateCodes: true,
+          waitingRoom: true,
+          audio: true,
+          video: true,
+          screenShare: true,
+          chat: true,
+          participantControls: true,
+          scheduledMeetings: true,
+          hostLifecycle: true,
+          durableMeetings: store.kind === "postgres"
+        }
+      },
+      origin,
+      allowedOrigins
+    );
     return true;
   }
 
@@ -206,27 +224,23 @@ export async function handleMeetingRequest(
           : null;
 
       if (scheduledStartAt && Number.isNaN(scheduledStartAt.getTime())) {
-        sendJson(response, 400, { error: "invalid_schedule" }, origin, allowedOrigins);
+        sendJson(
+          response,
+          400,
+          { error: "invalid_schedule" },
+          origin,
+          allowedOrigins
+        );
         return true;
       }
 
       const room = roomName();
-      const code = joinCode();
+      const code = await joinCode();
       const hostId = participantId();
-      const hostKey = accessKey();
+      const hostKey = rawAccessKey();
       const now = new Date().toISOString();
 
-      const host: ParticipantRecord = {
-        id: hostId,
-        displayName: cleanName(body.displayName, "Host"),
-        role: "host",
-        accessKey: hostKey,
-        admissionStatus: "admitted",
-        createdAt: now,
-        lastSeenAt: now
-      };
-
-      const meeting: MeetingRecord = {
+      const meeting: StoredMeeting = {
         roomName: room,
         title: cleanTitle(body.title),
         status: mode === "instant" ? "live" : "scheduled",
@@ -236,25 +250,47 @@ export async function handleMeetingRequest(
         endedAt: null,
         waitingRoomEnabled: body.waitingRoomEnabled !== false,
         allowParticipantScreenShare: body.allowParticipantScreenShare !== false,
-        createdAt: now,
-        hostParticipantId: hostId,
-        participants: new Map([[hostId, host]])
+        createdAt: now
       };
 
-      meetings.set(room, meeting);
-      roomByJoinCode.set(code, room);
+      const host: StoredParticipant = {
+        id: hostId,
+        roomName: room,
+        displayName: cleanName(body.displayName, "Host"),
+        role: "host",
+        accessKeyHash: hashAccessKey(hostKey),
+        admissionStatus: "admitted",
+        createdAt: now,
+        lastSeenAt: now
+      };
 
-      sendJson(response, 201, {
-        meeting: publicContext(meeting, host),
-        joinCode: code,
-        accessKey: hostKey
-      }, origin, allowedOrigins);
+      await store.createMeeting(meeting, host);
+
+      sendJson(
+        response,
+        201,
+        {
+          meeting: publicContext(meeting, host),
+          joinCode: code,
+          accessKey: hostKey
+        },
+        origin,
+        allowedOrigins
+      );
       return true;
     } catch (error) {
-      const status = Number((error as { status?: number }).status ?? 500);
-      sendJson(response, status, {
-        error: error instanceof Error ? error.message : "meeting_create_failed"
-      }, origin, allowedOrigins);
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "meeting_create_failed"
+        },
+        origin,
+        allowedOrigins
+      );
       return true;
     }
   }
@@ -263,46 +299,103 @@ export async function handleMeetingRequest(
     try {
       const body = await readJson(request);
       const code = normalizeCode(body.code);
+
       if (code.length !== 10) {
-        sendJson(response, 400, { error: "invalid_meeting_code" }, origin, allowedOrigins);
+        sendJson(
+          response,
+          400,
+          { error: "invalid_meeting_code" },
+          origin,
+          allowedOrigins
+        );
         return true;
       }
 
-      const room = roomByJoinCode.get(code);
-      const meeting = room ? meetings.get(room) : undefined;
+      const meeting = await store.findMeetingByJoinCode(code);
+
       if (!meeting) {
-        sendJson(response, 404, { error: "meeting_not_found" }, origin, allowedOrigins);
+        sendJson(
+          response,
+          404,
+          { error: "meeting_not_found" },
+          origin,
+          allowedOrigins
+        );
         return true;
       }
+
       if (meeting.status === "ended" || meeting.status === "cancelled") {
-        sendJson(response, 410, { error: "meeting_closed" }, origin, allowedOrigins);
+        sendJson(
+          response,
+          410,
+          { error: "meeting_closed" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const currentParticipants = await store.listParticipants(
+        meeting.roomName
+      );
+      const participantCount = currentParticipants.filter(
+        (participant) => participant.role === "participant"
+      ).length;
+
+      if (participantCount >= MAX_PARTICIPANTS) {
+        sendJson(
+          response,
+          403,
+          { error: "meeting_capacity_reached" },
+          origin,
+          allowedOrigins
+        );
         return true;
       }
 
       const id = participantId();
-      const key = accessKey();
+      const key = rawAccessKey();
       const now = new Date().toISOString();
-      const participant: ParticipantRecord = {
+
+      const participant: StoredParticipant = {
         id,
+        roomName: meeting.roomName,
         displayName: cleanName(body.displayName, "Participant"),
         role: "participant",
-        accessKey: key,
-        admissionStatus: meeting.waitingRoomEnabled ? "waiting" : "admitted",
+        accessKeyHash: hashAccessKey(key),
+        admissionStatus: meeting.waitingRoomEnabled
+          ? "waiting"
+          : "admitted",
         createdAt: now,
         lastSeenAt: now
       };
-      meeting.participants.set(id, participant);
 
-      sendJson(response, 200, {
-        meeting: publicContext(meeting, participant),
-        accessKey: key
-      }, origin, allowedOrigins);
+      await store.addParticipant(participant);
+
+      sendJson(
+        response,
+        200,
+        {
+          meeting: publicContext(meeting, participant),
+          accessKey: key
+        },
+        origin,
+        allowedOrigins
+      );
       return true;
     } catch (error) {
-      const status = Number((error as { status?: number }).status ?? 500);
-      sendJson(response, status, {
-        error: error instanceof Error ? error.message : "meeting_join_failed"
-      }, origin, allowedOrigins);
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "meeting_join_failed"
+        },
+        origin,
+        allowedOrigins
+      );
       return true;
     }
   }
@@ -310,77 +403,170 @@ export async function handleMeetingRequest(
   const parsed = meetingFromPath(url.pathname);
   if (!parsed) return false;
 
-  const meeting = meetings.get(parsed.roomName);
+  const meeting = await store.getMeeting(parsed.roomName);
+
   if (!meeting) {
-    sendJson(response, 404, { error: "meeting_not_found" }, origin, allowedOrigins);
+    sendJson(
+      response,
+      404,
+      { error: "meeting_not_found" },
+      origin,
+      allowedOrigins
+    );
     return true;
   }
 
   if (request.method === "GET" && parsed.action === "context") {
-    const participant = findAccess(meeting, url.searchParams.get("accessKey"));
+    const participant = await findAccess(
+      meeting.roomName,
+      url.searchParams.get("accessKey")
+    );
+
     if (!participant) {
-      sendJson(response, 401, { error: "invalid_meeting_access" }, origin, allowedOrigins);
+      sendJson(
+        response,
+        401,
+        { error: "invalid_meeting_access" },
+        origin,
+        allowedOrigins
+      );
       return true;
     }
-    sendJson(response, 200, {
-      meeting: publicContext(meeting, participant)
-    }, origin, allowedOrigins);
+
+    await store.updateParticipantPresence(
+      meeting.roomName,
+      participant.id
+    );
+
+    sendJson(
+      response,
+      200,
+      { meeting: publicContext(meeting, participant) },
+      origin,
+      allowedOrigins
+    );
     return true;
   }
 
   if (request.method === "GET" && parsed.action === "participants") {
-    const host = findAccess(meeting, url.searchParams.get("accessKey"));
+    const host = await findAccess(
+      meeting.roomName,
+      url.searchParams.get("accessKey")
+    );
+
     if (!host || host.role !== "host") {
-      sendJson(response, 403, { error: "host_access_required" }, origin, allowedOrigins);
+      sendJson(
+        response,
+        403,
+        { error: "host_access_required" },
+        origin,
+        allowedOrigins
+      );
       return true;
     }
-    sendJson(response, 200, {
-      participants: Array.from(meeting.participants.values()).map((participant) => ({
-        id: participant.id,
-        displayName: participant.displayName,
-        role: participant.role,
-        admissionStatus: participant.admissionStatus,
-        createdAt: participant.createdAt,
-        lastSeenAt: participant.lastSeenAt
-      }))
-    }, origin, allowedOrigins);
+
+    const participants = await store.listParticipants(meeting.roomName);
+
+    sendJson(
+      response,
+      200,
+      {
+        participants: participants.map((participant) => ({
+          id: participant.id,
+          displayName: participant.displayName,
+          role: participant.role,
+          admissionStatus: participant.admissionStatus,
+          createdAt: participant.createdAt,
+          lastSeenAt: participant.lastSeenAt
+        }))
+      },
+      origin,
+      allowedOrigins
+    );
     return true;
   }
 
   if (request.method === "POST" && parsed.action === "admission") {
     try {
       const body = await readJson(request);
-      const host = findAccess(meeting, String(body.accessKey ?? ""));
+      const host = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
       if (!host || host.role !== "host") {
-        sendJson(response, 403, { error: "host_access_required" }, origin, allowedOrigins);
+        sendJson(
+          response,
+          403,
+          { error: "host_access_required" },
+          origin,
+          allowedOrigins
+        );
         return true;
       }
-      const target = meeting.participants.get(String(body.participantId ?? ""));
-      if (!target || target.role === "host") {
-        sendJson(response, 404, { error: "participant_not_found" }, origin, allowedOrigins);
-        return true;
-      }
+
       const status =
-        body.status === "denied" ? "denied" :
-        body.status === "admitted" ? "admitted" : null;
+        body.status === "denied"
+          ? "denied"
+          : body.status === "admitted"
+            ? "admitted"
+            : null;
+
       if (!status) {
-        sendJson(response, 400, { error: "invalid_admission_status" }, origin, allowedOrigins);
+        sendJson(
+          response,
+          400,
+          { error: "invalid_admission_status" },
+          origin,
+          allowedOrigins
+        );
         return true;
       }
-      target.admissionStatus = status;
-      sendJson(response, 200, {
-        participant: {
-          id: target.id,
-          displayName: target.displayName,
-          admissionStatus: target.admissionStatus
-        }
-      }, origin, allowedOrigins);
+
+      const target = await store.updateAdmission(
+        meeting.roomName,
+        String(body.participantId ?? ""),
+        status
+      );
+
+      if (!target) {
+        sendJson(
+          response,
+          404,
+          { error: "participant_not_found" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      sendJson(
+        response,
+        200,
+        {
+          participant: {
+            id: target.id,
+            displayName: target.displayName,
+            admissionStatus: target.admissionStatus
+          }
+        },
+        origin,
+        allowedOrigins
+      );
       return true;
     } catch (error) {
-      const status = Number((error as { status?: number }).status ?? 500);
-      sendJson(response, status, {
-        error: error instanceof Error ? error.message : "admission_update_failed"
-      }, origin, allowedOrigins);
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "admission_update_failed"
+        },
+        origin,
+        allowedOrigins
+      );
       return true;
     }
   }
@@ -388,31 +574,67 @@ export async function handleMeetingRequest(
   if (request.method === "POST" && parsed.action === "lifecycle") {
     try {
       const body = await readJson(request);
-      const host = findAccess(meeting, String(body.accessKey ?? ""));
+      const host = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
       if (!host || host.role !== "host") {
-        sendJson(response, 403, { error: "host_access_required" }, origin, allowedOrigins);
+        sendJson(
+          response,
+          403,
+          { error: "host_access_required" },
+          origin,
+          allowedOrigins
+        );
         return true;
       }
+
       const action = String(body.action ?? "");
-      if (action === "start") {
-        meeting.status = "live";
-        meeting.startedAt ??= new Date().toISOString();
-      } else if (action === "end") {
-        meeting.status = "ended";
-        meeting.endedAt = new Date().toISOString();
-      } else {
-        sendJson(response, 400, { error: "invalid_lifecycle_action" }, origin, allowedOrigins);
+      const updated =
+        action === "start"
+          ? await store.startMeeting(meeting.roomName)
+          : action === "end"
+            ? await store.endMeeting(meeting.roomName)
+            : null;
+
+      if (!updated) {
+        sendJson(
+          response,
+          action === "start" || action === "end" ? 404 : 400,
+          {
+            error:
+              action === "start" || action === "end"
+                ? "meeting_not_found"
+                : "invalid_lifecycle_action"
+          },
+          origin,
+          allowedOrigins
+        );
         return true;
       }
-      sendJson(response, 200, {
-        meeting: publicContext(meeting, host)
-      }, origin, allowedOrigins);
+
+      sendJson(
+        response,
+        200,
+        { meeting: publicContext(updated, host) },
+        origin,
+        allowedOrigins
+      );
       return true;
     } catch (error) {
-      const status = Number((error as { status?: number }).status ?? 500);
-      sendJson(response, status, {
-        error: error instanceof Error ? error.message : "meeting_lifecycle_failed"
-      }, origin, allowedOrigins);
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "meeting_lifecycle_failed"
+        },
+        origin,
+        allowedOrigins
+      );
       return true;
     }
   }
@@ -420,32 +642,70 @@ export async function handleMeetingRequest(
   if (request.method === "POST" && parsed.action === "token") {
     try {
       const body = await readJson(request);
-      const participant = findAccess(meeting, String(body.accessKey ?? ""));
+      const participant = await findAccess(
+        meeting.roomName,
+        String(body.accessKey ?? "")
+      );
+
       if (!participant) {
-        sendJson(response, 401, { error: "invalid_meeting_access" }, origin, allowedOrigins);
+        sendJson(
+          response,
+          401,
+          { error: "invalid_meeting_access" },
+          origin,
+          allowedOrigins
+        );
         return true;
       }
+
       if (meeting.status !== "live") {
-        sendJson(response, 409, { error: "meeting_not_live" }, origin, allowedOrigins);
+        sendJson(
+          response,
+          409,
+          { error: "meeting_not_live" },
+          origin,
+          allowedOrigins
+        );
         return true;
       }
+
       if (participant.admissionStatus !== "admitted") {
-        sendJson(response, 403, {
-          error: "waiting_for_admission",
-          admissionStatus: participant.admissionStatus
-        }, origin, allowedOrigins);
+        sendJson(
+          response,
+          403,
+          {
+            error: "waiting_for_admission",
+            admissionStatus: participant.admissionStatus
+          },
+          origin,
+          allowedOrigins
+        );
         return true;
       }
 
       const livekit = liveKitConfig();
+
       if (!livekit) {
-        sendJson(response, 503, { error: "livekit_not_configured" }, origin, allowedOrigins);
+        sendJson(
+          response,
+          503,
+          { error: "livekit_not_configured" },
+          origin,
+          allowedOrigins
+        );
         return true;
       }
 
-      const displayName = cleanName(body.displayName, participant.displayName);
-      participant.displayName = displayName;
-      participant.lastSeenAt = new Date().toISOString();
+      const displayName = cleanName(
+        body.displayName,
+        participant.displayName
+      );
+
+      await store.updateParticipantPresence(
+        meeting.roomName,
+        participant.id,
+        displayName
+      );
 
       const token = new AccessToken(
         livekit.apiKey,
@@ -456,8 +716,11 @@ export async function handleMeetingRequest(
           ttl: "2h"
         }
       );
+
       const canShareScreen =
-        participant.role === "host" || meeting.allowParticipantScreenShare;
+        participant.role === "host" ||
+        meeting.allowParticipantScreenShare;
+
       const publishSources =
         participant.role === "host"
           ? undefined
@@ -465,7 +728,10 @@ export async function handleMeetingRequest(
               TrackSource.MICROPHONE,
               TrackSource.CAMERA,
               ...(canShareScreen
-                ? [TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO]
+                ? [
+                    TrackSource.SCREEN_SHARE,
+                    TrackSource.SCREEN_SHARE_AUDIO
+                  ]
                 : [])
             ];
 
@@ -479,19 +745,32 @@ export async function handleMeetingRequest(
         roomAdmin: participant.role === "host"
       });
 
-      sendJson(response, 200, {
-        token: await token.toJwt(),
-        url: livekit.url,
-        role: participant.role,
-        allowParticipantScreenShare:
-          participant.role === "host" || meeting.allowParticipantScreenShare
-      }, origin, allowedOrigins);
+      sendJson(
+        response,
+        200,
+        {
+          token: await token.toJwt(),
+          url: livekit.url,
+          role: participant.role,
+          allowParticipantScreenShare: canShareScreen
+        },
+        origin,
+        allowedOrigins
+      );
       return true;
     } catch (error) {
-      const status = Number((error as { status?: number }).status ?? 500);
-      sendJson(response, status, {
-        error: error instanceof Error ? error.message : "meeting_token_failed"
-      }, origin, allowedOrigins);
+      sendJson(
+        response,
+        statusFromError(error),
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "meeting_token_failed"
+        },
+        origin,
+        allowedOrigins
+      );
       return true;
     }
   }
