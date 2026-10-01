@@ -709,7 +709,7 @@ export default function SlidesEditor() {
         <button className={styles.menuItem} onClick={() => importInput.current?.click()}>Import</button>
         <button className={styles.menuItem} onClick={exportDeck}>Export</button>
         <button className={styles.menuItem} onClick={() => window.print()}>Print / PDF</button>
-        <button className={styles.menuItem} onClick={duplicateSlide}>Duplicate slide</button>
+        <button className={styles.menuItem} onClick={() => duplicateSlide()}>Duplicate slide</button>
         <button className={styles.menuItem} onClick={() => setInspectorMode("theme")}>Theme</button>
       </nav>
 
