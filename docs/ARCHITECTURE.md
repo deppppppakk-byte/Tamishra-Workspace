@@ -62,7 +62,15 @@ Persistent message store with threads, reactions, attachments and presence.
 Provider-agnostic mail abstraction. External accounts should connect through adapters rather than becoming part of the internal data model.
 
 ### Meet
-WebRTC-compatible media layer behind a provider-neutral meeting interface.
+`@tamishra/meet-core` is the provider-neutral meeting boundary.
+
+The behavioral source of truth is the existing Tamishra Meet product in the original Tamishra repository. Workspace must reuse or migrate that implementation rather than create a competing meeting engine.
+
+The first Workspace integration bridges to the existing Tamishra Meet runtime because `apps/web` is currently a static export. The existing runtime already provides LiveKit media, private joining codes, waiting-room admission, screen sharing, chat/reactions, participant controls, attendance and recording infrastructure.
+
+The long-term Workspace target is a dedicated meeting service behind the same `meet-core` contract so web, desktop and mobile can share one room lifecycle and one backend.
+
+See `docs/MEET_MIGRATION.md`.
 
 ### Notes
 Block-based document model optimized for fast capture and cross-linking.
