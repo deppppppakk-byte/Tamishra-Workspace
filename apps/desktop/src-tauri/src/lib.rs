@@ -77,6 +77,11 @@ fn startup_tmnt() -> Result<Option<String>, String> {
     startup_text_file("tmnt")
 }
 
+#[tauri::command]
+fn startup_tmfm() -> Result<Option<String>, String> {
+    startup_text_file("tmfm")
+}
+
 fn normalize_candidate(path: PathBuf) -> Option<PathBuf> {
     if !is_tmsl(&path) {
         return None;
@@ -341,6 +346,7 @@ pub fn run() {
             startup_tmdoc,
             startup_tmsh,
             startup_tmnt,
+            startup_tmfm,
             open_tmsl_path,
             current_tmsl_path,
             save_tmsl_current,
