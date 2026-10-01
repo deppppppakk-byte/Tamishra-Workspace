@@ -749,6 +749,71 @@ kbd {
   font-weight: 700;
 }
 
+.docsFindReplace {
+  min-height: 48px;
+  padding: 7px 14px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  overflow-x: auto;
+  border-bottom: 1px solid rgba(23, 32, 51, 0.08);
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgba(42, 54, 84, 0.04);
+}
+
+.docsFindReplace > input[type="text"],
+.docsFindReplace > input:not([type]) {
+  width: min(220px, 24vw);
+  min-width: 140px;
+  height: 32px;
+  border: 1px solid rgba(23, 32, 51, 0.12);
+  border-radius: 9px;
+  padding: 0 9px;
+  outline: none;
+  color: #344054;
+  background: #fff;
+  font-size: 11px;
+}
+
+.docsFindReplace > input:focus {
+  border-color: rgba(49, 92, 244, 0.45);
+  box-shadow: 0 0 0 3px rgba(49, 92, 244, 0.07);
+}
+
+.docsFindReplace > button {
+  min-height: 32px;
+  border: 1px solid rgba(23, 32, 51, 0.09);
+  border-radius: 9px;
+  padding: 0 10px;
+  background: #f8fafc;
+  color: #475467;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.docsFindOption {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #667085;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.docsFindStatus {
+  margin-left: auto;
+  color: #667085;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.docsFindClose {
+  font-size: 17px !important;
+  line-height: 1;
+}
+
 .docsWorkArea {
   min-height: 0;
   display: grid;
