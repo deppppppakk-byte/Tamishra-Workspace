@@ -170,7 +170,13 @@ function populateWorksheetFromMatrix(
   sheet.frozenRows = matrix.length ? 1 : 0;
 }
 
-function tablePayload(block: TamishraBlock) {
+function tablePayload(
+  block: TamishraBlock
+): {
+  tableData: string[][];
+  sourceLabel?: string;
+  formId?: string;
+} | null {
   if (
     block.kind !== "table" ||
     !block.payload ||
@@ -186,7 +192,11 @@ function tablePayload(block: TamishraBlock) {
   };
 
   if (!Array.isArray(payload.tableData)) return null;
-  return payload;
+  return {
+    tableData: payload.tableData,
+    sourceLabel: payload.sourceLabel,
+    formId: payload.formId
+  };
 }
 
 function workbookFromTableBlock(block: TamishraBlock) {
