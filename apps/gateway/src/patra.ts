@@ -776,7 +776,7 @@ export async function handlePatraRequest(
 
       let queue = null;
       if (delivery.external.length) {
-        queue = await store.enqueueDelivery(sent.id, mailbox.id);
+        queue = await store.enqueueDelivery(sent.id, mailbox.id, delivery.external);
       } else {
         await store.updateMessageState(mailbox.id, sent.id, {
           deliveryStatus: "delivered-local",
