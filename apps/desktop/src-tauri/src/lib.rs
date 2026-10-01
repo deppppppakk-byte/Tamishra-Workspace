@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     env,
     fs,
+    io::Read,
     path::{Path, PathBuf},
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
@@ -50,6 +51,27 @@ struct RecentTmslEntry {
     modified_unix_ms: u64,
     size_bytes: u64,
     exists: bool,
+    title: Option<String>,
+    slide_count: Option<u64>,
+    preview_background: Option<String>,
+    preview_title: Option<String>,
+    preview_subtitle: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TmslHeaderPreview {
+    background: Option<String>,
+    title: Option<String>,
+    subtitle: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TmslHeaderMetadata {
+    title: Option<String>,
+    slide_count: Option<u64>,
+    preview: Option<TmslHeaderPreview>,
 }
 
 #[derive(Serialize)]
@@ -116,6 +138,34 @@ fn record_recent_tmsl(app: &AppHandle, path: &Path) -> Result<(), String> {
     save_recent_tmsl(app, &entries)
 }
 
+fn read_tmsl_header_metadata(path: &Path) -> Option<TmslHeaderMetadata> {
+    const MAGIC: [u8; 8] = [0x54, 0x4d, 0x53, 0x4c, 0x01, 0x00, 0x0d, 0x0a];
+    const MAX_HEADER_BYTES: usize = 1024 * 1024;
+
+    let mut file = fs::File::open(path).ok()?;
+    let mut prefix = [0u8; 12];
+    file.read_exact(&mut prefix).ok()?;
+
+    if prefix[..8] != MAGIC {
+        return None;
+    }
+
+    let header_length = u32::from_be_bytes([
+        prefix[8],
+        prefix[9],
+        prefix[10],
+        prefix[11],
+    ]) as usize;
+
+    if header_length == 0 || header_length > MAX_HEADER_BYTES {
+        return None;
+    }
+
+    let mut header = vec![0u8; header_length];
+    file.read_exact(&mut header).ok()?;
+    serde_json::from_slice::<TmslHeaderMetadata>(&header).ok()
+}
+
 fn recent_entry(stored: StoredRecentTmsl) -> RecentTmslEntry {
     let path = PathBuf::from(&stored.path);
     let metadata = fs::metadata(&path).ok();
@@ -130,6 +180,12 @@ fn recent_entry(stored: StoredRecentTmsl) -> RecentTmslEntry {
         .and_then(|value| value.modified().ok())
         .map(unix_ms)
         .unwrap_or(0);
+    let header = if exists {
+        read_tmsl_header_metadata(&path)
+    } else {
+        None
+    };
+    let preview = header.as_ref().and_then(|value| value.preview.as_ref());
 
     RecentTmslEntry {
         path: stored.path,
@@ -138,6 +194,11 @@ fn recent_entry(stored: StoredRecentTmsl) -> RecentTmslEntry {
         modified_unix_ms,
         size_bytes,
         exists,
+        title: header.as_ref().and_then(|value| value.title.clone()),
+        slide_count: header.as_ref().and_then(|value| value.slide_count),
+        preview_background: preview.and_then(|value| value.background.clone()),
+        preview_title: preview.and_then(|value| value.title.clone()),
+        preview_subtitle: preview.and_then(|value| value.subtitle.clone()),
     }
 }
 
