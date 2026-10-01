@@ -7,6 +7,8 @@ import {
   createField,
   createForm,
   createFormsSnapshot,
+  mergeFormsSnapshots,
+  normalizeFormsSnapshot,
   parseTamishraForm,
   responsesToCsv,
   serializeTamishraForm,
@@ -25,6 +27,10 @@ import {
 } from "@tamishra/file-core";
 import { consumeNativeFileHandoff } from "../../../lib/native-file-handoff";
 import { mutateWorkspaceFileIndex } from "../../../lib/workspace-files";
+import {
+  hydrateWorkspaceContent,
+  pushWorkspaceContent
+} from "../../../lib/workspace-content-sync";
 import styles from "./forms.module.css";
 
 const STORAGE_KEY = "tamishra.forms.snapshot.v1";
@@ -179,15 +185,47 @@ export default function FormsWorkspace() {
   };
 
   useEffect(() => {
-    const restored = loadSnapshot();
+    let cancelled = false;
+    const restored = normalizeFormsSnapshot(loadSnapshot());
     setSnapshot(restored);
+
     const requestedId = new URLSearchParams(location.search).get("form");
     if (requestedId && restored.forms.some((form) => form.id === requestedId)) {
       setSelectedId(requestedId);
     } else {
       setSelectedId(restored.forms.find((form) => !form.trashedAt)?.id ?? null);
     }
-    setLoaded(true);
+
+    void hydrateWorkspaceContent(
+      "forms",
+      restored,
+      normalizeFormsSnapshot,
+      mergeFormsSnapshots
+    ).then((result) => {
+      if (cancelled) return;
+
+      setSnapshot((current) =>
+        mergeFormsSnapshots(current, result.state)
+      );
+
+      if (!requestedId) {
+        const first = result.state.forms.find((form) => !form.trashedAt);
+        if (first) setSelectedId((current) => current ?? first.id);
+      }
+
+      setStatus(
+        result.cloudAvailable
+          ? result.persistence === "postgres"
+            ? "Cloud synchronized"
+            : "Synced to session storage"
+          : "Local-first"
+      );
+      setLoaded(true);
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -273,7 +311,28 @@ export default function FormsWorkspace() {
         return next;
       });
 
-      setStatus("Saved locally");
+      void pushWorkspaceContent(
+        "forms",
+        snapshot,
+        normalizeFormsSnapshot,
+        mergeFormsSnapshots
+      ).then((result) => {
+        if (result.cloudAvailable) {
+          setStatus(
+            result.persistence === "postgres"
+              ? "Saved · cloud synchronized"
+              : "Saved · session synchronized"
+          );
+        } else {
+          setStatus("Saved locally");
+        }
+
+        const merged = normalizeFormsSnapshot(result.state);
+        if (JSON.stringify(merged) !== JSON.stringify(snapshot)) {
+          setSnapshot(merged);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+        }
+      });
     }, 450);
 
     return () => window.clearTimeout(timer);
