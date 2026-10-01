@@ -84,7 +84,7 @@ export async function handleAssetsRequest(
   }
 
   if (
-    ["PUT", "DELETE"].includes(request.method ?? "") &&
+    ["PUT", "PATCH", "DELETE"].includes(request.method ?? "") &&
     request.headers.origin &&
     !allowedOrigins.has(request.headers.origin)
   ) {
@@ -183,6 +183,80 @@ export async function handleAssetsRequest(
         status,
         {
           error: error instanceof Error ? error.message : "asset_save_failed",
+          currentRevision: Number(
+            (error as { currentRevision?: number }).currentRevision ?? 0
+          )
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (request.method === "PATCH") {
+    try {
+      const body = await readJson(request);
+      const revision =
+        body.revision === undefined || body.revision === null
+          ? undefined
+          : Number(body.revision);
+      const metadata =
+        body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
+          ? body.metadata as JsonObject
+          : null;
+
+      if (!metadata) {
+        throw Object.assign(new Error("invalid_metadata"), { status: 400 });
+      }
+      if (revision !== undefined && (!Number.isInteger(revision) || revision < 0)) {
+        throw Object.assign(new Error("invalid_revision"), { status: 400 });
+      }
+
+      const current = await store.get(identity.user.id, assetId);
+      if (!current) {
+        throw Object.assign(new Error("asset_not_found"), { status: 404 });
+      }
+
+      const stored = await store.put(
+        identity.user.id,
+        assetId,
+        {
+          name: current.name,
+          mimeType: current.mimeType,
+          bytes: current.bytes,
+          metadata
+        },
+        revision
+      );
+
+      sendJson(
+        response,
+        200,
+        {
+          persistence: store.kind,
+          asset: {
+            id: stored.assetId,
+            revision: stored.revision,
+            name: stored.name,
+            type: stored.mimeType,
+            size: stored.sizeBytes,
+            metadata: stored.metadata,
+            createdAt: stored.createdAt,
+            updatedAt: stored.updatedAt
+          }
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    } catch (error) {
+      const status = Number((error as { status?: number }).status ?? 500);
+      sendJson(
+        response,
+        status,
+        {
+          error: error instanceof Error ? error.message : "asset_metadata_save_failed",
           currentRevision: Number(
             (error as { currentRevision?: number }).currentRevision ?? 0
           )
