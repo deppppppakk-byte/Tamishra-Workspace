@@ -21,6 +21,7 @@ import {
   type AlignMode,
   type DistributeAxis
 } from "@tamishra/slides-core";
+import { createBlock, upsertBlock } from "@tamishra/blocks-core";
 import { upsertWorkspaceFile } from "@tamishra/file-core";
 import { exportDeckToPptx } from "./pptxExport";
 import {
@@ -32,6 +33,10 @@ import {
 } from "./nativeFormat";
 import { consumeNativeFileHandoff } from "../../../lib/native-file-handoff";
 import { mutateWorkspaceFileIndex } from "../../../lib/workspace-files";
+import {
+  consumeBlockHandoff,
+  mutateWorkspaceBlockShelf
+} from "../../../lib/workspace-blocks";
 import styles from "./slides.module.css";
 
 type ElementType = "text" | "shape" | "image" | "line" | "table" | "chart";
@@ -490,6 +495,14 @@ export default function SlidesEditorAdvanced() {
   }, []);
 
   useEffect(() => {
+    const block = consumeBlockHandoff("slides");
+    if (!block) return;
+    if (!insertWorkspaceVisualBlock(block as ReturnType<typeof createBlock>)) {
+      setSaveState("This Block type is not supported in Slides yet");
+    }
+  }, []);
+
+  useEffect(() => {
     try {
       const rawHistory = localStorage.getItem("tamishra-slides-history-v1");
       if (rawHistory) {
@@ -832,6 +845,91 @@ export default function SlidesEditorAdvanced() {
 
   const deleteSnapshot = (id: string) => {
     setHistory((current) => current.filter((snapshot) => snapshot.id !== id));
+  };
+
+  const publishSelectionAsWorkspaceBlock = () => {
+    if (!expandedSelection.length) return;
+    const ids = new Set(expandedSelection);
+    const source = activeSlide.elements.filter((element) => ids.has(element.id));
+    const bounds = selectionBounds(source, source.map((element) => element.id));
+    if (!bounds) return;
+
+    const groupMap = new Map<string, string>();
+    const elements = source.map((element) => {
+      let groupId = element.groupId;
+      if (groupId) {
+        if (!groupMap.has(groupId)) groupMap.set(groupId, uid());
+        groupId = groupMap.get(groupId);
+      }
+      return {
+        ...element,
+        id: uid(),
+        groupId,
+        x: element.x - bounds.x,
+        y: element.y - bounds.y
+      };
+    });
+
+    const block = createBlock({
+      title:
+        source.length === 1
+          ? (source[0].name || source[0].text || source[0].type) + " block"
+          : "Slide block · " + source.length + " objects",
+      kind: "visual",
+      sourceApp: "slides",
+      payload: {
+        width: bounds.w,
+        height: bounds.h,
+        elements
+      },
+      tags: ["slides", source.length === 1 ? source[0].type : "group"]
+    });
+
+    mutateWorkspaceBlockShelf((current) => upsertBlock(current, block));
+    setSaveState("Published to Tamishra Blocks");
+  };
+
+  const insertWorkspaceVisualBlock = (block: ReturnType<typeof createBlock>) => {
+    if (block.kind !== "visual" || !block.payload || typeof block.payload !== "object") {
+      return false;
+    }
+
+    const payload = block.payload as {
+      width?: number;
+      height?: number;
+      elements?: SlideElement[];
+    };
+    if (!Array.isArray(payload.elements) || !payload.elements.length) return false;
+
+    const width = Math.max(1, Number(payload.width) || 1);
+    const height = Math.max(1, Number(payload.height) || 1);
+    const offsetX = Math.max(20, (SLIDE_W - width) / 2);
+    const offsetY = Math.max(20, (SLIDE_H - height) / 2);
+    const groupMap = new Map<string, string>();
+
+    const inserted = payload.elements.map((element) => {
+      let groupId = element.groupId;
+      if (groupId) {
+        if (!groupMap.has(groupId)) groupMap.set(groupId, uid());
+        groupId = groupMap.get(groupId);
+      }
+      return {
+        ...element,
+        id: uid(),
+        groupId,
+        x: Math.max(0, Math.min(SLIDE_W - element.w, offsetX + element.x)),
+        y: Math.max(0, Math.min(SLIDE_H - element.h, offsetY + element.y))
+      };
+    });
+
+    mutateActive((slide) => ({
+      ...slide,
+      elements: [...slide.elements, ...inserted]
+    }));
+    setSelectedIds(inserted.map((element) => element.id));
+    setInspectorMode("element");
+    setSaveState("Workspace Block inserted");
+    return true;
   };
 
   const saveSelectionAsComponent = () => {
@@ -2206,6 +2304,7 @@ export default function SlidesEditorAdvanced() {
         <button className={styles.menuItem} onClick={() => addSlide("content")}>New slide</button>
         <button className={styles.menuItem} onClick={() => void openDeckPicker()}>Open</button>
         <button className={styles.menuItem} onClick={() => setInspectorMode("files")}>File Center</button>
+        <button className={styles.menuItem} onClick={() => { window.location.href = "/apps/blocks"; }}>Blocks</button>
         <button className={styles.menuItem} onClick={() => void exportNativeDeck()}>Save .tmsl</button>
         <button className={styles.menuItem} onClick={() => void saveNativeDeck(true)}>Save As</button>
         {recoveryFile && (
@@ -2264,6 +2363,7 @@ export default function SlidesEditorAdvanced() {
             <button className={styles.toolbarBtn} onClick={copySelection}>Copy</button>
             <button className={styles.toolbarBtn} onClick={deleteSelection}>Delete</button>
             <button className={styles.toolbarBtn} onClick={saveSelectionAsComponent}>Save component</button>
+            <button className={styles.toolbarBtn} onClick={publishSelectionAsWorkspaceBlock}>Publish Block</button>
           </>
         )}
 
