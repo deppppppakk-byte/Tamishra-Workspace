@@ -480,7 +480,7 @@ export function MailWorkspace() {
         <form className={styles.setupCard} onSubmit={provisionMailbox}>
           <div className={styles.setupMark}>P</div>
           <p className={styles.setupEyebrow}>CREATE YOUR PATRA ADDRESS</p>
-          <h1>Choose your @patra.in mailbox.</h1>
+          <h1>Choose your @patra.tamishra.in mailbox.</h1>
           <p>
             Public Patra registration creates one personal address. Company
             @tamishra.in addresses are provisioned separately by Tamishra.
@@ -500,7 +500,7 @@ export function MailWorkspace() {
                 autoComplete="username"
                 required
               />
-              <b>@patra.in</b>
+              <b>@patra.tamishra.in</b>
             </div>
           </label>
 
@@ -855,7 +855,7 @@ export function MailWorkspace() {
               onChange={(event) =>
                 setCompose((current) => ({ ...current, to: event.target.value }))
               }
-              placeholder="name@patra.in"
+              placeholder="name@patra.tamishra.in"
               autoComplete="off"
             />
           </label>
