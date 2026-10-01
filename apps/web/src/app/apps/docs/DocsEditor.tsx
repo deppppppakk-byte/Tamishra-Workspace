@@ -77,6 +77,10 @@ import {
   mutateWorkspaceBlockShelf,
   subscribeWorkspaceBlocks
 } from "../../../lib/workspace-blocks";
+import {
+  registerWorkspaceConsumerLink,
+  unregisterWorkspaceConsumerLink
+} from "../../../lib/workspace-links";
 
 const STORAGE_KEY = "tamishra.docs.current.v2";
 const LEGACY_STORAGE_KEY = "tamishra.docs.current";
@@ -491,6 +495,47 @@ export default function DocsEditor() {
     return true;
   };
 
+  const syncDocumentLinkRegistry = () => {
+    const shelf = loadWorkspaceBlockShelf();
+    const byId = new Map(shelf.blocks.map((block) => [block.id, block]));
+    const targetResourceId = currentDocumentIdRef.current ?? "docs:local";
+
+    if (currentDocumentIdRef.current) {
+      unregisterWorkspaceConsumerLink({
+        targetApp: "docs",
+        targetResourceId: "docs:local"
+      });
+    }
+
+    unregisterWorkspaceConsumerLink({
+      targetApp: "docs",
+      targetResourceId
+    });
+
+    queryDocumentAll("[data-workspace-block-id]").forEach((node) => {
+      if (!(node instanceof HTMLElement)) return;
+      if (node.dataset.workspaceBlockMode !== "live") return;
+
+      const blockId = node.dataset.workspaceBlockId;
+      if (!blockId) return;
+      const block = byId.get(blockId);
+      if (!block) return;
+
+      registerWorkspaceConsumerLink({
+        block,
+        targetApp: "docs",
+        targetResourceId,
+        targetLocator:
+          node.dataset.tamishraId ?? node.dataset.workspaceBlockId,
+        targetTitle: title.trim() || "Untitled document",
+        targetHref: "/apps/docs",
+        consumerVersion: Number(
+          node.dataset.workspaceBlockVersion || "1"
+        )
+      });
+    });
+  };
+
   const refreshLinkedWorkspaceBlocks = () => {
     const shelf = loadWorkspaceBlockShelf();
     const byId = new Map(shelf.blocks.map((block) => [block.id, block]));
@@ -513,6 +558,8 @@ export default function DocsEditor() {
       }
     });
 
+    syncDocumentLinkRegistry();
+
     if (changed) {
       updateCounts();
       scheduleReflow();
@@ -526,6 +573,17 @@ export default function DocsEditor() {
       `[data-workspace-block-id="${CSS.escape(selectedLiveBlockId)}"]`
     );
     if (!node) return;
+
+    const targetResourceId = currentDocumentIdRef.current ?? "docs:local";
+    const targetLocator =
+      node.dataset.tamishraId ?? node.dataset.workspaceBlockId;
+
+    unregisterWorkspaceConsumerLink({
+      blockId: selectedLiveBlockId,
+      targetApp: "docs",
+      targetResourceId,
+      targetLocator
+    });
 
     node.removeAttribute("data-workspace-block-id");
     node.removeAttribute("data-workspace-block-version");
@@ -829,6 +887,7 @@ export default function DocsEditor() {
       })
     );
 
+    syncDocumentLinkRegistry();
     setSavedState("Saved locally");
 
     collaborationChannelRef.current?.postMessage({
