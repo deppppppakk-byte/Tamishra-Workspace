@@ -145,6 +145,27 @@ type NativeTmslFile = {
   bytes: number[];
 };
 
+type NativeRecentTmsl = {
+  path: string;
+  name: string;
+  lastOpenedUnixMs: number;
+  modifiedUnixMs: number;
+  sizeBytes: number;
+  exists: boolean;
+  title?: string;
+  slideCount?: number;
+  previewBackground?: string;
+  previewTitle?: string;
+  previewSubtitle?: string;
+};
+
+type NativeRecoveryInfo = {
+  path: string;
+  name: string;
+  modifiedUnixMs: number;
+  sizeBytes: number;
+};
+
 type MarqueeState = {
   startX: number;
   startY: number;
@@ -369,7 +390,7 @@ export default function SlidesEditorAdvanced() {
   const [guides, setGuides] = useState<GuideState>({});
   const [marquee, setMarquee] = useState<MarqueeState | null>(null);
   const [inspectorMode, setInspectorMode] = useState<
-    "slide" | "element" | "layers" | "review" | "history" | "components" | "theme"
+    "slide" | "element" | "layers" | "files" | "review" | "history" | "components" | "theme"
   >("slide");
   const [saveState, setSaveState] = useState("Saved locally");
   const [presenterIndex, setPresenterIndex] = useState<number | null>(null);
@@ -383,6 +404,8 @@ export default function SlidesEditorAdvanced() {
   const [components, setComponents] = useState<SavedComponent[]>([]);
   const [nativePath, setNativePath] = useState<string | null>(null);
   const [recoveryFile, setRecoveryFile] = useState<NativeTmslFile | null>(null);
+  const [recoveryInfo, setRecoveryInfo] = useState<NativeRecoveryInfo | null>(null);
+  const [recentFiles, setRecentFiles] = useState<NativeRecentTmsl[]>([]);
 
   const imageInput = useRef<HTMLInputElement>(null);
   const importInput = useRef<HTMLInputElement>(null);
@@ -1445,6 +1468,8 @@ export default function SlidesEditorAdvanced() {
         setNativePath(savedPath);
         await invokeNative<void>("clear_tmsl_recovery").catch(() => undefined);
         setRecoveryFile(null);
+        setRecoveryInfo(null);
+        await refreshNativeFileCenter();
         setSaveState("Saved to " + savedPath.split(/[\\/]/).pop());
         return;
       }
@@ -1481,6 +1506,20 @@ export default function SlidesEditorAdvanced() {
     URL.revokeObjectURL(url);
   };
 
+  const refreshNativeFileCenter = async () => {
+    if (!isNativeDesktop()) return;
+    try {
+      const [recent, info] = await Promise.all([
+        invokeNative<NativeRecentTmsl[]>("list_recent_tmsl"),
+        invokeNative<NativeRecoveryInfo | null>("recovery_tmsl_info")
+      ]);
+      setRecentFiles(recent);
+      setRecoveryInfo(info);
+    } catch {
+      // File Center stays optional if the native bridge is unavailable.
+    }
+  };
+
   const openNativeFile = async (file: NativeTmslFile) => {
     const decoded = await decodeTmsl<Slide>(new Uint8Array(file.bytes));
     applyImportedDeck({
@@ -1489,6 +1528,56 @@ export default function SlidesEditorAdvanced() {
     });
     setNativePath(file.path);
     setSaveState(file.name + " opened · integrity verified");
+    await refreshNativeFileCenter();
+  };
+
+  const openDeckPicker = async () => {
+    if (!isNativeDesktop()) {
+      importInput.current?.click();
+      return;
+    }
+
+    try {
+      const selected = await invokeNative<NativeTmslFile | null>("open_tmsl_dialog");
+      if (selected) await openNativeFile(selected);
+    } catch {
+      setSaveState("Native Open dialog failed");
+    }
+  };
+
+  const openRecentDeck = async (entry: NativeRecentTmsl) => {
+    if (!entry.exists) {
+      setSaveState("Recent file is no longer available");
+      return;
+    }
+
+    try {
+      const opened = await invokeNative<NativeTmslFile>("open_tmsl_path", {
+        path: entry.path
+      });
+      await openNativeFile(opened);
+    } catch {
+      setSaveState("Recent TMSL could not be opened");
+      await refreshNativeFileCenter();
+    }
+  };
+
+  const forgetRecentDeck = async (path: string) => {
+    try {
+      await invokeNative<void>("forget_recent_tmsl", { path });
+      await refreshNativeFileCenter();
+    } catch {
+      setSaveState("Unable to update recent files");
+    }
+  };
+
+  const clearRecentDecks = async () => {
+    try {
+      await invokeNative<void>("clear_recent_tmsl");
+      await refreshNativeFileCenter();
+    } catch {
+      setSaveState("Unable to clear recent files");
+    }
   };
 
   const recoverNativeDeck = async () => {
@@ -1501,6 +1590,7 @@ export default function SlidesEditorAdvanced() {
       });
       setNativePath(null);
       setSaveState("Recovered unsaved TMSL session");
+      setInspectorMode("files");
     } catch {
       setSaveState("Recovery file is invalid");
     }
@@ -1552,9 +1642,15 @@ export default function SlidesEditorAdvanced() {
           await openNativeFile(pending);
         }
 
-        const recovery = await invokeNative<NativeTmslFile | null>("read_tmsl_recovery");
-        if (!disposed && recovery) {
+        const [recovery, info, recent] = await Promise.all([
+          invokeNative<NativeTmslFile | null>("read_tmsl_recovery"),
+          invokeNative<NativeRecoveryInfo | null>("recovery_tmsl_info"),
+          invokeNative<NativeRecentTmsl[]>("list_recent_tmsl")
+        ]);
+        if (!disposed) {
           setRecoveryFile(recovery);
+          setRecoveryInfo(info);
+          setRecentFiles(recent);
         }
 
         const { listen } = await import("@tauri-apps/api/event");
@@ -1593,6 +1689,8 @@ export default function SlidesEditorAdvanced() {
             setNativePath(savedPath);
             await invokeNative<void>("clear_tmsl_recovery").catch(() => undefined);
             setRecoveryFile(null);
+            setRecoveryInfo(null);
+            await refreshNativeFileCenter();
             setSaveState("Autosaved · " + savedPath.split(/[\\/]/).pop());
           }
         } catch {
@@ -2064,6 +2162,13 @@ export default function SlidesEditorAdvanced() {
     (element) => element.animation && element.animation !== "none"
   );
   const unresolvedComments = (activeSlide.comments ?? []).filter((comment) => !comment.resolved);
+  const formatBytes = (bytes: number) => {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  };
+  const formatFileTime = (value: number) =>
+    value ? new Date(value).toLocaleString() : "Unknown";
   const formatElapsed = (milliseconds: number) => {
     const totalSeconds = Math.floor(milliseconds / 1000);
     const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, "0");
@@ -2099,7 +2204,8 @@ export default function SlidesEditorAdvanced() {
 
       <nav className={styles.menuBar} aria-label="Presentation menu">
         <button className={styles.menuItem} onClick={() => addSlide("content")}>New slide</button>
-        <button className={styles.menuItem} onClick={() => importInput.current?.click()}>Open</button>
+        <button className={styles.menuItem} onClick={() => void openDeckPicker()}>Open</button>
+        <button className={styles.menuItem} onClick={() => setInspectorMode("files")}>File Center</button>
         <button className={styles.menuItem} onClick={() => void exportNativeDeck()}>Save .tmsl</button>
         <button className={styles.menuItem} onClick={() => void saveNativeDeck(true)}>Save As</button>
         {recoveryFile && (
@@ -2226,6 +2332,7 @@ export default function SlidesEditorAdvanced() {
               ["slide", "Slide"],
               ["element", "Object"],
               ["layers", "Layers"],
+              ["files", "Files"],
               ["review", "Review"],
               ["history", "History"],
               ["components", "Assets"],
@@ -2370,6 +2477,85 @@ export default function SlidesEditorAdvanced() {
                       mutateActive((slide) => ({ ...slide, notes: event.target.value }))
                     }
                   />
+                </div>
+              </div>
+            </>
+          )}
+
+          {inspectorMode === "files" && (
+            <>
+              <div className={styles.panel}>
+                <h3 className={styles.panelTitle}>Native file</h3>
+                <div className={styles.nativeFileCard}>
+                  <strong>{nativePath ? nativePath.split(/[\\/]/).pop() : deckTitle + TMSL_EXTENSION}</strong>
+                  <span>{nativePath ?? "Not attached to a desktop file yet"}</span>
+                  <div className={styles.fileCenterActions}>
+                    <button onClick={() => void openDeckPicker()}>Open</button>
+                    <button onClick={() => void saveNativeDeck(false)}>Save</button>
+                    <button onClick={() => void saveNativeDeck(true)}>Save As</button>
+                  </div>
+                </div>
+              </div>
+
+              <div className={styles.panel}>
+                <h3 className={styles.panelTitle}>Recovery</h3>
+                {recoveryInfo && recoveryFile ? (
+                  <div className={styles.recoveryCard}>
+                    <div>
+                      <strong>Unsaved recovery available</strong>
+                      <span>{formatBytes(recoveryInfo.sizeBytes)} · {formatFileTime(recoveryInfo.modifiedUnixMs)}</span>
+                    </div>
+                    <button onClick={() => void recoverNativeDeck()}>Recover</button>
+                  </div>
+                ) : (
+                  <p className={styles.panelHint}>No unsaved recovery copy is currently waiting.</p>
+                )}
+              </div>
+
+              <div className={styles.panel}>
+                <div className={styles.fileCenterHeading}>
+                  <h3 className={styles.panelTitle}>Recent presentations</h3>
+                  {recentFiles.length > 0 && (
+                    <button onClick={() => void clearRecentDecks()}>Clear</button>
+                  )}
+                </div>
+                <div className={styles.recentFileList}>
+                  {recentFiles.map((entry) => (
+                    <div
+                      className={
+                        styles.recentFileCard +
+                        (!entry.exists ? " " + styles.recentFileMissing : "")
+                      }
+                      key={entry.path}
+                    >
+                      <div
+                        className={styles.recentPreview}
+                        style={{ background: entry.previewBackground ?? "#f2f4f7" }}
+                      >
+                        <strong>{entry.previewTitle ?? entry.title ?? "Tamishra Slides"}</strong>
+                        <span>{entry.previewSubtitle ?? ""}</span>
+                      </div>
+                      <div className={styles.recentFileInfo}>
+                        <strong>{entry.title ?? entry.name}</strong>
+                        <span>
+                          {entry.slideCount ?? "?"} slides · {formatBytes(entry.sizeBytes)}
+                        </span>
+                        <small>
+                          {entry.exists ? "Modified " + formatFileTime(entry.modifiedUnixMs) : "File missing"}
+                        </small>
+                        <small className={styles.recentPath}>{entry.path}</small>
+                      </div>
+                      <div className={styles.fileCenterActions}>
+                        <button disabled={!entry.exists} onClick={() => void openRecentDeck(entry)}>Open</button>
+                        <button onClick={() => void forgetRecentDeck(entry.path)}>Forget</button>
+                      </div>
+                    </div>
+                  ))}
+                  {!recentFiles.length && (
+                    <p className={styles.panelHint}>
+                      Open or save a desktop .tmsl presentation and it will appear here.
+                    </p>
+                  )}
                 </div>
               </div>
             </>
