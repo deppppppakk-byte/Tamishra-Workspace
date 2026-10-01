@@ -37,25 +37,22 @@ function randomId() {
     : Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-export async function createNativeFileHandoff(file: File) {
-  if (file.size > MAX_HANDOFF_BYTES) {
-    throw new Error("Files larger than 64 MB must be opened from the desktop app.");
+async function persistNativeFileHandoff(record: Omit<NativeFileHandoff, "id" | "createdAt">) {
+  if (record.size > MAX_HANDOFF_BYTES) {
+    throw new Error("Files larger than 64 MB must be opened directly from the desktop app.");
   }
 
   const db = await openDb();
   const id = randomId();
-  const record: NativeFileHandoff = {
+  const stored: NativeFileHandoff = {
     id,
-    name: file.name,
-    type: file.type,
-    size: file.size,
     createdAt: new Date().toISOString(),
-    bytes: await file.arrayBuffer()
+    ...record
   };
 
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, "readwrite");
-    tx.objectStore(STORE_NAME).put(record);
+    tx.objectStore(STORE_NAME).put(stored);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error ?? new Error("handoff_write_failed"));
   });
@@ -63,6 +60,28 @@ export async function createNativeFileHandoff(file: File) {
   db.close();
   sessionStorage.setItem("tamishra.native-handoff", id);
   return id;
+}
+
+export async function createNativeFileHandoff(file: File) {
+  return persistNativeFileHandoff({
+    name: file.name,
+    type: file.type,
+    size: file.size,
+    bytes: await file.arrayBuffer()
+  });
+}
+
+export async function createNativeFileHandoffFromBytes(input: {
+  name: string;
+  type: string;
+  bytes: ArrayBuffer;
+}) {
+  return persistNativeFileHandoff({
+    name: input.name,
+    type: input.type,
+    size: input.bytes.byteLength,
+    bytes: input.bytes
+  });
 }
 
 export async function consumeNativeFileHandoff(): Promise<NativeFileHandoff | null> {
