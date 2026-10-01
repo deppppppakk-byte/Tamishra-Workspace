@@ -964,6 +964,23 @@ export default function FormsWorkspace() {
                 </aside>
 
                 <section className={styles.canvas}>
+                  <div className={styles.pageTabs}>
+                    {selectedForm.pages.map((page, index) => (
+                      <button
+                        key={page.id}
+                        className={selectedPage?.id === page.id ? styles.pageTabActive : ""}
+                        onClick={() => {
+                          setSelectedPageId(page.id);
+                          setSelectedFieldId(getFieldsForPage(selectedForm, page.id)[0]?.id ?? null);
+                        }}
+                      >
+                        <b>{index + 1}</b>
+                        <span>{page.title || "Page " + (index + 1)}</span>
+                      </button>
+                    ))}
+                    <button className={styles.addPageButton} onClick={addPage}>+ Page</button>
+                  </div>
+
                   <div
                     className={styles.formSurface}
                     data-surface={selectedForm.theme.surface}
@@ -977,7 +994,28 @@ export default function FormsWorkspace() {
                       />
                     </div>
 
-                    {selectedForm.fields.map((field, index) => (
+                    {selectedPage && (
+                      <div className={styles.pageEditor}>
+                        <div>
+                          <span>PAGE {selectedForm.pages.findIndex((page) => page.id === selectedPage.id) + 1}</span>
+                          <input
+                            value={selectedPage.title}
+                            onChange={(event) => updatePage(selectedPage.id, { title: event.target.value })}
+                            placeholder="Page title"
+                          />
+                          <textarea
+                            value={selectedPage.description}
+                            onChange={(event) => updatePage(selectedPage.id, { description: event.target.value })}
+                            placeholder="Optional page description"
+                          />
+                        </div>
+                        {selectedForm.pages.length > 1 && (
+                          <button onClick={() => deletePage(selectedPage.id)}>Delete page</button>
+                        )}
+                      </div>
+                    )}
+
+                    {builderFields.map((field, index) => (
                       <article
                         key={field.id}
                         className={selectedFieldId === field.id ? styles.fieldCardSelected : styles.fieldCard}
@@ -1006,9 +1044,9 @@ export default function FormsWorkspace() {
                       </article>
                     ))}
 
-                    {!selectedForm.fields.length && (
+                    {!builderFields.length && (
                       <button className={styles.emptyCanvas} onClick={() => addField("short-text")}>
-                        + Add the first field
+                        + Add a field to this page
                       </button>
                     )}
                   </div>
