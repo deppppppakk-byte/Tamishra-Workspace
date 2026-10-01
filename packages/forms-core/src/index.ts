@@ -558,9 +558,9 @@ function normalizePages(
 ): FormPage[] {
   const validFieldIds = new Set(fields.map((field) => field.id));
   const seenFieldIds = new Set<string>();
-  const pages = input
+  const pages: FormPage[] = input
     .filter((page) => page && typeof page === "object")
-    .map((page, index) => {
+    .map((page, index): FormPage => {
       const fieldIds = Array.isArray(page.fieldIds)
         ? page.fieldIds.filter((id) => validFieldIds.has(String(id))).map(String)
         : [];
@@ -573,11 +573,11 @@ function normalizePages(
         branchRules: Array.isArray(page.branchRules)
           ? page.branchRules
               .filter((rule) => rule && typeof rule === "object")
-              .map((rule) => ({
+              .map((rule): FormPageBranchRule => ({
                 id: rule.id || createId("branch"),
                 sourceFieldId: String(rule.sourceFieldId ?? ""),
                 operator: rule.operator ?? "equals",
-                value: rule.value,
+                ...(rule.value !== undefined ? { value: rule.value } : {}),
                 targetPageId: String(rule.targetPageId ?? "")
               }))
           : [],
