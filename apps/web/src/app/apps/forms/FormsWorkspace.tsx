@@ -7,14 +7,19 @@ import {
   createField,
   createForm,
   createFormsSnapshot,
+  createTemplateForm,
+  isFieldVisible,
+  normalizeForm,
   parseTamishraForm,
   responsesToCsv,
   serializeTamishraForm,
+  setFormStatus,
   tamishraFormFilename,
   TMFORM_MIME_TYPE,
   validateAnswers,
   type FormField,
   type FormFieldType,
+  type FormLogicOperator,
   type FormsSnapshot,
   type TamishraForm
 } from "@tamishra/forms-core";
@@ -28,8 +33,45 @@ import { mutateWorkspaceFileIndex } from "../../../lib/workspace-files";
 import styles from "./forms.module.css";
 
 const STORAGE_KEY = "tamishra.forms.snapshot.v1";
-type Mode = "build" | "preview" | "responses";
-type View = "forms" | "trash";
+type Mode = "build" | "logic" | "preview" | "responses" | "settings";
+type View = "forms" | "templates" | "trash";
+type TemplateKey = "registration" | "feedback" | "site-inspection" | "quiz";
+
+const fieldLabels: Record<FormFieldType, string> = {
+  "short-text": "Short text",
+  paragraph: "Long text",
+  email: "Email",
+  phone: "Phone",
+  number: "Number",
+  date: "Date",
+  time: "Time",
+  "multiple-choice": "Single choice",
+  checkboxes: "Multiple choice",
+  dropdown: "Dropdown",
+  "yes-no": "Yes / No",
+  rating: "Rating"
+};
+
+const fieldGroups: Array<{ name: string; items: FormFieldType[] }> = [
+  { name: "Text", items: ["short-text", "paragraph", "email", "phone"] },
+  { name: "Choice", items: ["multiple-choice", "checkboxes", "dropdown", "yes-no", "rating"] },
+  { name: "Data", items: ["number", "date", "time"] }
+];
+
+const templates: Array<{ key: TemplateKey; title: string; description: string }> = [
+  { key: "registration", title: "Registration", description: "Name, email, phone and department." },
+  { key: "feedback", title: "Feedback", description: "Rating, experience and improvement notes." },
+  { key: "site-inspection", title: "Site inspection", description: "Field-ready inspection and observations." },
+  { key: "quiz", title: "Quick assessment", description: "A clean starting point for assessments." }
+];
+
+const logicOperators: Array<{ value: FormLogicOperator; label: string }> = [
+  { value: "equals", label: "equals" },
+  { value: "not-equals", label: "does not equal" },
+  { value: "contains", label: "contains" },
+  { value: "is-empty", label: "is empty" },
+  { value: "is-not-empty", label: "is not empty" }
+];
 
 function loadSnapshot(): FormsSnapshot {
   try {
@@ -38,12 +80,27 @@ function loadSnapshot(): FormsSnapshot {
     const parsed = JSON.parse(raw) as Partial<FormsSnapshot>;
     return {
       version: 1,
-      forms: Array.isArray(parsed.forms) ? parsed.forms : [],
+      forms: Array.isArray(parsed.forms) ? parsed.forms.map((form) => normalizeForm(form)) : [],
       responses: Array.isArray(parsed.responses) ? parsed.responses : []
     };
   } catch {
     return createFormsSnapshot();
   }
+}
+
+function copyField(field: FormField): FormField {
+  const next = createField(field.type, field.label);
+  return {
+    ...next,
+    description: field.description,
+    placeholder: field.placeholder,
+    required: field.required,
+    options: [...field.options],
+    min: field.min,
+    max: field.max,
+    validation: field.validation ? { ...field.validation } : undefined,
+    visibility: field.visibility ? { ...field.visibility } : null
+  };
 }
 
 function downloadText(filename: string, value: string, type: string) {
@@ -56,33 +113,132 @@ function downloadText(filename: string, value: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
-const fieldLabels: Record<FormFieldType, string> = {
-  "short-text": "Short text",
-  paragraph: "Paragraph",
-  "multiple-choice": "Multiple choice",
-  checkboxes: "Checkboxes",
-  dropdown: "Dropdown",
-  number: "Number",
-  date: "Date",
-  rating: "Rating"
-};
+function InputPreview({
+  field,
+  value,
+  error,
+  onChange
+}: {
+  field: FormField;
+  value: string | string[] | undefined;
+  error?: string;
+  onChange: (value: string | string[]) => void;
+}) {
+  const textValue = Array.isArray(value) ? "" : String(value ?? "");
+  const className = error ? styles.inputError : "";
 
-function copyField(field: FormField): FormField {
-  const next = createField(field.type, field.label);
-  return {
-    ...next,
-    description: field.description,
-    required: field.required,
-    options: [...field.options],
-    min: field.min,
-    max: field.max
-  };
+  if (field.type === "paragraph") {
+    return (
+      <textarea
+        className={className}
+        value={textValue}
+        placeholder={field.placeholder}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    );
+  }
+
+  if (field.type === "multiple-choice" || field.type === "yes-no") {
+    return (
+      <div className={styles.choiceList}>
+        {field.options.map((option) => (
+          <label key={option}>
+            <input
+              type="radio"
+              name={field.id}
+              checked={textValue === option}
+              onChange={() => onChange(option)}
+            />
+            <span>{option}</span>
+          </label>
+        ))}
+      </div>
+    );
+  }
+
+  if (field.type === "checkboxes") {
+    const values = Array.isArray(value) ? value : [];
+    return (
+      <div className={styles.choiceList}>
+        {field.options.map((option) => (
+          <label key={option}>
+            <input
+              type="checkbox"
+              checked={values.includes(option)}
+              onChange={(event) =>
+                onChange(
+                  event.target.checked
+                    ? [...values, option]
+                    : values.filter((item) => item !== option)
+                )
+              }
+            />
+            <span>{option}</span>
+          </label>
+        ))}
+      </div>
+    );
+  }
+
+  if (field.type === "dropdown") {
+    return (
+      <select className={className} value={textValue} onChange={(event) => onChange(event.target.value)}>
+        <option value="">Select an option</option>
+        {field.options.map((option) => <option key={option}>{option}</option>)}
+      </select>
+    );
+  }
+
+  if (field.type === "rating") {
+    const min = field.min ?? 1;
+    const max = field.max ?? 5;
+    return (
+      <div className={styles.ratingRow}>
+        {Array.from({ length: Math.max(1, max - min + 1) }, (_, index) => min + index).map((rating) => (
+          <button
+            type="button"
+            className={textValue === String(rating) ? styles.ratingActive : ""}
+            key={rating}
+            onClick={() => onChange(String(rating))}
+          >
+            {rating}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  const type =
+    field.type === "email"
+      ? "email"
+      : field.type === "phone"
+        ? "tel"
+        : field.type === "number"
+          ? "number"
+          : field.type === "date"
+            ? "date"
+            : field.type === "time"
+              ? "time"
+              : "text";
+
+  return (
+    <input
+      className={className}
+      type={type}
+      value={textValue}
+      placeholder={field.placeholder}
+      min={field.type === "number" ? field.validation?.min ?? field.min : undefined}
+      max={field.type === "number" ? field.validation?.max ?? field.max : undefined}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  );
 }
 
 export default function FormsWorkspace() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [snapshot, setSnapshot] = useState<FormsSnapshot>(() => createFormsSnapshot());
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("build");
   const [view, setView] = useState<View>("forms");
   const [query, setQuery] = useState("");
@@ -94,6 +250,11 @@ export default function FormsWorkspace() {
   const selectedForm = useMemo(
     () => snapshot.forms.find((form) => form.id === selectedId) ?? null,
     [snapshot.forms, selectedId]
+  );
+
+  const selectedField = useMemo(
+    () => selectedForm?.fields.find((field) => field.id === selectedFieldId) ?? null,
+    [selectedForm, selectedFieldId]
   );
 
   const formResponses = useMemo(
@@ -111,31 +272,29 @@ export default function FormsWorkspace() {
       .filter((form) =>
         !normalized
           ? true
-          : [form.title, form.description]
-              .join(" ")
-              .toLowerCase()
-              .includes(normalized)
+          : [form.title, form.description, form.status].join(" ").toLowerCase().includes(normalized)
       )
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }, [snapshot.forms, query, view]);
 
   const selectForm = (id: string) => {
+    const form = snapshot.forms.find((item) => item.id === id);
     setSelectedId(id);
+    setSelectedFieldId(form?.fields[0]?.id ?? null);
     setAnswers({});
     setErrors({});
-    history.replaceState(null, "", `/apps/forms?form=${encodeURIComponent(id)}`);
+    history.replaceState(null, "", "/apps/forms?form=" + encodeURIComponent(id));
   };
 
-  const createNewForm = () => {
-    const form = createForm();
-    setSnapshot((current) => ({
-      ...current,
-      forms: [form, ...current.forms]
-    }));
+  const createNewForm = (template?: TemplateKey) => {
+    const form = template ? createTemplateForm(template) : createForm();
+    setSnapshot((current) => ({ ...current, forms: [form, ...current.forms] }));
     setView("forms");
     setMode("build");
-    selectForm(form.id);
-    setStatus("New form");
+    setSelectedId(form.id);
+    setSelectedFieldId(form.fields[0]?.id ?? null);
+    history.replaceState(null, "", "/apps/forms?form=" + encodeURIComponent(form.id));
+    setStatus(template ? "Template created" : "New form");
   };
 
   const updateForm = (id: string, patch: Partial<TamishraForm>) => {
@@ -143,7 +302,7 @@ export default function FormsWorkspace() {
     setSnapshot((current) => ({
       ...current,
       forms: current.forms.map((form) =>
-        form.id === id ? { ...form, ...patch, updatedAt: now } : form
+        form.id === id ? normalizeForm({ ...form, ...patch, updatedAt: now }) : form
       )
     }));
   };
@@ -157,24 +316,57 @@ export default function FormsWorkspace() {
     });
   };
 
+  const addField = (type: FormFieldType) => {
+    if (!selectedForm) return;
+    const field = createField(type, fieldLabels[type]);
+    updateForm(selectedForm.id, { fields: [...selectedForm.fields, field] });
+    setSelectedFieldId(field.id);
+  };
+
+  const moveField = (fieldId: string, direction: -1 | 1) => {
+    if (!selectedForm) return;
+    const index = selectedForm.fields.findIndex((field) => field.id === fieldId);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= selectedForm.fields.length) return;
+    const fields = [...selectedForm.fields];
+    [fields[index], fields[target]] = [fields[target], fields[index]];
+    updateForm(selectedForm.id, { fields });
+  };
+
+  const duplicateField = (fieldId: string) => {
+    if (!selectedForm) return;
+    const index = selectedForm.fields.findIndex((field) => field.id === fieldId);
+    if (index < 0) return;
+    const duplicate = copyField(selectedForm.fields[index]);
+    const fields = [...selectedForm.fields];
+    fields.splice(index + 1, 0, duplicate);
+    updateForm(selectedForm.id, { fields });
+    setSelectedFieldId(duplicate.id);
+  };
+
+  const deleteField = (fieldId: string) => {
+    if (!selectedForm) return;
+    const fields = selectedForm.fields.filter((field) => field.id !== fieldId);
+    updateForm(selectedForm.id, { fields });
+    setSelectedFieldId(fields[0]?.id ?? null);
+  };
+
   const importNativeBytes = (bytes: ArrayBuffer | Uint8Array) => {
     const payload = parseTamishraForm(bytes);
-    const form = {
+    const form = normalizeForm({
       ...payload.form,
       trashedAt: null,
       updatedAt: new Date().toISOString()
-    };
+    });
     setSnapshot((current) => ({
       ...current,
       forms: [form, ...current.forms.filter((item) => item.id !== form.id)],
-      responses: [
-        ...payload.responses,
-        ...current.responses.filter((item) => item.formId !== form.id)
-      ]
+      responses: [...payload.responses, ...current.responses.filter((item) => item.formId !== form.id)]
     }));
     setView("forms");
     setMode("build");
-    selectForm(form.id);
+    setSelectedId(form.id);
+    setSelectedFieldId(form.fields[0]?.id ?? null);
     setStatus(".tmfm opened · integrity verified");
   };
 
@@ -182,23 +374,17 @@ export default function FormsWorkspace() {
     const restored = loadSnapshot();
     setSnapshot(restored);
     const requestedId = new URLSearchParams(location.search).get("form");
-    if (requestedId && restored.forms.some((form) => form.id === requestedId)) {
-      setSelectedId(requestedId);
-    } else {
-      setSelectedId(restored.forms.find((form) => !form.trashedAt)?.id ?? null);
-    }
+    const active =
+      (requestedId && restored.forms.find((form) => form.id === requestedId)) ||
+      restored.forms.find((form) => !form.trashedAt) ||
+      null;
+    setSelectedId(active?.id ?? null);
+    setSelectedFieldId(active?.fields[0]?.id ?? null);
     setLoaded(true);
   }, []);
 
   useEffect(() => {
-    if (
-      !loaded ||
-      typeof window === "undefined" ||
-      !("__TAURI_INTERNALS__" in window)
-    ) {
-      return;
-    }
-
+    if (!loaded || typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
     let cancelled = false;
 
     void import("@tauri-apps/api/core")
@@ -208,10 +394,8 @@ export default function FormsWorkspace() {
         importNativeBytes(new TextEncoder().encode(raw));
         setStatus(".tmfm opened from desktop");
       })
-      .catch((error) => {
-        if (cancelled) return;
-        console.error("Could not open startup .tmfm", error);
-        setStatus("Startup .tmfm could not be opened");
+      .catch(() => {
+        if (!cancelled) setStatus("Startup .tmfm could not be opened");
       });
 
     return () => {
@@ -233,15 +417,13 @@ export default function FormsWorkspace() {
         if (!handoff || !handoff.name.toLowerCase().endsWith(".tmfm")) return;
         importNativeBytes(handoff.bytes);
       })
-      .catch((error) => {
-        console.error("Forms handoff failed", error);
-        setStatus("Workspace form could not be opened");
-      });
+      .catch(() => setStatus("Workspace form could not be opened"));
   }, [loaded]);
 
   useEffect(() => {
     if (!loaded) return;
     setStatus("Saving…");
+
     const timer = window.setTimeout(() => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
 
@@ -250,19 +432,17 @@ export default function FormsWorkspace() {
         for (const form of snapshot.forms) {
           if (form.trashedAt) continue;
           next = upsertWorkspaceFile(next, {
-            id: `forms:${form.id}`,
+            id: "forms:" + form.id,
             title: form.title || "Untitled form",
             kind: "forms",
-            appHref: `/apps/forms?form=${encodeURIComponent(form.id)}`,
+            appHref: "/apps/forms?form=" + encodeURIComponent(form.id),
             nativeExtension: ".tmfm",
             nativeMime: TMFORM_MIME_TYPE,
             sourceId: form.id,
             sizeBytes: new Blob([
               JSON.stringify({
                 form,
-                responses: snapshot.responses.filter(
-                  (response) => response.formId === form.id
-                )
+                responses: snapshot.responses.filter((response) => response.formId === form.id)
               })
             ]).size,
             storage: "local",
@@ -279,54 +459,27 @@ export default function FormsWorkspace() {
     return () => window.clearTimeout(timer);
   }, [snapshot, loaded, selectedId]);
 
-  const addField = (type: FormFieldType) => {
-    if (!selectedForm) return;
-    updateForm(selectedForm.id, {
-      fields: [...selectedForm.fields, createField(type, "Question")]
-    });
-  };
-
-  const moveField = (fieldId: string, direction: -1 | 1) => {
-    if (!selectedForm) return;
-    const index = selectedForm.fields.findIndex((field) => field.id === fieldId);
-    const target = index + direction;
-    if (index < 0 || target < 0 || target >= selectedForm.fields.length) return;
-    const fields = [...selectedForm.fields];
-    [fields[index], fields[target]] = [fields[target], fields[index]];
-    updateForm(selectedForm.id, { fields });
-  };
-
-  const duplicateField = (fieldId: string) => {
-    if (!selectedForm) return;
-    const index = selectedForm.fields.findIndex((field) => field.id === fieldId);
-    if (index < 0) return;
-    const fields = [...selectedForm.fields];
-    fields.splice(index + 1, 0, copyField(fields[index]));
-    updateForm(selectedForm.id, { fields });
-  };
-
-  const deleteField = (fieldId: string) => {
-    if (!selectedForm) return;
-    updateForm(selectedForm.id, {
-      fields: selectedForm.fields.filter((field) => field.id !== fieldId)
-    });
-  };
-
   const submitPreview = () => {
-    if (!selectedForm) return;
-    const nextErrors = validateAnswers(selectedForm, answers);
-    setErrors(nextErrors);
-    if (Object.keys(nextErrors).length) {
-      setStatus("Complete required questions");
+    if (!selectedForm || selectedForm.status === "closed") return;
+    if (
+      selectedForm.settings.responseLimit !== null &&
+      formResponses.length >= selectedForm.settings.responseLimit
+    ) {
+      setStatus("Response limit reached");
       return;
     }
 
-    setSnapshot((current) =>
-      addResponse(current, selectedForm.id, answers).snapshot
-    );
+    const nextErrors = validateAnswers(selectedForm, answers);
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) {
+      setStatus("Complete required or invalid fields");
+      return;
+    }
+
+    setSnapshot((current) => addResponse(current, selectedForm.id, answers).snapshot);
     setAnswers({});
     setErrors({});
-    setStatus("Response recorded locally");
+    setStatus(selectedForm.settings.confirmationMessage);
     setMode("responses");
   };
 
@@ -348,8 +501,7 @@ export default function FormsWorkspace() {
   const exportCsv = () => {
     if (!selectedForm) return;
     downloadText(
-      (selectedForm.title || "form").replace(/[^a-z0-9-_]+/gi, "-") +
-        "-responses.csv",
+      (selectedForm.title || "form").replace(/[^a-z0-9-_]+/gi, "-") + "-responses.csv",
       responsesToCsv(selectedForm, formResponses),
       "text/csv;charset=utf-8"
     );
@@ -359,10 +511,9 @@ export default function FormsWorkspace() {
   const trashSelected = () => {
     if (!selectedForm) return;
     updateForm(selectedForm.id, { trashedAt: new Date().toISOString() });
-    mutateWorkspaceFileIndex((index) =>
-      trashWorkspaceFile(index, `forms:${selectedForm.id}`)
-    );
+    mutateWorkspaceFileIndex((index) => trashWorkspaceFile(index, "forms:" + selectedForm.id));
     setSelectedId(null);
+    setSelectedFieldId(null);
   };
 
   const restoreSelected = () => {
@@ -370,10 +521,10 @@ export default function FormsWorkspace() {
     updateForm(selectedForm.id, { trashedAt: null });
     mutateWorkspaceFileIndex((index) =>
       upsertWorkspaceFile(index, {
-        id: `forms:${selectedForm.id}`,
+        id: "forms:" + selectedForm.id,
         title: selectedForm.title || "Untitled form",
         kind: "forms",
-        appHref: `/apps/forms?form=${encodeURIComponent(selectedForm.id)}`,
+        appHref: "/apps/forms?form=" + encodeURIComponent(selectedForm.id),
         nativeExtension: ".tmfm",
         nativeMime: TMFORM_MIME_TYPE,
         sourceId: selectedForm.id,
@@ -392,30 +543,47 @@ export default function FormsWorkspace() {
       forms: current.forms.filter((form) => form.id !== id),
       responses: current.responses.filter((response) => response.formId !== id)
     }));
-    mutateWorkspaceFileIndex((index) =>
-      permanentlyDeleteWorkspaceFile(index, `forms:${id}`)
-    );
+    mutateWorkspaceFileIndex((index) => permanentlyDeleteWorkspaceFile(index, "forms:" + id));
     setSelectedId(null);
+    setSelectedFieldId(null);
+  };
+
+  const copyWorkspaceLink = async () => {
+    if (!selectedForm) return;
+    const href = location.origin + "/apps/forms?form=" + encodeURIComponent(selectedForm.id);
+    try {
+      await navigator.clipboard.writeText(href);
+      setStatus("Workspace link copied");
+    } catch {
+      setStatus("Could not copy link");
+    }
   };
 
   return (
     <main className={styles.shell}>
       <aside className={styles.sidebar}>
         <Link href="/" className={styles.brand}>← Tamishra Workspace</Link>
-        <button className={styles.newButton} onClick={createNewForm}>+ New form</button>
+        <button className={styles.newButton} onClick={() => createNewForm()}>+ New form</button>
+
         <nav>
           <button className={view === "forms" ? styles.active : ""} onClick={() => setView("forms")}>
-            My forms
-            <span>{snapshot.forms.filter((form) => !form.trashedAt).length}</span>
+            <span>My forms</span>
+            <b>{snapshot.forms.filter((form) => !form.trashedAt).length}</b>
+          </button>
+          <button className={view === "templates" ? styles.active : ""} onClick={() => setView("templates")}>
+            <span>Templates</span>
+            <b>{templates.length}</b>
           </button>
           <button className={view === "trash" ? styles.active : ""} onClick={() => setView("trash")}>
-            Trash
-            <span>{snapshot.forms.filter((form) => form.trashedAt).length}</span>
+            <span>Trash</span>
+            <b>{snapshot.forms.filter((form) => form.trashedAt).length}</b>
           </button>
         </nav>
-        <div className={styles.help}>
+
+        <div className={styles.sideInfo}>
           <strong>.tmfm</strong>
-          <span>Tamishra Forms native format</span>
+          <span>Tamishra native form package</span>
+          <small>Local-first · integrity checked</small>
         </div>
       </aside>
 
@@ -439,22 +607,39 @@ export default function FormsWorkspace() {
           />
         </div>
 
-        <div className={styles.formList}>
-          {visibleForms.map((form) => (
-            <button
-              key={form.id}
-              className={selectedId === form.id ? styles.selected : ""}
-              onClick={() => selectForm(form.id)}
-            >
-              <strong>{form.title || "Untitled form"}</strong>
-              <p>{form.description || `${form.fields.length} questions`}</p>
-              <span>
-                {snapshot.responses.filter((response) => response.formId === form.id).length} responses
-              </span>
-            </button>
-          ))}
-          {!visibleForms.length && <div className={styles.emptyList}>No forms in this view.</div>}
-        </div>
+        {view === "templates" ? (
+          <div className={styles.templateList}>
+            {templates.map((template) => (
+              <button key={template.key} onClick={() => createNewForm(template.key)}>
+                <span className={styles.templateIcon}>{template.title.slice(0, 1)}</span>
+                <strong>{template.title}</strong>
+                <p>{template.description}</p>
+                <small>Create from template →</small>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className={styles.formList}>
+            {visibleForms.map((form) => (
+              <button
+                key={form.id}
+                className={selectedId === form.id ? styles.selected : ""}
+                onClick={() => selectForm(form.id)}
+              >
+                <div className={styles.formListTop}>
+                  <strong>{form.title || "Untitled form"}</strong>
+                  <span data-status={form.status}>{form.status}</span>
+                </div>
+                <p>{form.description || form.fields.length + " fields"}</p>
+                <small>
+                  {snapshot.responses.filter((response) => response.formId === form.id).length} responses ·{" "}
+                  {new Date(form.updatedAt).toLocaleDateString()}
+                </small>
+              </button>
+            ))}
+            {!visibleForms.length && <div className={styles.emptyList}>No forms in this view.</div>}
+          </div>
+        )}
       </section>
 
       <section className={styles.workspace}>
@@ -467,302 +652,587 @@ export default function FormsWorkspace() {
                   onChange={(event) => updateForm(selectedForm.id, { title: event.target.value })}
                   placeholder="Untitled form"
                 />
-                <span>{status}</span>
+                <div>
+                  <span className={styles.statusDot} data-state={selectedForm.status} />
+                  <span>{selectedForm.status}</span>
+                  <i>·</i>
+                  <span>{status}</span>
+                </div>
               </div>
               <div className={styles.actions}>
-                <button onClick={exportNative}>Export .tmfm</button>
+                <button onClick={copyWorkspaceLink}>Copy link</button>
+                <button onClick={exportNative}>Export</button>
+                {selectedForm.status === "draft" && (
+                  <button
+                    className={styles.primaryAction}
+                    onClick={() => updateForm(selectedForm.id, setFormStatus(selectedForm, "published"))}
+                  >
+                    Publish
+                  </button>
+                )}
+                {selectedForm.status === "published" && (
+                  <button onClick={() => updateForm(selectedForm.id, setFormStatus(selectedForm, "closed"))}>
+                    Close
+                  </button>
+                )}
+                {selectedForm.status === "closed" && (
+                  <button onClick={() => updateForm(selectedForm.id, setFormStatus(selectedForm, "published"))}>
+                    Reopen
+                  </button>
+                )}
                 {view === "trash" ? (
                   <>
                     <button onClick={restoreSelected}>Restore</button>
                     <button className={styles.danger} onClick={deleteForever}>Delete forever</button>
                   </>
                 ) : (
-                  <button className={styles.danger} onClick={trashSelected}>Trash</button>
+                  <button className={styles.iconAction} title="Move to trash" onClick={trashSelected}>⌫</button>
                 )}
               </div>
             </header>
 
             <nav className={styles.modeTabs}>
-              {(["build", "preview", "responses"] as Mode[]).map((item) => (
+              {(["build", "logic", "preview", "responses", "settings"] as Mode[]).map((item) => (
                 <button
                   key={item}
                   className={mode === item ? styles.activeTab : ""}
                   onClick={() => setMode(item)}
                 >
-                  {item === "build" ? "Build" : item === "preview" ? "Preview" : `Responses (${formResponses.length})`}
+                  {item === "responses" ? "Responses " + formResponses.length : item[0].toUpperCase() + item.slice(1)}
                 </button>
               ))}
             </nav>
 
             {mode === "build" && (
               <div className={styles.builder}>
-                <div className={styles.formIntro}>
-                  <textarea
-                    value={selectedForm.description}
-                    onChange={(event) => updateForm(selectedForm.id, { description: event.target.value })}
-                    placeholder="Form description"
-                  />
-                </div>
+                <aside className={styles.palette}>
+                  <div className={styles.panelTitle}>
+                    <strong>Fields</strong>
+                    <span>{selectedForm.fields.length}</span>
+                  </div>
+                  {fieldGroups.map((group) => (
+                    <div className={styles.fieldGroup} key={group.name}>
+                      <span>{group.name}</span>
+                      {group.items.map((type) => (
+                        <button key={type} onClick={() => addField(type)}>
+                          <b>+</b>
+                          <span>{fieldLabels[type]}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                </aside>
 
-                {selectedForm.fields.map((field, index) => (
-                  <article className={styles.fieldCard} key={field.id}>
-                    <div className={styles.fieldTop}>
-                      <span>Question {index + 1}</span>
-                      <select
-                        value={field.type}
-                        onChange={(event) => {
-                          const type = event.target.value as FormFieldType;
-                          const template = createField(type, field.label);
-                          updateField(field.id, {
-                            type,
-                            options: template.options,
-                            min: template.min,
-                            max: template.max
-                          });
-                        }}
-                      >
-                        {(Object.keys(fieldLabels) as FormFieldType[]).map((type) => (
-                          <option key={type} value={type}>{fieldLabels[type]}</option>
-                        ))}
-                      </select>
+                <section className={styles.canvas}>
+                  <div
+                    className={styles.formSurface}
+                    data-surface={selectedForm.theme.surface}
+                    style={{ "--form-accent": selectedForm.theme.accent } as React.CSSProperties}
+                  >
+                    <div className={styles.formIntro}>
+                      <textarea
+                        value={selectedForm.description}
+                        onChange={(event) => updateForm(selectedForm.id, { description: event.target.value })}
+                        placeholder="Add a description for respondents"
+                      />
                     </div>
 
-                    <input
-                      className={styles.question}
-                      value={field.label}
-                      onChange={(event) => updateField(field.id, { label: event.target.value })}
-                      placeholder="Question"
-                    />
-                    <input
-                      className={styles.description}
-                      value={field.description}
-                      onChange={(event) => updateField(field.id, { description: event.target.value })}
-                      placeholder="Description (optional)"
-                    />
+                    {selectedForm.fields.map((field, index) => (
+                      <article
+                        key={field.id}
+                        className={selectedFieldId === field.id ? styles.fieldCardSelected : styles.fieldCard}
+                        onClick={() => setSelectedFieldId(field.id)}
+                      >
+                        <div className={styles.fieldCardHeader}>
+                          <span>{String(index + 1).padStart(2, "0")}</span>
+                          <b>{fieldLabels[field.type]}</b>
+                          {field.required && <i>Required</i>}
+                        </div>
+                        <strong>{field.label || "Question"}</strong>
+                        {field.description && <p>{field.description}</p>}
+                        <div className={styles.fieldGhost}>
+                          {field.type === "multiple-choice" || field.type === "checkboxes" || field.type === "yes-no"
+                            ? field.options.slice(0, 3).map((option) => <span key={option}>○ {option}</span>)
+                            : field.type === "rating"
+                              ? <span>1  2  3  4  5</span>
+                              : <span>{field.placeholder || "Respondent input"}</span>}
+                        </div>
+                        <div className={styles.fieldQuickActions}>
+                          <button onClick={(event) => { event.stopPropagation(); moveField(field.id, -1); }}>↑</button>
+                          <button onClick={(event) => { event.stopPropagation(); moveField(field.id, 1); }}>↓</button>
+                          <button onClick={(event) => { event.stopPropagation(); duplicateField(field.id); }}>Duplicate</button>
+                          <button onClick={(event) => { event.stopPropagation(); deleteField(field.id); }}>Delete</button>
+                        </div>
+                      </article>
+                    ))}
 
-                    {["multiple-choice", "checkboxes", "dropdown"].includes(field.type) && (
-                      <div className={styles.options}>
-                        {field.options.map((option, optionIndex) => (
-                          <div key={optionIndex}>
-                            <span>{field.type === "checkboxes" ? "□" : "○"}</span>
+                    {!selectedForm.fields.length && (
+                      <button className={styles.emptyCanvas} onClick={() => addField("short-text")}>
+                        + Add the first field
+                      </button>
+                    )}
+                  </div>
+                </section>
+
+                <aside className={styles.inspector}>
+                  <div className={styles.panelTitle}>
+                    <strong>Properties</strong>
+                    <span>{selectedField ? fieldLabels[selectedField.type] : "No field"}</span>
+                  </div>
+
+                  {selectedField ? (
+                    <div className={styles.propertyStack}>
+                      <label>
+                        <span>Label</span>
+                        <input value={selectedField.label} onChange={(event) => updateField(selectedField.id, { label: event.target.value })} />
+                      </label>
+                      <label>
+                        <span>Description</span>
+                        <textarea value={selectedField.description} onChange={(event) => updateField(selectedField.id, { description: event.target.value })} />
+                      </label>
+                      {!["multiple-choice", "checkboxes", "dropdown", "yes-no", "rating"].includes(selectedField.type) && (
+                        <label>
+                          <span>Placeholder</span>
+                          <input value={selectedField.placeholder} onChange={(event) => updateField(selectedField.id, { placeholder: event.target.value })} />
+                        </label>
+                      )}
+
+                      {["multiple-choice", "checkboxes", "dropdown", "yes-no"].includes(selectedField.type) && (
+                        <label>
+                          <span>Options · one per line</span>
+                          <textarea
+                            value={selectedField.options.join("\n")}
+                            onChange={(event) =>
+                              updateField(selectedField.id, {
+                                options: event.target.value.split("\n").map((item) => item.trim()).filter(Boolean)
+                              })
+                            }
+                          />
+                        </label>
+                      )}
+
+                      {selectedField.type === "rating" && (
+                        <div className={styles.inlineFields}>
+                          <label>
+                            <span>Minimum</span>
                             <input
-                              value={option}
-                              onChange={(event) => {
-                                const options = [...field.options];
-                                options[optionIndex] = event.target.value;
-                                updateField(field.id, { options });
-                              }}
+                              type="number"
+                              value={selectedField.min ?? 1}
+                              onChange={(event) => updateField(selectedField.id, { min: Number(event.target.value) })}
                             />
-                            <button
-                              onClick={() =>
+                          </label>
+                          <label>
+                            <span>Maximum</span>
+                            <input
+                              type="number"
+                              value={selectedField.max ?? 5}
+                              onChange={(event) => updateField(selectedField.id, { max: Number(event.target.value) })}
+                            />
+                          </label>
+                        </div>
+                      )}
+
+                      {(selectedField.type === "short-text" || selectedField.type === "paragraph") && (
+                        <div className={styles.inlineFields}>
+                          <label>
+                            <span>Min chars</span>
+                            <input
+                              type="number"
+                              min="0"
+                              value={selectedField.validation?.minLength ?? ""}
+                              onChange={(event) =>
+                                updateField(selectedField.id, {
+                                  validation: {
+                                    ...selectedField.validation,
+                                    minLength: event.target.value ? Number(event.target.value) : undefined
+                                  }
+                                })
+                              }
+                            />
+                          </label>
+                          <label>
+                            <span>Max chars</span>
+                            <input
+                              type="number"
+                              min="0"
+                              value={selectedField.validation?.maxLength ?? ""}
+                              onChange={(event) =>
+                                updateField(selectedField.id, {
+                                  validation: {
+                                    ...selectedField.validation,
+                                    maxLength: event.target.value ? Number(event.target.value) : undefined
+                                  }
+                                })
+                              }
+                            />
+                          </label>
+                        </div>
+                      )}
+
+                      {selectedField.type === "number" && (
+                        <div className={styles.inlineFields}>
+                          <label>
+                            <span>Minimum</span>
+                            <input
+                              type="number"
+                              value={selectedField.validation?.min ?? ""}
+                              onChange={(event) =>
+                                updateField(selectedField.id, {
+                                  validation: {
+                                    ...selectedField.validation,
+                                    min: event.target.value ? Number(event.target.value) : undefined
+                                  }
+                                })
+                              }
+                            />
+                          </label>
+                          <label>
+                            <span>Maximum</span>
+                            <input
+                              type="number"
+                              value={selectedField.validation?.max ?? ""}
+                              onChange={(event) =>
+                                updateField(selectedField.id, {
+                                  validation: {
+                                    ...selectedField.validation,
+                                    max: event.target.value ? Number(event.target.value) : undefined
+                                  }
+                                })
+                              }
+                            />
+                          </label>
+                        </div>
+                      )}
+
+                      <label className={styles.toggleRow}>
+                        <input
+                          type="checkbox"
+                          checked={selectedField.required}
+                          onChange={(event) => updateField(selectedField.id, { required: event.target.checked })}
+                        />
+                        <span><b>Required</b><small>Respondent must answer this field.</small></span>
+                      </label>
+                    </div>
+                  ) : (
+                    <div className={styles.emptyInspector}>Select a field on the canvas.</div>
+                  )}
+                </aside>
+              </div>
+            )}
+
+            {mode === "logic" && (
+              <div className={styles.logicWorkspace}>
+                <div className={styles.sectionHeader}>
+                  <div>
+                    <span>CONDITIONAL LOGIC</span>
+                    <h2>Control when fields appear.</h2>
+                    <p>Each rule is evaluated instantly in Preview. No decorative logic controls.</p>
+                  </div>
+                </div>
+                <div className={styles.logicList}>
+                  {selectedForm.fields.map((field, index) => {
+                    const earlier = selectedForm.fields.slice(0, index);
+                    return (
+                      <article key={field.id}>
+                        <div>
+                          <strong>{field.label}</strong>
+                          <span>{fieldLabels[field.type]}</span>
+                        </div>
+                        {index === 0 ? (
+                          <small>First field is always visible.</small>
+                        ) : (
+                          <div className={styles.logicControls}>
+                            <select
+                              value={field.visibility?.fieldId ?? ""}
+                              onChange={(event) =>
                                 updateField(field.id, {
-                                  options: field.options.filter((_, itemIndex) => itemIndex !== optionIndex)
+                                  visibility: event.target.value
+                                    ? {
+                                        fieldId: event.target.value,
+                                        operator: field.visibility?.operator ?? "equals",
+                                        value: field.visibility?.value ?? ""
+                                      }
+                                    : null
                                 })
                               }
                             >
-                              ×
-                            </button>
+                              <option value="">Always show</option>
+                              {earlier.map((source) => <option key={source.id} value={source.id}>When “{source.label}”</option>)}
+                            </select>
+
+                            {field.visibility && (
+                              <>
+                                <select
+                                  value={field.visibility.operator}
+                                  onChange={(event) =>
+                                    updateField(field.id, {
+                                      visibility: {
+                                        ...field.visibility!,
+                                        operator: event.target.value as FormLogicOperator
+                                      }
+                                    })
+                                  }
+                                >
+                                  {logicOperators.map((operator) => (
+                                    <option key={operator.value} value={operator.value}>{operator.label}</option>
+                                  ))}
+                                </select>
+                                {!["is-empty", "is-not-empty"].includes(field.visibility.operator) && (
+                                  <input
+                                    value={field.visibility.value ?? ""}
+                                    placeholder="Value"
+                                    onChange={(event) =>
+                                      updateField(field.id, {
+                                        visibility: { ...field.visibility!, value: event.target.value }
+                                      })
+                                    }
+                                  />
+                                )}
+                              </>
+                            )}
                           </div>
-                        ))}
-                        <button
-                          className={styles.addOption}
-                          onClick={() =>
-                            updateField(field.id, {
-                              options: [...field.options, `Option ${field.options.length + 1}`]
-                            })
-                          }
-                        >
-                          + Add option
-                        </button>
-                      </div>
-                    )}
-
-                    {field.type === "rating" && (
-                      <div className={styles.ratingSetup}>
-                        <label>Min <input type="number" min={1} max={10} value={field.min ?? 1} onChange={(event) => updateField(field.id, { min: Number(event.target.value) || 1 })} /></label>
-                        <label>Max <input type="number" min={2} max={10} value={field.max ?? 5} onChange={(event) => updateField(field.id, { max: Number(event.target.value) || 5 })} /></label>
-                      </div>
-                    )}
-
-                    <footer className={styles.fieldFooter}>
-                      <div>
-                        <button onClick={() => moveField(field.id, -1)} disabled={index === 0}>↑</button>
-                        <button onClick={() => moveField(field.id, 1)} disabled={index === selectedForm.fields.length - 1}>↓</button>
-                        <button onClick={() => duplicateField(field.id)}>Duplicate</button>
-                        <button onClick={() => deleteField(field.id)} disabled={selectedForm.fields.length === 1}>Delete</button>
-                      </div>
-                      <label>
-                        Required
-                        <input
-                          type="checkbox"
-                          checked={field.required}
-                          onChange={(event) => updateField(field.id, { required: event.target.checked })}
-                        />
-                      </label>
-                    </footer>
-                  </article>
-                ))}
-
-                <div className={styles.addFieldBar}>
-                  <button onClick={() => addField("short-text")}>+ Text</button>
-                  <button onClick={() => addField("multiple-choice")}>+ Choice</button>
-                  <button onClick={() => addField("checkboxes")}>+ Checkboxes</button>
-                  <button onClick={() => addField("rating")}>+ Rating</button>
-                  <button onClick={() => addField("date")}>+ Date</button>
+                        )}
+                      </article>
+                    );
+                  })}
                 </div>
               </div>
             )}
 
             {mode === "preview" && (
-              <div className={styles.preview}>
-                <div className={styles.previewCard}>
-                  <h1>{selectedForm.title}</h1>
-                  <p>{selectedForm.description}</p>
-                </div>
-                {selectedForm.fields.map((field) => (
-                  <div className={styles.previewCard} key={field.id}>
-                    <label className={styles.previewLabel}>
-                      {field.label}
-                      {field.required && <b> *</b>}
-                    </label>
-                    {field.description && <p>{field.description}</p>}
-
-                    {field.type === "short-text" && (
-                      <input
-                        value={String(answers[field.id] ?? "")}
-                        onChange={(event) => setAnswers((current) => ({ ...current, [field.id]: event.target.value }))}
-                      />
-                    )}
-                    {field.type === "paragraph" && (
-                      <textarea
-                        value={String(answers[field.id] ?? "")}
-                        onChange={(event) => setAnswers((current) => ({ ...current, [field.id]: event.target.value }))}
-                      />
-                    )}
-                    {field.type === "number" && (
-                      <input
-                        type="number"
-                        value={String(answers[field.id] ?? "")}
-                        onChange={(event) => setAnswers((current) => ({ ...current, [field.id]: event.target.value }))}
-                      />
-                    )}
-                    {field.type === "date" && (
-                      <input
-                        type="date"
-                        value={String(answers[field.id] ?? "")}
-                        onChange={(event) => setAnswers((current) => ({ ...current, [field.id]: event.target.value }))}
-                      />
-                    )}
-                    {field.type === "dropdown" && (
-                      <select
-                        value={String(answers[field.id] ?? "")}
-                        onChange={(event) => setAnswers((current) => ({ ...current, [field.id]: event.target.value }))}
-                      >
-                        <option value="">Select</option>
-                        {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
-                      </select>
-                    )}
-                    {field.type === "multiple-choice" && (
-                      <div className={styles.choiceGroup}>
-                        {field.options.map((option) => (
-                          <label key={option}>
-                            <input
-                              type="radio"
-                              name={field.id}
-                              checked={answers[field.id] === option}
-                              onChange={() => setAnswers((current) => ({ ...current, [field.id]: option }))}
-                            />
-                            {option}
-                          </label>
-                        ))}
-                      </div>
-                    )}
-                    {field.type === "checkboxes" && (
-                      <div className={styles.choiceGroup}>
-                        {field.options.map((option) => {
-                          const selected = Array.isArray(answers[field.id]) ? answers[field.id] as string[] : [];
-                          return (
-                            <label key={option}>
-                              <input
-                                type="checkbox"
-                                checked={selected.includes(option)}
-                                onChange={(event) => {
-                                  const next = event.target.checked
-                                    ? [...selected, option]
-                                    : selected.filter((item) => item !== option);
-                                  setAnswers((current) => ({ ...current, [field.id]: next }));
-                                }}
-                              />
-                              {option}
-                            </label>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {field.type === "rating" && (
-                      <div className={styles.rating}>
-                        {Array.from(
-                          { length: Math.max(1, (field.max ?? 5) - (field.min ?? 1) + 1) },
-                          (_, index) => (field.min ?? 1) + index
-                        ).map((value) => (
-                          <button
-                            key={value}
-                            className={answers[field.id] === String(value) ? styles.ratingActive : ""}
-                            onClick={() => setAnswers((current) => ({ ...current, [field.id]: String(value) }))}
-                          >
-                            {value}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {errors[field.id] && <span className={styles.error}>{errors[field.id]}</span>}
+              <div className={styles.previewArea}>
+                <div
+                  className={styles.previewCard}
+                  data-surface={selectedForm.theme.surface}
+                  style={{ "--form-accent": selectedForm.theme.accent } as React.CSSProperties}
+                >
+                  <div className={styles.previewHeader}>
+                    <span>LIVE PREVIEW</span>
+                    <h1>{selectedForm.title || "Untitled form"}</h1>
+                    {selectedForm.description && <p>{selectedForm.description}</p>}
+                    {selectedForm.status === "closed" && <div className={styles.closedBanner}>This form is closed.</div>}
                   </div>
-                ))}
-                <button className={styles.submit} onClick={submitPreview}>Submit response</button>
+
+                  <div className={styles.previewFields}>
+                    {selectedForm.fields.filter((field) => isFieldVisible(field, answers)).map((field) => (
+                      <label className={styles.previewField} key={field.id}>
+                        <div>
+                          <strong>{field.label}</strong>
+                          {field.required && <em>*</em>}
+                        </div>
+                        {field.description && <p>{field.description}</p>}
+                        <InputPreview
+                          field={field}
+                          value={answers[field.id]}
+                          error={errors[field.id]}
+                          onChange={(value) =>
+                            setAnswers((current) => ({ ...current, [field.id]: value }))
+                          }
+                        />
+                        {errors[field.id] && <small>{errors[field.id]}</small>}
+                      </label>
+                    ))}
+                  </div>
+
+                  <button
+                    className={styles.submitButton}
+                    disabled={selectedForm.status === "closed"}
+                    onClick={submitPreview}
+                  >
+                    Submit response
+                  </button>
+                </div>
               </div>
             )}
 
             {mode === "responses" && (
-              <div className={styles.responses}>
-                <div className={styles.responseHeader}>
+              <div className={styles.responsesArea}>
+                <div className={styles.metrics}>
+                  <article><span>Responses</span><strong>{formResponses.length}</strong></article>
+                  <article>
+                    <span>Fields</span>
+                    <strong>{selectedForm.fields.length}</strong>
+                  </article>
+                  <article>
+                    <span>Status</span>
+                    <strong>{selectedForm.status}</strong>
+                  </article>
+                  <article>
+                    <span>Latest</span>
+                    <strong>{formResponses[0] ? new Date(formResponses[0].submittedAt).toLocaleDateString() : "—"}</strong>
+                  </article>
+                </div>
+
+                <div className={styles.responseToolbar}>
                   <div>
-                    <strong>{formResponses.length}</strong>
-                    <span>responses</span>
+                    <strong>Response table</strong>
+                    <span>Rows are submissions. Columns are form fields.</span>
                   </div>
                   <button onClick={exportCsv} disabled={!formResponses.length}>Export CSV</button>
                 </div>
 
                 {formResponses.length ? (
-                  <div className={styles.responseList}>
-                    {formResponses.map((response, index) => (
-                      <article key={response.id}>
-                        <header>
-                          <strong>Response {formResponses.length - index}</strong>
-                          <span>{new Date(response.submittedAt).toLocaleString()}</span>
-                        </header>
-                        {selectedForm.fields.map((field) => (
-                          <div key={field.id}>
-                            <b>{field.label}</b>
-                            <span>
-                              {Array.isArray(response.answers[field.id])
-                                ? (response.answers[field.id] as string[]).join(", ")
-                                : String(response.answers[field.id] ?? "—")}
-                            </span>
-                          </div>
+                  <div className={styles.tableWrap}>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Submitted</th>
+                          {selectedForm.fields.map((field) => <th key={field.id}>{field.label}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {formResponses.map((response) => (
+                          <tr key={response.id}>
+                            <td>{new Date(response.submittedAt).toLocaleString()}</td>
+                            {selectedForm.fields.map((field) => {
+                              const value = response.answers[field.id];
+                              return <td key={field.id}>{Array.isArray(value) ? value.join(", ") : String(value ?? "")}</td>;
+                            })}
+                          </tr>
                         ))}
-                      </article>
-                    ))}
+                      </tbody>
+                    </table>
                   </div>
                 ) : (
-                  <div className={styles.emptyResponses}>No responses yet. Use Preview to submit a test response.</div>
+                  <div className={styles.emptyResponses}>
+                    <strong>No responses yet.</strong>
+                    <span>Use Preview to submit a real local response and test the form end to end.</span>
+                    <button onClick={() => setMode("preview")}>Open preview</button>
+                  </div>
                 )}
+              </div>
+            )}
+
+            {mode === "settings" && (
+              <div className={styles.settingsArea}>
+                <section>
+                  <div className={styles.sectionHeader}>
+                    <div><span>FORM SETTINGS</span><h2>Behaviour</h2></div>
+                  </div>
+                  <div className={styles.settingsGrid}>
+                    <label className={styles.toggleRow}>
+                      <input
+                        type="checkbox"
+                        checked={selectedForm.settings.collectEmail}
+                        onChange={(event) =>
+                          updateForm(selectedForm.id, {
+                            settings: { ...selectedForm.settings, collectEmail: event.target.checked }
+                          })
+                        }
+                      />
+                      <span><b>Collect respondent email</b><small>Store an email field with each response when enabled.</small></span>
+                    </label>
+                    <label className={styles.toggleRow}>
+                      <input
+                        type="checkbox"
+                        checked={selectedForm.settings.allowMultipleSubmissions}
+                        onChange={(event) =>
+                          updateForm(selectedForm.id, {
+                            settings: { ...selectedForm.settings, allowMultipleSubmissions: event.target.checked }
+                          })
+                        }
+                      />
+                      <span><b>Allow multiple submissions</b><small>Prepared for identity-aware publishing.</small></span>
+                    </label>
+                    <label>
+                      <span>Response limit</span>
+                      <input
+                        type="number"
+                        min="1"
+                        placeholder="Unlimited"
+                        value={selectedForm.settings.responseLimit ?? ""}
+                        onChange={(event) =>
+                          updateForm(selectedForm.id, {
+                            settings: {
+                              ...selectedForm.settings,
+                              responseLimit: event.target.value ? Number(event.target.value) : null
+                            }
+                          })
+                        }
+                      />
+                    </label>
+                    <label className={styles.wideSetting}>
+                      <span>Confirmation message</span>
+                      <textarea
+                        value={selectedForm.settings.confirmationMessage}
+                        onChange={(event) =>
+                          updateForm(selectedForm.id, {
+                            settings: { ...selectedForm.settings, confirmationMessage: event.target.value }
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+                </section>
+
+                <section>
+                  <div className={styles.sectionHeader}>
+                    <div><span>APPEARANCE</span><h2>Theme</h2></div>
+                  </div>
+                  <div className={styles.themeControls}>
+                    {["#315cf4", "#0f766e", "#7c3aed", "#c2410c", "#be123c", "#334155"].map((accent) => (
+                      <button
+                        key={accent}
+                        className={selectedForm.theme.accent === accent ? styles.themeSelected : ""}
+                        style={{ background: accent }}
+                        aria-label={"Use accent " + accent}
+                        onClick={() =>
+                          updateForm(selectedForm.id, {
+                            theme: { ...selectedForm.theme, accent }
+                          })
+                        }
+                      />
+                    ))}
+                  </div>
+                  <div className={styles.settingsGrid}>
+                    <label>
+                      <span>Surface</span>
+                      <select
+                        value={selectedForm.theme.surface}
+                        onChange={(event) =>
+                          updateForm(selectedForm.id, {
+                            theme: {
+                              ...selectedForm.theme,
+                              surface: event.target.value as TamishraForm["theme"]["surface"]
+                            }
+                          })
+                        }
+                      >
+                        <option value="clean">Clean</option>
+                        <option value="soft">Soft</option>
+                        <option value="glass">Glass</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Density</span>
+                      <select
+                        value={selectedForm.theme.density}
+                        onChange={(event) =>
+                          updateForm(selectedForm.id, {
+                            theme: {
+                              ...selectedForm.theme,
+                              density: event.target.value as TamishraForm["theme"]["density"]
+                            }
+                          })
+                        }
+                      >
+                        <option value="comfortable">Comfortable</option>
+                        <option value="compact">Compact</option>
+                      </select>
+                    </label>
+                  </div>
+                </section>
               </div>
             )}
           </>
         ) : (
           <div className={styles.emptyWorkspace}>
-            <strong>Select a form or create a new one.</strong>
-            <button onClick={createNewForm}>Create form</button>
+            <div className={styles.emptyMark}>F</div>
+            <strong>{view === "templates" ? "Choose a template" : "Build your first Tamishra Form"}</strong>
+            <p>Structured data collection with native files, validation, logic, preview and response tables.</p>
+            <button onClick={() => view === "templates" ? createNewForm("registration") : createNewForm()}>
+              {view === "templates" ? "Use registration template" : "Create blank form"}
+            </button>
           </div>
         )}
       </section>
