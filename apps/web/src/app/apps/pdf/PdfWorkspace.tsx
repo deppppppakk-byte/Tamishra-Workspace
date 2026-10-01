@@ -19,6 +19,11 @@ import {
   type WorkspaceBinaryAsset
 } from "../../../lib/workspace-binary-store";
 import { mutateWorkspaceFileIndex } from "../../../lib/workspace-files";
+import {
+  fetchCloudBinaryAsset,
+  updateCloudPdfMetadata,
+  uploadCloudPdfAsset
+} from "../../../lib/workspace-binary-cloud";
 import styles from "./pdf.module.css";
 
 type PdfAnnotation = {
@@ -47,6 +52,55 @@ type SearchResult = {
 
 function annotationKey(assetId: string) {
   return `tamishra.pdf.annotations.${assetId}`;
+}
+
+type PdfAnnotationState = {
+  updatedAt: string;
+  annotations: PdfAnnotation[];
+};
+
+function normalizeAnnotations(value: unknown): PdfAnnotation[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is PdfAnnotation =>
+    Boolean(
+      item &&
+      typeof item === "object" &&
+      typeof item.id === "string" &&
+      typeof item.kind === "string" &&
+      typeof item.page === "number"
+    )
+  );
+}
+
+function readLocalAnnotationState(assetId: string): PdfAnnotationState {
+  const raw = localStorage.getItem(annotationKey(assetId));
+  if (!raw) return { updatedAt: "", annotations: [] };
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return { updatedAt: "", annotations: normalizeAnnotations(parsed) };
+    }
+    return {
+      updatedAt:
+        parsed && typeof parsed.updatedAt === "string" ? parsed.updatedAt : "",
+      annotations: normalizeAnnotations(parsed?.annotations)
+    };
+  } catch {
+    return { updatedAt: "", annotations: [] };
+  }
+}
+
+function annotationStateFromMetadata(
+  metadata: Record<string, unknown> | null | undefined
+): PdfAnnotationState {
+  return {
+    updatedAt:
+      typeof metadata?.annotationsUpdatedAt === "string"
+        ? metadata.annotationsUpdatedAt
+        : "",
+    annotations: normalizeAnnotations(metadata?.annotations)
+  };
 }
 
 function makeId(prefix: string) {
@@ -123,24 +177,28 @@ export default function PdfWorkspace() {
   }, []);
 
   const openStoredAsset = useCallback(
-    async (record: WorkspaceBinaryAsset) => {
+    async (
+      record: WorkspaceBinaryAsset,
+      cloudMetadata?: Record<string, unknown> | null
+    ) => {
       setStatus("Opening PDF…");
       setAsset(record);
       setPageNumber(1);
       setRotation(0);
       setSearchResults([]);
 
-      const saved = localStorage.getItem(annotationKey(record.id));
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          setAnnotations(Array.isArray(parsed) ? parsed : []);
-        } catch {
-          setAnnotations([]);
-        }
-      } else {
-        setAnnotations([]);
-      }
+      const localAnnotations = readLocalAnnotationState(record.id);
+      const cloudAnnotations = annotationStateFromMetadata(cloudMetadata);
+      const selectedAnnotations =
+        cloudAnnotations.updatedAt.localeCompare(localAnnotations.updatedAt) > 0
+          ? cloudAnnotations
+          : localAnnotations;
+
+      setAnnotations(selectedAnnotations.annotations);
+      localStorage.setItem(
+        annotationKey(record.id),
+        JSON.stringify(selectedAnnotations)
+      );
 
       const pdfjs = await configurePdfJs();
       const loadingTask = pdfjs.getDocument({
@@ -176,6 +234,20 @@ export default function PdfWorkspace() {
         `/apps/pdf?file=${encodeURIComponent(record.id)}`
       );
       await openStoredAsset(record);
+
+      const annotationState = readLocalAnnotationState(record.id);
+      void uploadCloudPdfAsset(record, {
+        annotations: annotationState.annotations,
+        annotationsUpdatedAt: annotationState.updatedAt
+      }).then((result) => {
+        if (result.reason === "too_large") {
+          setStatus(
+            `${record.name} · local only · PDF exceeds the 16 MB cloud-sync limit`
+          );
+        } else if (result.uploaded && result.persistence === "postgres") {
+          setStatus(`${record.name} · cloud synchronized`);
+        }
+      });
     },
     [openStoredAsset]
   );
@@ -186,9 +258,33 @@ export default function PdfWorkspace() {
     void (async () => {
       const requestedId = new URLSearchParams(location.search).get("file");
       if (requestedId) {
-        const stored = await getWorkspaceBinaryAsset(requestedId);
+        const [stored, cloud] = await Promise.all([
+          getWorkspaceBinaryAsset(requestedId),
+          fetchCloudBinaryAsset(requestedId).catch(() => null)
+        ]);
+
         if (!cancelled && stored) {
-          await openStoredAsset(stored);
+          await openStoredAsset(stored, cloud?.metadata ?? null);
+
+          if (!cloud) {
+            const annotationState = readLocalAnnotationState(stored.id);
+            void uploadCloudPdfAsset(stored, {
+              annotations: annotationState.annotations,
+              annotationsUpdatedAt: annotationState.updatedAt
+            });
+          }
+          return;
+        }
+
+        if (!cancelled && cloud) {
+          const restored = await putWorkspaceBinaryAsset({
+            id: cloud.asset.id,
+            name: cloud.asset.name,
+            type: cloud.asset.type,
+            bytes: cloud.asset.bytes
+          });
+          await openStoredAsset(restored, cloud.metadata);
+          setStatus(`${restored.name} · restored from cloud`);
           return;
         }
       }
@@ -214,7 +310,36 @@ export default function PdfWorkspace() {
 
   useEffect(() => {
     if (!asset) return;
-    localStorage.setItem(annotationKey(asset.id), JSON.stringify(annotations));
+
+    const updatedAt = new Date().toISOString();
+    const localState: PdfAnnotationState = {
+      updatedAt,
+      annotations
+    };
+
+    localStorage.setItem(
+      annotationKey(asset.id),
+      JSON.stringify(localState)
+    );
+
+    const timer = window.setTimeout(() => {
+      void updateCloudPdfMetadata(asset.id, {
+        annotations,
+        annotationsUpdatedAt: updatedAt
+      }).then((result) => {
+        const remoteState = annotationStateFromMetadata(result.metadata);
+        if (remoteState.updatedAt.localeCompare(updatedAt) > 0) {
+          setAnnotations(remoteState.annotations);
+          localStorage.setItem(
+            annotationKey(asset.id),
+            JSON.stringify(remoteState)
+          );
+          setStatus("Annotations refreshed from cloud");
+        }
+      });
+    }, 900);
+
+    return () => window.clearTimeout(timer);
   }, [annotations, asset]);
 
   useEffect(() => {
