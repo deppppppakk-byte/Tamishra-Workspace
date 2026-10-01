@@ -268,6 +268,16 @@ class PostgresBinaryAssetStore implements BinaryAssetStore {
       updatedAt: new Date(String(row.updated_at)).toISOString()
     };
   }
+
+  async delete(userId: string, assetId: string) {
+    await this.ready();
+    const rows = await this.sql`
+      DELETE FROM workspace_binary_assets
+      WHERE user_id = ${userId} AND asset_id = ${assetId}
+      RETURNING asset_id
+    `;
+    return rows.length > 0;
+  }
 }
 
 export function createBinaryAssetStore(): BinaryAssetStore {
