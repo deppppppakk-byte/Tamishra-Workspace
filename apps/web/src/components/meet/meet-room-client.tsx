@@ -718,7 +718,12 @@ export function MeetRoomClient() {
         </div>
       </header>
 
-      {roomError && <div className={styles.roomError}>{roomError}</div>}
+      <div
+        className={roomError ? styles.roomError : styles.roomErrorPlaceholder}
+        role="status"
+      >
+        {roomError}
+      </div>
 
       <div className={styles.liveLayout}>
         <section className={styles.conference}>
