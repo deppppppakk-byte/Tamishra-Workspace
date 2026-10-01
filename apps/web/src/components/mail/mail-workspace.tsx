@@ -296,7 +296,7 @@ export function MailWorkspace() {
     <main className={styles.shell}>
       <aside className={styles.appRail} aria-label="Workspace apps">
         <Link className={styles.workspaceMark} href="/" aria-label="Tamishra Workspace home">T</Link>
-        <Link className={styles.railActive} href="/apps/mail" aria-label="Mail">M</Link>
+        <Link className={styles.railActive} href="/apps/mail" aria-label="Patra">P</Link>
         <button type="button" aria-label="Chat">C</button>
         <button type="button" aria-label="Meet">V</button>
         <button type="button" aria-label="Notes">N</button>
@@ -309,7 +309,7 @@ export function MailWorkspace() {
         <div className={styles.brandRow}>
           <div>
             <span>Tamishra</span>
-            <strong>Mail</strong>
+            <strong>Patra</strong>
           </div>
           <Link href="/" aria-label="Back to workspace">↙</Link>
         </div>
@@ -319,7 +319,7 @@ export function MailWorkspace() {
           Compose
         </button>
 
-        <nav className={styles.folderList} aria-label="Mail folders">
+        <nav className={styles.folderList} aria-label="Patra folders">
           {folders.map((item) => {
             const count =
               item.id === "inbox" ? unreadCount :
@@ -358,15 +358,15 @@ export function MailWorkspace() {
               ref={searchRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search mail"
-              aria-label="Search mail"
+              placeholder="Search Patra"
+              aria-label="Search Patra"
             />
             <kbd>/</kbd>
           </label>
 
           <div className={styles.topActions}>
             <button type="button" aria-label="Refresh" onClick={() => setNotice("Inbox refreshed locally")}>↻</button>
-            <button type="button" aria-label="Mail settings" onClick={() => setProviderPanelOpen(true)}>⚙</button>
+            <button type="button" aria-label="Patra settings" onClick={() => setProviderPanelOpen(true)}>⚙</button>
             <button className={styles.avatar} type="button" aria-label="Account">DK</button>
           </div>
         </header>
@@ -607,7 +607,7 @@ export function MailWorkspace() {
           >
             <header>
               <div>
-                <span>MAIL ACCOUNTS</span>
+                <span>PATRA ACCOUNTS</span>
                 <h2>Connect a provider</h2>
               </div>
               <button type="button" aria-label="Close provider panel" onClick={() => setProviderPanelOpen(false)}>×</button>
@@ -688,7 +688,7 @@ export function MailWorkspace() {
                           setProviderPanelOpen(false);
                           setNotice(
                             provider.key === "tamishra"
-                              ? "Tamishra Mail selected — first-party mailbox setup will use the Workspace gateway"
+                              ? "Tamishra Patra selected — first-party mailbox setup will use the Workspace gateway"
                               : `${provider.name} selected — secure gateway credentials are required to complete connection`
                           );
                           window.setTimeout(() => setNotice(""), 3600);
