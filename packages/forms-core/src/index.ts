@@ -40,6 +40,7 @@ export type FormsSnapshot = {
   version: 1;
   forms: TamishraForm[];
   responses: FormResponse[];
+  deleted: Record<string, string>;
 };
 
 export const TMFORM_EXTENSION = ".tmfm";
@@ -59,7 +60,7 @@ type NativeEnvelope = {
 };
 
 export function createFormsSnapshot(): FormsSnapshot {
-  return { version: 1, forms: [], responses: [] };
+  return { version: 1, forms: [], responses: [], deleted: {} };
 }
 
 export function createForm(title = "Untitled form"): TamishraForm {
@@ -139,10 +140,23 @@ export function normalizeFormsSnapshot(value: unknown): FormsSnapshot {
       )
     : [];
 
+  const deleted =
+    candidate.deleted &&
+    typeof candidate.deleted === "object" &&
+    !Array.isArray(candidate.deleted)
+      ? Object.fromEntries(
+          Object.entries(candidate.deleted).filter(
+            ([id, deletedAt]) =>
+              id.length > 0 && typeof deletedAt === "string"
+          )
+        )
+      : {};
+
   return {
     version: 1,
-    forms,
-    responses
+    forms: forms.filter((form) => !(form.id in deleted)),
+    responses: responses.filter((response) => !(response.formId in deleted)),
+    deleted
   };
 }
 
@@ -150,8 +164,20 @@ export function mergeFormsSnapshots(
   local: FormsSnapshot,
   remote: FormsSnapshot
 ): FormsSnapshot {
+  const deleted: Record<string, string> = {
+    ...remote.deleted,
+    ...local.deleted
+  };
+  for (const [id, deletedAt] of Object.entries(remote.deleted)) {
+    const localDeletedAt = deleted[id];
+    if (!localDeletedAt || deletedAt.localeCompare(localDeletedAt) > 0) {
+      deleted[id] = deletedAt;
+    }
+  }
+
   const forms = new Map<string, TamishraForm>();
   for (const form of [...remote.forms, ...local.forms]) {
+    if (deleted[form.id]) continue;
     const current = forms.get(form.id);
     if (!current || form.updatedAt.localeCompare(current.updatedAt) >= 0) {
       forms.set(form.id, form);
@@ -160,6 +186,7 @@ export function mergeFormsSnapshots(
 
   const responses = new Map<string, FormResponse>();
   for (const response of [...remote.responses, ...local.responses]) {
+    if (deleted[response.formId]) continue;
     const current = responses.get(response.id);
     if (
       !current ||
@@ -176,7 +203,8 @@ export function mergeFormsSnapshots(
     ),
     responses: Array.from(responses.values()).sort((left, right) =>
       right.submittedAt.localeCompare(left.submittedAt)
-    )
+    ),
+    deleted
   };
 }
 
