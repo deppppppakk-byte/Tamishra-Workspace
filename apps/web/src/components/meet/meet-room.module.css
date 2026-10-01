@@ -368,6 +368,57 @@
   padding: 14px;
 }
 
+.attendanceGroup {
+  padding: 14px;
+  border-bottom: 1px solid rgba(23, 32, 51, 0.07);
+}
+
+.attendanceRow {
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 12px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 9px;
+  align-items: center;
+}
+
+.attendanceRow:hover {
+  background: #f6f8fc;
+}
+
+.attendanceDot,
+.attendanceDotAway {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+
+.attendanceDot {
+  background: #1c9d6c;
+  box-shadow: 0 0 0 4px rgba(28, 157, 108, 0.1);
+}
+
+.attendanceDotAway {
+  background: #a3adbc;
+}
+
+.attendanceRow strong,
+.attendanceRow small {
+  display: block;
+}
+
+.attendanceRow strong {
+  font-size: 9px;
+}
+
+.attendanceRow small {
+  margin-top: 2px;
+  color: #8a95a7;
+  font-size: 8px;
+}
+
+
 .waitingGroup {
   border-bottom: 1px solid rgba(23, 32, 51, 0.07);
 }
