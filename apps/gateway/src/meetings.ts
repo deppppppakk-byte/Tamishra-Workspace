@@ -1932,7 +1932,8 @@ export async function handleMeetingRequest(
       assignments = [];
     }
 
-    const moderator = canModerate(participant);
+    const moderator =
+      participant.role === "host" || participant.role === "cohost";
     const visibleAssignments = moderator
       ? assignments
       : assignments.filter(
