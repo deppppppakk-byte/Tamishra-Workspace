@@ -558,6 +558,16 @@ export function RepositoryWorkspace() {
               </button>
             )
           )}
+          <Link
+            href={
+              "/apps/kosh/work?namespace=" +
+              encodeURIComponent(namespace) +
+              "&slug=" +
+              encodeURIComponent(slug)
+            }
+          >
+            Work
+          </Link>
         </nav>
       </header>
 
