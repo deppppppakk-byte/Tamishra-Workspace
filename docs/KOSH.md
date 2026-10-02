@@ -226,7 +226,7 @@ This expansion develops the broader Kosh platform domains while keeping maturity
 | 6 | Merge queue | Persistent priority queue and processor using the same approval/CI/conflict/atomic merge engine as manual reviews |
 | 7 | Code search | Git-native code, path and commit-message search |
 | 8 | Code intelligence | Symbol/reference search surface, blame endpoint, code-index and code-owner resources |
-| 9 | Browser IDE | Authenticated multi-file commit backend on non-default branches with Git hooks, audit and CI trigger |
+| 9 | Browser IDE | Active guarded browser workspace with branch snapshots, write/delete/rename change sets, diff preview, expected-head concurrency protection, atomic Git push and lifecycle triggers |
 | 10 | Development environments | Persistent environment definitions; disposable long-running runtime orchestration remains a runner expansion |
 | 11 | Wiki / documentation | Repository-scoped wiki-page resources |
 | 12 | Pages / static hosting | Static files served directly from configured Git branch/path with private-repo authentication and CSP |
@@ -1355,3 +1355,68 @@ Current capabilities:
 - dedicated Code Intelligence workspace at /apps/kosh/code-intelligence
 
 Production limits are controlled with KOSH_CODE_INDEX_MAX_FILES, KOSH_CODE_INDEX_MAX_FILE_KB and KOSH_CODE_INDEX_MAX_REFERENCES_PER_FILE. KOSH_CODE_INDEX_ON_PUSH can disable automatic push indexing when an external indexing scheduler owns that responsibility.
+
+
+## Native Browser IDE
+
+Kosh IDE is a repository-native editing surface at:
+
+`/apps/kosh/ide?namespace=<namespace>&slug=<repository>`
+
+It edits Git branches directly through an isolated server workspace. The default branch cannot be written from the IDE.
+
+### Editing contract
+
+A browser edit is sent as a bounded change set containing:
+
+- text-file writes
+- file deletions
+- file renames
+
+Kosh validates paths, rejects `.git` edits and symlink traversal, applies the change set in an isolated temporary checkout, stages it, and returns a unified diff preview before commit.
+
+### Optimistic concurrency
+
+Every IDE state response contains an `expectedHeadSha`.
+
+Preview and commit requests must send that exact SHA. Immediately before applying a change set Kosh re-resolves the branch head. If it moved, the request fails with `ide_branch_moved` rather than overwriting newer work.
+
+The final push is also protected by Git `--force-with-lease`:
+
+- existing branches lease against the previously observed branch SHA
+- new branches lease against non-existence
+
+This keeps branch creation and updates race-safe at the Git ref boundary.
+
+### Branch safety
+
+Kosh IDE requires a valid non-default branch.
+
+A new edit branch may be created from any existing base branch. Existing edit branches continue from their own current head.
+
+Default-branch delivery remains a Change Review operation, so repository review policy and required Automation checks remain the merge boundary.
+
+### Lifecycle integration
+
+A successful IDE commit emits the same Kosh lifecycle signals as a Git push:
+
+- repository audit event
+- Automation push scheduling
+- signed `push` webhooks
+- Security Engine push handling
+- Code Intelligence refresh
+
+This means editing in the browser does not create a separate development path.
+
+### Production limits
+
+The IDE is bounded with:
+
+```env
+KOSH_IDE_MAX_OPERATIONS=100
+KOSH_IDE_MAX_FILE_KB=1024
+KOSH_IDE_MAX_TOTAL_MB=5
+KOSH_IDE_MAX_DIFF_KB=1536
+```
+
+These values are clamped server-side. Large or binary assets should use the appropriate Kosh storage/package flows rather than the text IDE.

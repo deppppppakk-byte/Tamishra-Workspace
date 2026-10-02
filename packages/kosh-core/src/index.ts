@@ -118,8 +118,8 @@ export const koshModules: KoshModule[] = [
   {
     id: "browser-ide",
     name: "Browser IDE",
-    description: "Repository editing workspace foundation for multi-file edits, commits and previews.",
-    status: "foundation"
+    description: "Guarded branch editing workspace with file change sets, diff preview, expected-head concurrency protection and lifecycle integration.",
+    status: "active"
   },
   {
     id: "dev-environments",

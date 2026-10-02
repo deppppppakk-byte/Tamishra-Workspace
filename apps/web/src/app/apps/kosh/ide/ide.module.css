@@ -1,0 +1,544 @@
+.page {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 15% 0%, rgba(76, 129, 255, 0.12), transparent 35rem),
+    #080b12;
+  color: #f5f7fb;
+  padding: 24px;
+}
+
+.loading {
+  min-height: 70vh;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.loading a {
+  color: #9fb8ff;
+}
+
+.header {
+  max-width: 1600px;
+  margin: 0 auto 16px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.back {
+  color: #9fb8ff;
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.titleRow strong {
+  font-size: 28px;
+}
+
+.titleRow span {
+  color: #aab3c5;
+  border: 1px solid #2a3140;
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.header p {
+  margin: 7px 0 0;
+  color: #9da8ba;
+  max-width: 760px;
+}
+
+.headerLinks {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.headerLinks a {
+  color: #dbe5ff;
+  text-decoration: none;
+  border: 1px solid #293244;
+  background: rgba(17, 22, 33, 0.76);
+  padding: 8px 11px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.branchBar,
+.workspace,
+.diffPanel,
+.error,
+.success {
+  max-width: 1600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.branchBar {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  background: rgba(14, 18, 27, 0.82);
+  border: 1px solid #252c3a;
+  border-radius: 14px;
+  padding: 12px;
+  backdrop-filter: blur(16px);
+}
+
+.branchBar label,
+.commitBox {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+}
+
+.branchBar label span,
+.commitBox span {
+  color: #8f9aaf;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.branchBar input,
+.branchBar select,
+.newFile input,
+.renameBar input,
+.commitBox textarea {
+  background: #0b0f17;
+  color: #f5f7fb;
+  border: 1px solid #2a3242;
+  border-radius: 9px;
+  padding: 9px 10px;
+  outline: none;
+}
+
+.branchBar input:focus,
+.branchBar select:focus,
+.newFile input:focus,
+.renameBar input:focus,
+.commitBox textarea:focus {
+  border-color: #5f86ff;
+}
+
+.branchState {
+  margin-left: auto;
+  display: grid;
+  gap: 5px;
+  min-width: 150px;
+}
+
+.branchState span {
+  color: #9fa9bb;
+  font-size: 12px;
+}
+
+.branchState code {
+  color: #dce5ff;
+}
+
+.error,
+.success,
+.warning {
+  margin-top: 12px;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.error {
+  background: rgba(163, 46, 55, 0.18);
+  border: 1px solid rgba(255, 101, 113, 0.35);
+  color: #ffb2b9;
+}
+
+.success {
+  background: rgba(46, 132, 86, 0.18);
+  border: 1px solid rgba(79, 207, 136, 0.32);
+  color: #a8efc3;
+}
+
+.warning {
+  background: rgba(179, 122, 34, 0.14);
+  border: 1px solid rgba(238, 170, 65, 0.28);
+  color: #f4ca82;
+}
+
+.workspace {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr) 300px;
+  min-height: 650px;
+  border: 1px solid #232b39;
+  border-radius: 15px;
+  overflow: hidden;
+  background: #0b0f16;
+}
+
+.sidebar,
+.changesPane {
+  background: #0d1119;
+  min-width: 0;
+}
+
+.sidebar {
+  border-right: 1px solid #232b39;
+}
+
+.changesPane {
+  border-left: 1px solid #232b39;
+  padding-bottom: 16px;
+}
+
+.sideHeader,
+.editorHeader,
+.diffHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #232b39;
+}
+
+.sideHeader span,
+.diffHeader span {
+  color: #7f899b;
+  font-size: 11px;
+}
+
+.breadcrumbs {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border-bottom: 1px solid #1f2633;
+}
+
+.breadcrumbs button,
+.parentButton {
+  border: 0;
+  background: transparent;
+  color: #9fb8ff;
+  cursor: pointer;
+  padding: 4px;
+  text-align: left;
+}
+
+.parentButton {
+  width: 100%;
+  padding: 8px 12px;
+}
+
+.fileList {
+  max-height: 470px;
+  overflow: auto;
+}
+
+.fileList > button {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #171c26;
+  background: transparent;
+  color: #dce3ee;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.fileList > button:hover,
+.selectedFile {
+  background: #141b28 !important;
+}
+
+.fileList small {
+  color: #657084;
+}
+
+.newFile {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border-top: 1px solid #232b39;
+}
+
+.newFile button,
+.editorActions button,
+.renameBar button,
+.previewButton,
+.commitButton,
+.operation button,
+.diffHeader button {
+  border: 1px solid #303a4c;
+  background: #151c29;
+  color: #e8edfa;
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.newFile button:disabled,
+.editorActions button:disabled,
+.renameBar button:disabled,
+.previewButton:disabled,
+.commitButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.editorPane {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.editorHeader > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.owners {
+  color: #8ea1c5;
+  font-size: 11px;
+}
+
+.editorActions {
+  display: flex;
+  gap: 7px;
+}
+
+.editor {
+  width: 100%;
+  min-height: 560px;
+  resize: vertical;
+  border: 0;
+  outline: none;
+  padding: 18px;
+  background: #090d14;
+  color: #e7ecf6;
+  font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  tab-size: 2;
+}
+
+.editorEmpty {
+  display: grid;
+  place-content: center;
+  text-align: center;
+  min-height: 560px;
+  color: #8a95a8;
+  padding: 30px;
+}
+
+.editorEmpty strong {
+  color: #d7deeb;
+}
+
+.renameBar {
+  display: flex;
+  gap: 8px;
+  border-top: 1px solid #232b39;
+  padding: 10px;
+}
+
+.renameBar input {
+  flex: 1;
+}
+
+.operationList {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.operation {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid #252e3e;
+  border-radius: 9px;
+  padding: 9px;
+  background: #101622;
+}
+
+.operation > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.operation b {
+  color: #a9b9da;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.operation code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #e1e7f2;
+  font-size: 11px;
+}
+
+.operation button {
+  padding: 2px 7px;
+  align-self: start;
+}
+
+.previewButton,
+.commitButton,
+.commitBox,
+.safetyNote {
+  margin-left: 10px;
+  margin-right: 10px;
+}
+
+.previewButton,
+.commitButton {
+  width: calc(100% - 20px);
+}
+
+.previewButton {
+  margin-top: 4px;
+}
+
+.commitBox {
+  margin-top: 12px;
+  min-width: 0;
+}
+
+.commitBox textarea {
+  min-height: 82px;
+  resize: vertical;
+}
+
+.commitButton {
+  margin-top: 10px;
+  background: #315cdb;
+  border-color: #557cff;
+}
+
+.safetyNote {
+  color: #778295;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.diffPanel {
+  margin-top: 14px;
+  border: 1px solid #252d3b;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #0b0f16;
+}
+
+.diffHeader > div {
+  display: grid;
+  gap: 3px;
+}
+
+.changedFiles {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid #232b39;
+}
+
+.changedFiles span {
+  border: 1px solid #293244;
+  border-radius: 999px;
+  padding: 5px 8px;
+  font-size: 11px;
+  color: #b7c1d4;
+}
+
+.changedFiles b {
+  color: #8eabff;
+}
+
+.diffPanel pre {
+  margin: 0;
+  padding: 16px;
+  max-height: 600px;
+  overflow: auto;
+  background: #080c12;
+  color: #d7deeb;
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre;
+}
+
+.muted {
+  color: #727e91;
+  font-size: 12px;
+  padding: 10px;
+}
+
+@media (max-width: 1050px) {
+  .workspace {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .changesPane {
+    grid-column: 1 / -1;
+    border-left: 0;
+    border-top: 1px solid #232b39;
+  }
+}
+
+@media (max-width: 760px) {
+  .page {
+    padding: 12px;
+  }
+
+  .header,
+  .branchBar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .headerLinks {
+    width: 100%;
+  }
+
+  .branchState {
+    margin-left: 0;
+  }
+
+  .workspace {
+    display: block;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid #232b39;
+  }
+
+  .fileList {
+    max-height: 260px;
+  }
+
+  .editor {
+    min-height: 420px;
+  }
+
+  .editorActions,
+  .renameBar {
+    flex-wrap: wrap;
+  }
+}
