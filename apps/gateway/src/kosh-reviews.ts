@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { resolveWorkspaceIdentity } from "./identity.js";
 import { getKoshStore } from "./kosh-store.js";
 import { getKoshWorkStore } from "./kosh-work-store.js";
+import { requiredChecksForCommit, scheduleAutomationEvent } from "./kosh-automation-service.js";
 import {
   getKoshReviewStore,
   type KoshReviewState,
@@ -1046,6 +1047,15 @@ export async function handleKoshChangeReviewRequest(
         )
       ]);
 
+      await scheduleAutomationEvent(
+        repository,
+        "change_request",
+        created.baseBranch,
+        created.headSha,
+        { id: identity.user.id, name: identity.user.displayName },
+        created.number
+      );
+
       sendJson(response, 201, created, origin, allowedOrigins);
       return true;
     }
@@ -1071,7 +1081,7 @@ export async function handleKoshChangeReviewRequest(
       );
 
       if (!action && request.method === "GET") {
-        const [comparison, reviews, comments, policy] = await Promise.all([
+        const [comparison, reviews, comments, policy, checks] = await Promise.all([
           compareBranches(
             gitDir,
             changeRequest.baseBranch,
@@ -1082,7 +1092,8 @@ export async function handleKoshChangeReviewRequest(
           reviewStore.getBranchPolicy(
             repository.id,
             changeRequest.baseBranch
-          )
+          ),
+          requiredChecksForCommit(repository.id, changeRequest.headSha)
         ]);
 
         const reviewState = latestReviewStates(reviews, changeRequest);
@@ -1106,8 +1117,13 @@ export async function handleKoshChangeReviewRequest(
                 comparison.ahead > 0 &&
                 reviewState.approvals >= policy.requiredApprovals &&
                 (!policy.blockOnChangesRequested ||
-                  reviewState.changesRequested === 0)
-            }
+                  reviewState.changesRequested === 0) &&
+                checks.passing,
+              checksPassing: checks.passing,
+              checksPending: checks.pending,
+              checksFailing: checks.failing
+            },
+            checks: checks.checks
           },
           origin,
           allowedOrigins
@@ -1236,6 +1252,40 @@ export async function handleKoshChangeReviewRequest(
           reviewState.changesRequested > 0
         ) {
           throw Object.assign(new Error("changes_requested"), { status: 409 });
+        }
+
+        let checks = await requiredChecksForCommit(
+          repository.id,
+          synchronized.headSha
+        );
+
+        if (checks.required.length === 0) {
+          const scheduled = await scheduleAutomationEvent(
+            repository,
+            "change_request",
+            synchronized.baseBranch,
+            synchronized.headSha,
+            { id: identity.user.id, name: identity.user.displayName },
+            synchronized.number
+          );
+          if (scheduled.length > 0) {
+            checks = await requiredChecksForCommit(
+              repository.id,
+              synchronized.headSha
+            );
+          }
+        }
+
+        if (checks.pending > 0) {
+          throw Object.assign(new Error("required_checks_pending"), {
+            status: 409
+          });
+        }
+
+        if (checks.failing > 0 || !checks.passing) {
+          throw Object.assign(new Error("required_checks_failed"), {
+            status: 409
+          });
         }
 
         const mergeCommitSha = await mergeChangeRequest(
