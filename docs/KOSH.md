@@ -227,7 +227,7 @@ This expansion develops the broader Kosh platform domains while keeping maturity
 | 7 | Code search | Git-native code, path and commit-message search |
 | 8 | Code intelligence | Symbol/reference search surface, blame endpoint, code-index and code-owner resources |
 | 9 | Browser IDE | Active guarded browser workspace with branch snapshots, write/delete/rename change sets, diff preview, expected-head concurrency protection, atomic Git push and lifecycle triggers |
-| 10 | Development environments | Persistent environment definitions; disposable long-running runtime orchestration remains a runner expansion |
+| 10 | Development environments | Active exact-commit disposable workspaces with atomic runner leasing, isolated long-running containers, bounded resources, TTL expiry, stop control and ephemeral checkout credentials |
 | 11 | Wiki / documentation | Repository-scoped wiki-page resources |
 | 12 | Pages / static hosting | Static files served directly from configured Git branch/path with private-repo authentication and CSP |
 | 13 | Webhooks & integrations | Signed outbound webhooks for push, reviews, issues and completed workflows |
@@ -240,6 +240,36 @@ This expansion develops the broader Kosh platform domains while keeping maturity
 | 20 | Observability | Global/repository platform summaries, resource counts and audit telemetry |
 | 21 | Administration | Global administration-setting resources |
 | 22 | Extension SDK | Extension registrations/control plane; richer sandboxed runtime SDK remains an expansion target |
+
+## Native Development Environments
+
+Kosh can now launch repository-scoped disposable development workspaces at:
+
+`/apps/kosh/environments?namespace=<namespace>&slug=<repository>`
+
+Runtime contract:
+
+- every environment resolves a branch to an exact Git commit before it is queued
+- runner claims are atomic in PostgreSQL using `FOR UPDATE SKIP LOCKED`
+- checkout uses a short-lived repository-read credential instead of a permanent token
+- long-running workspaces execute only on container runners
+- containers use a read-only root filesystem, dropped Linux capabilities, `no-new-privileges`, bounded CPU/memory/PIDs and a writable repository workspace mount
+- network is disabled by default; egress requires `KOSH_RUNNER_ALLOW_NETWORK=true`
+- runner heartbeats renew a 60-second environment lease and report the active container
+- stop requests, TTL expiry, container exit and lease loss converge the environment to a terminal state
+- the environment control plane exposes no lease hashes to browser clients
+
+Production controls:
+
+```env
+KOSH_DEV_ENV_MAX_TTL_MINUTES=480
+KOSH_RUNNER_IMAGE_ALLOWLIST=node:22-bookworm-slim
+KOSH_RUNNER_MAX_CPU=4
+KOSH_RUNNER_MAX_MEMORY_MB=4096
+KOSH_RUNNER_MAX_PIDS=512
+KOSH_RUNNER_ALLOW_NETWORK=false
+```
+
 
 ### Platform security rules
 
