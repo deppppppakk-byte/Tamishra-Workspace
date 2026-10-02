@@ -29,6 +29,7 @@ import {
   triggerKoshSecurityScanAfterPush
 } from "./kosh-security.js";
 import { handleKoshPackageRequest } from "./kosh-packages.js";
+import { handleKoshReleaseRequest } from "./kosh-releases.js";
 import { scheduleAutomationEvent } from "./kosh-automation-service.js";
 import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
@@ -1035,6 +1036,18 @@ export async function handleKoshRequest(
 
   if (
     await handleKoshPackageRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    await handleKoshReleaseRequest(
       request,
       response,
       url,
