@@ -31,6 +31,7 @@ type JobDefinition = {
   memoryMb?: number;
   pidsLimit?: number;
   secrets?: string[];
+  runsOn?: string[];
   steps: StepDefinition[];
 };
 
