@@ -654,10 +654,10 @@ async function requireWorkspaceIdentity(
       origin,
       allowedOrigins
     );
-    return false;
+    return null;
   }
 
-  return true;
+  return identity;
 }
 
 function safeTreePath(input: string) {
