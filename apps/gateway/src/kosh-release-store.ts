@@ -515,12 +515,26 @@ class PostgresKoshReleaseStore implements KoshReleaseStore {
 
   async deleteReleaseForRollback(repositoryId: string, id: string) {
     await this.ready();
-    const rows = await this.sql`
-      DELETE FROM kosh_releases
-      WHERE repository_id = ${repositoryId} AND id = ${id}
-      RETURNING id
-    `;
-    return rows.length > 0;
+    return this.sql.begin(async (tx) => {
+      await tx`
+        DELETE FROM kosh_release_assets
+        WHERE repository_id = ${repositoryId} AND release_id = ${id}
+      `;
+      await tx`
+        DELETE FROM kosh_release_packages
+        WHERE repository_id = ${repositoryId} AND release_id = ${id}
+      `;
+      await tx`
+        DELETE FROM kosh_release_channels
+        WHERE repository_id = ${repositoryId} AND release_id = ${id}
+      `;
+      const rows = await tx`
+        DELETE FROM kosh_releases
+        WHERE repository_id = ${repositoryId} AND id = ${id}
+        RETURNING id
+      `;
+      return rows.length > 0;
+    });
   }
 
   async setReleaseState(
