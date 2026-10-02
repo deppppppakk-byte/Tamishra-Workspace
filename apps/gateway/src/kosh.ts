@@ -10,6 +10,7 @@ import { handleKoshWorkRequest } from "./kosh-work.js";
 import { handleKoshAutomationRequest } from "./kosh-automation.js";
 import { handleKoshPlatformRequest } from "./kosh-platform.js";
 import { scheduleAutomationEvent } from "./kosh-automation-service.js";
+import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
   createKoshStore,
   type KoshVisibility,
@@ -525,6 +526,16 @@ async function handleGitHttp(
               { id: null, name: "Git push" },
               null
             );
+            void dispatchKoshWebhooks(
+              repository.id,
+              "push",
+              {
+                namespace: repository.namespace,
+                slug: repository.slug,
+                branch: branchName,
+                commitSha
+              }
+            ).catch(() => undefined);
           }
         }
       } catch (automationError) {
