@@ -682,6 +682,21 @@ export async function handleKoshBrowserIdeRequest(
   );
   if (!match) return false;
 
+  if (
+    ["POST", "PUT", "PATCH", "DELETE"].includes(request.method || "") &&
+    origin &&
+    !allowedOrigins.has(origin)
+  ) {
+    sendJson(
+      response,
+      403,
+      { error: "origin_not_allowed" },
+      origin,
+      allowedOrigins
+    );
+    return true;
+  }
+
   try {
     await Promise.all([repositoryStore.ready(), platformStore.ready()]);
     const repository = await repositoryStore.get(match[1], match[2]);
@@ -795,7 +810,9 @@ export async function handleKoshBrowserIdeRequest(
         const actor = {
           id: authorization.identity.user.id,
           displayName: authorization.identity.user.displayName,
-          email: authorization.identity.user.email
+          email:
+            authorization.identity.user.email ||
+            authorization.identity.user.id + "@users.kosh.local"
         };
         const commitSha = await commitWorkspace({
           prepared,
