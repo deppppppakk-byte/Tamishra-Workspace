@@ -496,6 +496,21 @@ export async function handleKoshPackageRequest(
     return true;
   }
 
+  if (
+    ["POST", "PUT", "PATCH", "DELETE"].includes(request.method || "") &&
+    origin &&
+    !allowedOrigins.has(origin)
+  ) {
+    json(
+      response,
+      403,
+      { error: "origin_not_allowed" },
+      origin,
+      allowedOrigins
+    );
+    return true;
+  }
+
   try {
     await Promise.all([
       packageStore.ready(),
