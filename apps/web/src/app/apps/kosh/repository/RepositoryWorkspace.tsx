@@ -568,6 +568,16 @@ export function RepositoryWorkspace() {
           >
             Work
           </Link>
+          <Link
+            href={
+              "/apps/kosh/automation?namespace=" +
+              encodeURIComponent(namespace) +
+              "&slug=" +
+              encodeURIComponent(slug)
+            }
+          >
+            Automation
+          </Link>
         </nav>
       </header>
 
