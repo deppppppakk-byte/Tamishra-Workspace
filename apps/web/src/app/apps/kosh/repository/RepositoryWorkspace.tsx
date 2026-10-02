@@ -578,6 +578,16 @@ export function RepositoryWorkspace() {
           >
             Automation
           </Link>
+          <Link
+            href={
+              "/apps/kosh/platform?namespace=" +
+              encodeURIComponent(namespace) +
+              "&slug=" +
+              encodeURIComponent(slug)
+            }
+          >
+            Platform
+          </Link>
         </nav>
       </header>
 
