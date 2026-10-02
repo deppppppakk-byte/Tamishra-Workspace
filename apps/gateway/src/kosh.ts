@@ -454,6 +454,8 @@ async function handleGitHttp(
     return true;
   }
 
+  const gitAccess = await resolveGitAccess(request, repository);
+
   if (
     await handleKoshLfsRequest({
       request,
@@ -467,7 +469,8 @@ async function handleGitHttp(
         "/" +
         encodeURIComponent(slug) +
         ".git",
-      authorized: gitTokenAuthorized(request)
+      canRead: gitAccess.canRead,
+      canWrite: gitAccess.canWrite
     })
   ) {
     return true;
@@ -477,13 +480,9 @@ async function handleGitHttp(
 
   const write = isGitWrite(url);
   const refsBefore = write ? await branchRefSnapshot(path) : null;
-  const tokenRequired = write || repository.visibility !== "public";
 
-  if (tokenRequired && !gitTokenAuthorized(request)) {
-    rejectGitAuthentication(
-      response,
-      Boolean(process.env.KOSH_GIT_TOKEN?.trim())
-    );
+  if ((write && !gitAccess.canWrite) || (!write && !gitAccess.canRead)) {
+    rejectGitAuthentication(response);
     return true;
   }
 
@@ -498,7 +497,7 @@ async function handleGitHttp(
       REQUEST_METHOD: request.method || "GET",
       CONTENT_TYPE: String(request.headers["content-type"] ?? ""),
       CONTENT_LENGTH: String(request.headers["content-length"] ?? ""),
-      REMOTE_USER: tokenRequired ? "kosh-user" : "",
+      REMOTE_USER: gitAccess.remoteUser,
       REMOTE_ADDR: request.socket.remoteAddress || "",
       HTTP_GIT_PROTOCOL: String(request.headers["git-protocol"] ?? "")
     },
@@ -587,7 +586,7 @@ async function handleGitHttp(
               "push",
               branchName,
               commitSha,
-              { id: null, name: "Git push" },
+              gitAccess.actor,
               null
             );
             void dispatchKoshWebhooks(
