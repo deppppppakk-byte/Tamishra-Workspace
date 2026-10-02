@@ -7,6 +7,8 @@ import { promisify } from "node:util";
 import { resolveWorkspaceIdentity } from "./identity.js";
 import { handleKoshChangeReviewRequest } from "./kosh-reviews.js";
 import { handleKoshWorkRequest } from "./kosh-work.js";
+import { handleKoshAutomationRequest } from "./kosh-automation.js";
+import { scheduleAutomationEvent } from "./kosh-automation-service.js";
 import {
   createKoshStore,
   type KoshVisibility,
@@ -360,6 +362,28 @@ function rejectGitAuthentication(
   );
 }
 
+async function branchRefSnapshot(gitDir: string) {
+  const output = await runGit(
+    gitDir,
+    [
+      "for-each-ref",
+      "--format=%(refname:short)%00%(objectname)",
+      "refs/heads"
+    ],
+    10_000,
+    2 * 1024 * 1024
+  );
+  const refs = new Map<string, string>();
+  for (const line of output.split(/\r?\n/)) {
+    if (!line) continue;
+    const [name, sha] = line.split("\0");
+    if (name && /^[0-9a-f]{40}$/i.test(sha ?? "")) {
+      refs.set(name, sha);
+    }
+  }
+  return refs;
+}
+
 async function handleGitHttp(
   request: IncomingMessage,
   response: ServerResponse,
@@ -386,6 +410,7 @@ async function handleGitHttp(
   await ensureKoshReceiveHook(path, repository.defaultBranch);
 
   const write = isGitWrite(url);
+  const refsBefore = write ? await branchRefSnapshot(path) : null;
   const tokenRequired = write || repository.visibility !== "public";
 
   if (tokenRequired && !gitTokenAuthorized(request)) {
@@ -482,9 +507,34 @@ async function handleGitHttp(
 
   response.on("drain", () => child.stdout.resume());
 
-  child.on("close", (code) => {
+  child.on("close", async (code) => {
     if (finished) return;
     finished = true;
+
+    if (code === 0 && write && refsBefore) {
+      try {
+        const refsAfter = await branchRefSnapshot(path);
+        for (const [branchName, commitSha] of refsAfter) {
+          if (refsBefore.get(branchName) !== commitSha) {
+            await scheduleAutomationEvent(
+              repository,
+              "push",
+              branchName,
+              commitSha,
+              { id: null, name: "Git push" },
+              null
+            );
+          }
+        }
+      } catch (automationError) {
+        stderr =
+          (stderr +
+            "\nKosh automation trigger warning: " +
+            (automationError instanceof Error
+              ? automationError.message
+              : "unknown error")).slice(-8192);
+      }
+    }
 
     if (!headersSent && !response.headersSent) {
       response.statusCode = code === 0 ? 200 : 500;
@@ -793,6 +843,18 @@ export async function handleKoshRequest(
 
   if (
     await handleKoshWorkRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    await handleKoshAutomationRequest(
       request,
       response,
       url,

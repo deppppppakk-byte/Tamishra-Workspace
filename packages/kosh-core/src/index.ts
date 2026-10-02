@@ -46,7 +46,7 @@ export const koshModules: KoshModule[] = [
     id: "automation",
     name: "Automation",
     description: "Event-driven pipelines for build, test, validation, release and deployment.",
-    status: "planned"
+    status: "active"
   },
   {
     id: "packages",
