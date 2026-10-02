@@ -759,6 +759,15 @@ export async function handleKoshPlatformRequest(
           throw Object.assign(new Error("package_size_invalid"), { status: 413 });
         }
 
+        const duplicatePackage = (
+          await platformStore.listResources("package", repository.id)
+        ).find((item) => item.key === key + "@" + version);
+        if (duplicatePackage) {
+          throw Object.assign(new Error("package_version_immutable"), {
+            status: 409
+          });
+        }
+
         const directory = safeStoragePath(
           packageRoot,
           repository.id,
@@ -1216,6 +1225,11 @@ export async function handleKoshPlatformRequest(
     }
 
     if (url.pathname === "/v1/kosh/platform/ssh-keys") {
+      if (identity.authType !== "session") {
+        throw Object.assign(new Error("interactive_session_required"), {
+          status: 403
+        });
+      }
       if (request.method === "GET") {
         sendJson(
           response,
@@ -1258,6 +1272,11 @@ export async function handleKoshPlatformRequest(
       /^\/v1\/kosh\/platform\/ssh-keys\/([^/]+)$/
     );
     if (sshDelete && request.method === "DELETE") {
+      if (identity.authType !== "session") {
+        throw Object.assign(new Error("interactive_session_required"), {
+          status: 403
+        });
+      }
       const deleted = await platformStore.deleteSshKey(
         identity.user.id,
         decodeURIComponent(sshDelete[1])
@@ -1270,6 +1289,11 @@ export async function handleKoshPlatformRequest(
     }
 
     if (url.pathname === "/v1/kosh/platform/tokens") {
+      if (identity.authType !== "session") {
+        throw Object.assign(new Error("interactive_session_required"), {
+          status: 403
+        });
+      }
       if (request.method === "GET") {
         sendJson(
           response,
@@ -1326,6 +1350,11 @@ export async function handleKoshPlatformRequest(
       /^\/v1\/kosh\/platform\/tokens\/([^/]+)$/
     );
     if (tokenDelete && request.method === "DELETE") {
+      if (identity.authType !== "session") {
+        throw Object.assign(new Error("interactive_session_required"), {
+          status: 403
+        });
+      }
       const deleted = await platformStore.deleteApiToken(
         identity.user.id,
         decodeURIComponent(tokenDelete[1])
