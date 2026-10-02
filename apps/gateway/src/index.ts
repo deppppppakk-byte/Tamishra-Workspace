@@ -22,11 +22,16 @@ function requireProductionValue(name: string, minimumLength = 1) {
 function validateProductionConfiguration() {
   if (!isProduction) return;
 
-  requireProductionValue("WORKSPACE_DATABASE_URL", 12);
+  const coreOnly = process.env.WORKSPACE_CORE_ONLY === "true";
+
+  if (!coreOnly) {
+    requireProductionValue("WORKSPACE_DATABASE_URL", 12);
+    requireProductionValue("LIVEKIT_URL", 8);
+    requireProductionValue("LIVEKIT_API_KEY", 6);
+    requireProductionValue("LIVEKIT_API_SECRET", 24);
+  }
+
   requireProductionValue("WORKSPACE_IP_HASH_SECRET", 32);
-  requireProductionValue("LIVEKIT_URL", 8);
-  requireProductionValue("LIVEKIT_API_KEY", 6);
-  requireProductionValue("LIVEKIT_API_SECRET", 24);
 
   if (process.env.WORKSPACE_SESSION_COOKIE_SECURE === "false") {
     throw new Error("WORKSPACE_SESSION_COOKIE_SECURE must not be false in production.");
@@ -37,9 +42,11 @@ function validateProductionConfiguration() {
     throw new Error("WORKSPACE_ALLOWED_ORIGINS is required in production.");
   }
 
-  const liveKitUrl = process.env.LIVEKIT_URL ?? "";
-  if (!/^wss:\/\//i.test(liveKitUrl)) {
-    throw new Error("LIVEKIT_URL must use wss:// in production.");
+  if (!coreOnly) {
+    const liveKitUrl = process.env.LIVEKIT_URL ?? "";
+    if (!/^wss:\/\//i.test(liveKitUrl)) {
+      throw new Error("LIVEKIT_URL must use wss:// in production.");
+    }
   }
 }
 
@@ -138,7 +145,9 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       {
         service: "tamishra-workspace-gateway",
         status: "ok",
-        version: process.env.WORKSPACE_RELEASE_VERSION ?? "0.9.0"
+        version: process.env.WORKSPACE_RELEASE_VERSION ?? "0.9.0",
+        mode: process.env.WORKSPACE_CORE_ONLY === "true" ? "core" : "full",
+        persistence: process.env.WORKSPACE_DATABASE_URL ? "postgres" : "ephemeral"
       },
       origin
     );
