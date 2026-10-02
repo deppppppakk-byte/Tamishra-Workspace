@@ -7,6 +7,7 @@ import { getKoshAutomationStore } from "./kosh-automation-store.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
 import { getKoshPackageStore } from "./kosh-package-store.js";
 import { getKoshReleaseStore } from "./kosh-release-store.js";
+import { latestKoshCodeIndex } from "./kosh-code-intelligence.js";
 import {
   getKoshFlowStore,
   type KoshFlowEntityType,
@@ -65,6 +66,7 @@ const entityTypes = new Set<KoshFlowEntityType>([
   "change_review",
   "commit",
   "workflow_run",
+  "code_index",
   "package",
   "release",
   "deployment",
@@ -211,6 +213,9 @@ function makeHref(
   if (kind === "workflow_run" || kind === "deployment") {
     return "/apps/kosh/automation?" + base;
   }
+  if (kind === "code_index") {
+    return "/apps/kosh/code-intelligence?" + base;
+  }
   if (kind === "package") {
     return "/apps/kosh/packages?" + base;
   }
@@ -252,6 +257,7 @@ export async function buildKoshFlowGraph(
     deployments,
     packages,
     releases,
+    codeIndex,
     backups,
     pageSites,
     manualLinks,
@@ -266,6 +272,7 @@ export async function buildKoshFlowGraph(
     automationStore.listDeployments(repository.id, 300),
     packageStore.listVersions(repository.id),
     releaseStore.listReleases(repository.id),
+    latestKoshCodeIndex(repository.id),
     platformStore.listResources("backup", repository.id),
     platformStore.listResources("page_site", repository.id),
     flowStore.listLinks(repository.id),
@@ -626,6 +633,48 @@ export async function buildKoshFlowGraph(
     }
   }
 
+  if (codeIndex) {
+    addNode({
+      id: nodeId("code_index", codeIndex.id),
+      type: "code_index",
+      ref: codeIndex.id,
+      title: "Code index " + codeIndex.commitSha.slice(0, 8),
+      subtitle:
+        codeIndex.refName +
+        " · " +
+        codeIndex.symbolCount +
+        " symbols · " +
+        codeIndex.languages.join(", "),
+      stage: "validate",
+      state: codeIndex.state,
+      health: codeIndex.state === "ready" ? "good" : "attention",
+      href:
+        "/apps/kosh/code-intelligence?namespace=" +
+        encodeURIComponent(repository.namespace) +
+        "&slug=" +
+        encodeURIComponent(repository.slug),
+      updatedAt: codeIndex.updatedAt,
+      metadata: {
+        refName: codeIndex.refName,
+        commitSha: codeIndex.commitSha,
+        mode: codeIndex.mode,
+        fileCount: codeIndex.fileCount,
+        symbolCount: codeIndex.symbolCount,
+        referenceCount: codeIndex.referenceCount,
+        languages: codeIndex.languages
+      }
+    });
+
+    addCommitNode(codeIndex.commitSha);
+    uniqueEdge(
+      edges,
+      nodeId("commit", codeIndex.commitSha),
+      nodeId("code_index", codeIndex.id),
+      "validated_by",
+      "derived"
+    );
+  }
+
   for (const release of releases) {
     const linkedPackages = await releaseStore.listPackages(release.id);
 
@@ -785,6 +834,27 @@ export async function buildKoshFlowGraph(
   }
 
   const timeline: FlowTimelineEvent[] = [];
+
+  if (codeIndex) {
+    timeline.push({
+      id: "code-index:" + codeIndex.id,
+      at: codeIndex.updatedAt,
+      kind: "code_index_" + codeIndex.state,
+      title: "Code Intelligence · " + codeIndex.refName,
+      detail:
+        codeIndex.symbolCount +
+        " symbols · " +
+        codeIndex.referenceCount +
+        " references · " +
+        codeIndex.mode,
+      href:
+        "/apps/kosh/code-intelligence?namespace=" +
+        encodeURIComponent(repository.namespace) +
+        "&slug=" +
+        encodeURIComponent(repository.slug),
+      actor: "Kosh Code Intelligence"
+    });
+  }
 
   for (const activity of workActivity) {
     timeline.push({
