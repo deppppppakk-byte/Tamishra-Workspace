@@ -1,10 +1,11 @@
-import { timingSafeEqual } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
+import { timingSafeEqual } from "node:crypto";
 import { mkdir, stat } from "node:fs/promises";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { createKoshStore, type KoshVisibility } from "./kosh-store.js";\nimport { resolveWorkspaceIdentity } from "./identity.js";
+import { resolveWorkspaceIdentity } from "./identity.js";
+import { createKoshStore, type KoshVisibility } from "./kosh-store.js";
 
 const execFileAsync = promisify(execFile);
 const store = createKoshStore();
@@ -18,7 +19,7 @@ function json(
   status: number,
   body: unknown,
   origin?: string,
-  allowedOrigins?: Set<string>
+  allowedOrigins?: ReadonlySet<string>
 ) {
   response.statusCode = status;
   response.setHeader("content-type", "application/json; charset=utf-8");
@@ -32,8 +33,11 @@ function json(
   response.end(JSON.stringify(body));
 }
 
-function validSegment(value: string) {
-  return /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/.test(value);
+function validSegment(value: string, maxLength: number) {
+  return (
+    value.length <= maxLength &&
+    /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(value)
+  );
 }
 
 function slugify(value: string) {
@@ -45,7 +49,10 @@ function slugify(value: string) {
     .slice(0, 100);
 }
 
-async function readJson(request: IncomingMessage, limit = 1024 * 1024): Promise<JsonBody> {
+async function readJson(
+  request: IncomingMessage,
+  limit = 1024 * 1024
+): Promise<JsonBody> {
   const chunks: Buffer[] = [];
   let total = 0;
 
@@ -59,6 +66,7 @@ async function readJson(request: IncomingMessage, limit = 1024 * 1024): Promise<
   }
 
   if (!chunks.length) return {};
+
   try {
     return JSON.parse(Buffer.concat(chunks).toString("utf8")) as JsonBody;
   } catch {
@@ -85,13 +93,16 @@ async function ensureBareRepository(namespace: string, slug: string) {
   }
 
   await mkdir(namespacePath, { recursive: true });
+
   if (await pathExists(resolve(repositoryPath, "HEAD"))) {
     return repositoryPath;
   }
 
-  await execFileAsync("git", ["init", "--bare", "--initial-branch=main", repositoryPath], {
-    timeout: 20_000
-  });
+  await execFileAsync(
+    "git",
+    ["init", "--bare", "--initial-branch=main", repositoryPath],
+    { timeout: 20_000 }
+  );
 
   await execFileAsync(
     "git",
@@ -124,7 +135,10 @@ function suppliedGitToken(request: IncomingMessage) {
 
   if (authorization.toLowerCase().startsWith("basic ")) {
     try {
-      const decoded = Buffer.from(authorization.slice(6), "base64").toString("utf8");
+      const decoded = Buffer.from(
+        authorization.slice(6),
+        "base64"
+      ).toString("utf8");
       const separator = decoded.indexOf(":");
       return separator >= 0 ? decoded.slice(separator + 1) : decoded;
     } catch {
@@ -141,9 +155,13 @@ function tokenMatches(actual: string, expected: string) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-function gitWriteAuthorized(request: IncomingMessage) {
+function gitTokenAuthorized(request: IncomingMessage) {
   const expected = process.env.KOSH_GIT_TOKEN?.trim();
-  if (!expected) return !isProduction;
+
+  if (!expected) {
+    return !isProduction;
+  }
+
   return tokenMatches(suppliedGitToken(request), expected);
 }
 
@@ -151,6 +169,19 @@ function isGitWrite(url: URL) {
   return (
     url.pathname.endsWith("/git-receive-pack") ||
     url.searchParams.get("service") === "git-receive-pack"
+  );
+}
+
+function rejectGitAuthentication(
+  response: ServerResponse,
+  hasConfiguredToken: boolean
+) {
+  response.statusCode = hasConfiguredToken ? 401 : 503;
+  response.setHeader("www-authenticate", 'Basic realm="Kosh Git"');
+  response.end(
+    hasConfiguredToken
+      ? "Authentication required."
+      : "KOSH_GIT_TOKEN is required for protected production Git access."
   );
 }
 
@@ -162,28 +193,28 @@ async function handleGitHttp(
   const match = url.pathname.match(
     /^\/git\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,63})\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,99})\.git(\/.*)?$/
   );
+
   if (!match) return false;
 
   const namespace = match[1];
   const slug = match[2];
   const suffix = match[3] || "";
+  const repository = await store.get(namespace, slug);
   const repositoryPath = resolve(repositoryRoot, namespace, slug + ".git");
 
-  if (!(await pathExists(resolve(repositoryPath, "HEAD")))) {
+  if (!repository || !(await pathExists(resolve(repositoryPath, "HEAD")))) {
     response.statusCode = 404;
     response.end("Repository not found.");
     return true;
   }
 
   const write = isGitWrite(url);
-  if (write && !gitWriteAuthorized(request)) {
-    const configured = Boolean(process.env.KOSH_GIT_TOKEN?.trim());
-    response.statusCode = configured ? 401 : 503;
-    response.setHeader("www-authenticate", 'Basic realm="Kosh Git"');
-    response.end(
-      configured
-        ? "Authentication required."
-        : "KOSH_GIT_TOKEN is required for production pushes."
+  const tokenRequired = write || repository.visibility !== "public";
+
+  if (tokenRequired && !gitTokenAuthorized(request)) {
+    rejectGitAuthentication(
+      response,
+      Boolean(process.env.KOSH_GIT_TOKEN?.trim())
     );
     return true;
   }
@@ -199,7 +230,7 @@ async function handleGitHttp(
       REQUEST_METHOD: request.method || "GET",
       CONTENT_TYPE: String(request.headers["content-type"] ?? ""),
       CONTENT_LENGTH: String(request.headers["content-length"] ?? ""),
-      REMOTE_USER: write ? "kosh-user" : "",
+      REMOTE_USER: tokenRequired ? "kosh-user" : "",
       REMOTE_ADDR: request.socket.remoteAddress || "",
       HTTP_GIT_PROTOCOL: String(request.headers["git-protocol"] ?? "")
     },
@@ -209,12 +240,16 @@ async function handleGitHttp(
   let headerBuffer = Buffer.alloc(0);
   let headersSent = false;
   let stderr = "";
+  let finished = false;
 
   child.stderr.on("data", (chunk) => {
     stderr = (stderr + chunk.toString()).slice(-8192);
   });
 
   child.on("error", (error) => {
+    if (finished) return;
+    finished = true;
+
     if (!response.headersSent) {
       response.statusCode = 500;
       response.end("Kosh Git backend failed: " + error.message);
@@ -232,10 +267,12 @@ async function handleGitHttp(
     headerBuffer = Buffer.concat([headerBuffer, chunk]);
     let separator = headerBuffer.indexOf("\r\n\r\n");
     let separatorLength = 4;
+
     if (separator < 0) {
       separator = headerBuffer.indexOf("\n\n");
       separatorLength = 2;
     }
+
     if (separator < 0) return;
 
     const rawHeaders = headerBuffer.subarray(0, separator).toString("utf8");
@@ -244,11 +281,15 @@ async function handleGitHttp(
     for (const line of rawHeaders.split(/\r?\n/)) {
       const index = line.indexOf(":");
       if (index <= 0) continue;
+
       const name = line.slice(0, index).trim();
       const value = line.slice(index + 1).trim();
+
       if (name.toLowerCase() === "status") {
         const status = Number(value.split(" ")[0]);
-        if (Number.isFinite(status)) response.statusCode = status;
+        if (Number.isFinite(status)) {
+          response.statusCode = status;
+        }
       } else {
         response.setHeader(name, value);
       }
@@ -256,26 +297,60 @@ async function handleGitHttp(
 
     response.setHeader("x-content-type-options", "nosniff");
     headersSent = true;
-    if (body.length) response.write(body);
+
+    if (body.length) {
+      response.write(body);
+    }
   });
 
   response.on("drain", () => child.stdout.resume());
 
   child.on("close", (code) => {
+    if (finished) return;
+    finished = true;
+
     if (!headersSent && !response.headersSent) {
       response.statusCode = code === 0 ? 200 : 500;
       response.end(
         code === 0
           ? ""
-          : "Kosh Git backend exited with code " + code + (stderr ? "\n" + stderr : "")
+          : "Kosh Git backend exited with code " +
+              code +
+              (stderr ? "\n" + stderr : "")
       );
       return;
     }
+
     response.end();
   });
 
-  if (request.method === "POST") request.pipe(child.stdin);
-  else child.stdin.end();
+  if (request.method === "POST") {
+    request.pipe(child.stdin);
+  } else {
+    child.stdin.end();
+  }
+
+  return true;
+}
+
+async function requireWorkspaceIdentity(
+  request: IncomingMessage,
+  response: ServerResponse,
+  origin: string | undefined,
+  allowedOrigins: ReadonlySet<string>
+) {
+  const identity = await resolveWorkspaceIdentity(request);
+
+  if (!identity) {
+    json(
+      response,
+      401,
+      { error: "authentication_required" },
+      origin,
+      allowedOrigins
+    );
+    return false;
+  }
 
   return true;
 }
@@ -285,16 +360,19 @@ export async function handleKoshRequest(
   response: ServerResponse,
   url: URL,
   origin: string | undefined,
-  allowedOrigins: Set<string>
+  allowedOrigins: ReadonlySet<string>
 ) {
   if (url.pathname.startsWith("/git/")) {
     return handleGitHttp(request, response, url);
   }
 
-  if (!url.pathname.startsWith("/v1/kosh")) return false;
+  if (!url.pathname.startsWith("/v1/kosh")) {
+    return false;
+  }
 
   if (request.method === "GET" && url.pathname === "/v1/kosh") {
     await store.ready();
+
     json(
       response,
       200,
@@ -324,7 +402,19 @@ export async function handleKoshRequest(
   }
 
   if (request.method === "GET" && url.pathname === "/v1/kosh/repos") {
+    if (
+      !(await requireWorkspaceIdentity(
+        request,
+        response,
+        origin,
+        allowedOrigins
+      ))
+    ) {
+      return true;
+    }
+
     const repositories = await store.list();
+
     json(
       response,
       200,
@@ -342,8 +432,25 @@ export async function handleKoshRequest(
   }
 
   if (request.method === "POST" && url.pathname === "/v1/kosh/repos") {
+    if (
+      !(await requireWorkspaceIdentity(
+        request,
+        response,
+        origin,
+        allowedOrigins
+      ))
+    ) {
+      return true;
+    }
+
     if (origin && !allowedOrigins.has(origin)) {
-      json(response, 403, { error: "origin_not_allowed" }, origin, allowedOrigins);
+      json(
+        response,
+        403,
+        { error: "origin_not_allowed" },
+        origin,
+        allowedOrigins
+      );
       return true;
     }
 
@@ -352,22 +459,50 @@ export async function handleKoshRequest(
       const namespace = String(body.namespace ?? "").trim();
       const name = String(body.name ?? "").trim();
       const slug = slugify(name);
-      const description = String(body.description ?? "").trim().slice(0, 500);
-      const visibility = String(body.visibility ?? "private") as KoshVisibility;
+      const description = String(body.description ?? "")
+        .trim()
+        .slice(0, 500);
+      const visibility = String(
+        body.visibility ?? "private"
+      ) as KoshVisibility;
 
-      if (!validSegment(namespace, 64) || !validSegment(slug, 100) || !name || name.length > 100) {
-        json(response, 400, { error: "invalid_repository_name" }, origin, allowedOrigins);
+      if (
+        !validSegment(namespace, 64) ||
+        !validSegment(slug, 100) ||
+        !name ||
+        name.length > 100
+      ) {
+        json(
+          response,
+          400,
+          { error: "invalid_repository_name" },
+          origin,
+          allowedOrigins
+        );
         return true;
       }
 
       if (!["private", "internal", "public"].includes(visibility)) {
-        json(response, 400, { error: "invalid_visibility" }, origin, allowedOrigins);
+        json(
+          response,
+          400,
+          { error: "invalid_visibility" },
+          origin,
+          allowedOrigins
+        );
         return true;
       }
 
       await ensureBareRepository(namespace, slug);
+
       const cloneHttpUrl =
-        publicOrigin(request) + "/git/" + namespace + "/" + slug + ".git";
+        publicOrigin(request) +
+        "/git/" +
+        namespace +
+        "/" +
+        slug +
+        ".git";
+
       const repository = await store.create({
         namespace,
         slug,
@@ -385,13 +520,30 @@ export async function handleKoshRequest(
         typeof error === "object" && error && "status" in error
           ? Number((error as { status?: number }).status) || 500
           : 500;
+
       const message =
-        error instanceof Error ? error.message : "repository_creation_failed";
-      json(response, status, { error: message }, origin, allowedOrigins);
+        error instanceof Error
+          ? error.message
+          : "repository_creation_failed";
+
+      json(
+        response,
+        status,
+        { error: message },
+        origin,
+        allowedOrigins
+      );
     }
+
     return true;
   }
 
-  json(response, 404, { error: "kosh_route_not_found" }, origin, allowedOrigins);
+  json(
+    response,
+    404,
+    { error: "kosh_route_not_found" },
+    origin,
+    allowedOrigins
+  );
   return true;
 }
