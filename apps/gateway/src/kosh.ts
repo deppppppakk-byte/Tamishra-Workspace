@@ -23,6 +23,7 @@ import { handleKoshPagesRequest } from "./kosh-pages.js";
 import { handleKoshFlowRequest } from "./kosh-flow.js";
 import { handleKoshMeshRequest } from "./kosh-mesh.js";
 import { handleKoshPulseRequest } from "./kosh-pulse.js";
+import { handleKoshSshBridgeRequest } from "./kosh-ssh.js";
 import { scheduleAutomationEvent } from "./kosh-automation-service.js";
 import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
@@ -909,6 +910,10 @@ export async function handleKoshRequest(
 
   if (!url.pathname.startsWith("/v1/kosh")) {
     return false;
+  }
+
+  if (await handleKoshSshBridgeRequest(request, response, url)) {
+    return true;
   }
 
   if (
