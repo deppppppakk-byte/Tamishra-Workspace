@@ -124,6 +124,7 @@ export function KoshWorkspace() {
           <a href="#repositories">Repositories</a>
           <Link href="/apps/kosh/mesh">Mesh</Link>
           <Link href="/apps/kosh/pulse">Pulse</Link>
+          <Link href="/apps/kosh/access">Access</Link>
           <a href="#platform">Platform</a>
           <a href="#infrastructure">Infrastructure</a>
         </nav>

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { resolveKoshIdentity } from "./kosh-auth.js";
+import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
 import { getKoshStore } from "./kosh-store.js";
 
@@ -99,13 +99,20 @@ export async function handleKoshPagesRequest(
     return true;
   }
 
-  if (repository.visibility !== "public") {
-    const identity = await resolveKoshIdentity(request, "repo:read");
-    if (!identity) {
-      response.statusCode = 401;
-      response.end("Authentication required.");
-      return true;
-    }
+  const authorization = await authorizeKoshRepositoryRequest(
+    request,
+    repository,
+    "repository.read"
+  );
+
+  if (!authorization.decision.allowed) {
+    response.statusCode = authorization.identity ? 403 : 401;
+    response.end(
+      authorization.identity
+        ? "Kosh Pages access denied."
+        : "Authentication required."
+    );
+    return true;
   }
 
   const sites = await platformStore.listResources("page_site", repository.id);

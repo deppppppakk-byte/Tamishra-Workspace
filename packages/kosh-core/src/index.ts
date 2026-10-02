@@ -93,8 +93,8 @@ export const koshModules: KoshModule[] = [
   {
     id: "organizations",
     name: "Organizations & Permissions",
-    description: "Organizations, teams and policy resources for repository and enterprise access control.",
-    status: "foundation"
+    description: "Namespace ownership, teams, repository roles and enforced access across Kosh APIs, Git, LFS, Pages, Mesh and Pulse.",
+    status: "active"
   },
   {
     id: "merge-queue",

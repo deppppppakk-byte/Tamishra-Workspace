@@ -5,6 +5,15 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { resolveKoshIdentity } from "./kosh-auth.js";
+import {
+  authorizeKoshPersonalToken,
+  authorizeKoshRepositoryRequest,
+  bootstrapKoshRepositoryOwner,
+  ensureKoshNamespaceForCreation,
+  handleKoshAccessRequest,
+  listKoshRepositoriesVisibleTo,
+  permissionForKoshRepositoryRequest
+} from "./kosh-access.js";
 import { handleKoshChangeReviewRequest } from "./kosh-reviews.js";
 import { handleKoshWorkRequest } from "./kosh-work.js";
 import { handleKoshAutomationRequest } from "./kosh-automation.js";
@@ -339,14 +348,52 @@ function tokenMatches(actual: string, expected: string) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-function gitTokenAuthorized(request: IncomingMessage) {
+function gitServiceTokenAuthorized(request: IncomingMessage) {
   const expected = process.env.KOSH_GIT_TOKEN?.trim();
+  if (!expected) return false;
+  return tokenMatches(suppliedGitToken(request), expected);
+}
 
-  if (!expected) {
-    return !isProduction;
+async function resolveGitAccess(
+  request: IncomingMessage,
+  repository: StoredKoshRepository
+) {
+  if (gitServiceTokenAuthorized(request)) {
+    return {
+      canRead: true,
+      canWrite: true,
+      remoteUser: "kosh-service",
+      actor: { id: null as string | null, name: "Kosh service" }
+    };
   }
 
-  return tokenMatches(suppliedGitToken(request), expected);
+  const token = suppliedGitToken(request);
+
+  if (!token) {
+    return {
+      canRead: repository.visibility === "public",
+      canWrite: false,
+      remoteUser: "",
+      actor: { id: null as string | null, name: "Anonymous Git" }
+    };
+  }
+
+  const [readAccess, writeAccess] = await Promise.all([
+    authorizeKoshPersonalToken(token, repository, "repository.read"),
+    authorizeKoshPersonalToken(token, repository, "repository.write")
+  ]);
+
+  const identity = writeAccess.identity ?? readAccess.identity;
+
+  return {
+    canRead: readAccess.decision.allowed,
+    canWrite: writeAccess.decision.allowed,
+    remoteUser: identity?.user.email ?? "",
+    actor: {
+      id: identity?.user.id ?? null,
+      name: identity?.user.displayName ?? "Git user"
+    }
+  };
 }
 
 function isGitWrite(url: URL) {
@@ -356,17 +403,10 @@ function isGitWrite(url: URL) {
   );
 }
 
-function rejectGitAuthentication(
-  response: ServerResponse,
-  hasConfiguredToken: boolean
-) {
-  response.statusCode = hasConfiguredToken ? 401 : 503;
+function rejectGitAuthentication(response: ServerResponse) {
+  response.statusCode = 401;
   response.setHeader("www-authenticate", 'Basic realm="Kosh Git"');
-  response.end(
-    hasConfiguredToken
-      ? "Authentication required."
-      : "KOSH_GIT_TOKEN is required for protected production Git access."
-  );
+  response.end("Kosh repository permission denied.");
 }
 
 async function branchRefSnapshot(gitDir: string) {
@@ -414,6 +454,8 @@ async function handleGitHttp(
     return true;
   }
 
+  const gitAccess = await resolveGitAccess(request, repository);
+
   if (
     await handleKoshLfsRequest({
       request,
@@ -427,7 +469,8 @@ async function handleGitHttp(
         "/" +
         encodeURIComponent(slug) +
         ".git",
-      authorized: gitTokenAuthorized(request)
+      canRead: gitAccess.canRead,
+      canWrite: gitAccess.canWrite
     })
   ) {
     return true;
@@ -437,13 +480,9 @@ async function handleGitHttp(
 
   const write = isGitWrite(url);
   const refsBefore = write ? await branchRefSnapshot(path) : null;
-  const tokenRequired = write || repository.visibility !== "public";
 
-  if (tokenRequired && !gitTokenAuthorized(request)) {
-    rejectGitAuthentication(
-      response,
-      Boolean(process.env.KOSH_GIT_TOKEN?.trim())
-    );
+  if ((write && !gitAccess.canWrite) || (!write && !gitAccess.canRead)) {
+    rejectGitAuthentication(response);
     return true;
   }
 
@@ -458,7 +497,7 @@ async function handleGitHttp(
       REQUEST_METHOD: request.method || "GET",
       CONTENT_TYPE: String(request.headers["content-type"] ?? ""),
       CONTENT_LENGTH: String(request.headers["content-length"] ?? ""),
-      REMOTE_USER: tokenRequired ? "kosh-user" : "",
+      REMOTE_USER: gitAccess.remoteUser,
       REMOTE_ADDR: request.socket.remoteAddress || "",
       HTTP_GIT_PROTOCOL: String(request.headers["git-protocol"] ?? "")
     },
@@ -547,7 +586,7 @@ async function handleGitHttp(
               "push",
               branchName,
               commitSha,
-              { id: null, name: "Git push" },
+              gitAccess.actor,
               null
             );
             void dispatchKoshWebhooks(
@@ -615,10 +654,10 @@ async function requireWorkspaceIdentity(
       origin,
       allowedOrigins
     );
-    return false;
+    return null;
   }
 
-  return true;
+  return identity;
 }
 
 function safeTreePath(input: string) {
@@ -873,6 +912,67 @@ export async function handleKoshRequest(
   }
 
   if (
+    await handleKoshAccessRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return true;
+  }
+
+  const repositoryAccessRoute = url.pathname.match(
+    /^\/v1\/kosh\/repos\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,63})\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,99})(?:\/.*)?$/
+  );
+
+  if (repositoryAccessRoute) {
+    const repository = await store.get(
+      repositoryAccessRoute[1],
+      repositoryAccessRoute[2]
+    );
+
+    if (!repository) {
+      json(
+        response,
+        404,
+        { error: "repository_not_found" },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+
+    const permission = permissionForKoshRepositoryRequest(
+      url,
+      request.method || "GET"
+    );
+    const authorization = await authorizeKoshRepositoryRequest(
+      request,
+      repository,
+      permission
+    );
+
+    if (!authorization.decision.allowed) {
+      json(
+        response,
+        authorization.identity ? 403 : 401,
+        {
+          error: authorization.identity
+            ? "repository_permission_denied"
+            : "authentication_required",
+          permission,
+          role: authorization.decision.role
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (
     await handleKoshChangeReviewRequest(
       request,
       response,
@@ -1009,24 +1109,24 @@ export async function handleKoshRequest(
   }
 
   if (request.method === "GET" && url.pathname === "/v1/kosh/repos") {
-    if (
-      !(await requireWorkspaceIdentity(
-        request,
-        response,
-        origin,
-        allowedOrigins
-      ))
-    ) {
-      return true;
-    }
+    const identity = await requireWorkspaceIdentity(
+      request,
+      response,
+      origin,
+      allowedOrigins
+    );
+    if (!identity) return true;
 
-    const repositories = await store.list();
+    const visible = await listKoshRepositoriesVisibleTo(identity);
 
     json(
       response,
       200,
       {
-        repositories,
+        repositories: visible.map((item) => ({
+          ...item.repository,
+          access: item.access
+        })),
         persistence: store.kind,
         gitStorage: process.env.KOSH_REPO_ROOT
           ? "configured-persistent-path"
@@ -1039,16 +1139,13 @@ export async function handleKoshRequest(
   }
 
   if (request.method === "POST" && url.pathname === "/v1/kosh/repos") {
-    if (
-      !(await requireWorkspaceIdentity(
-        request,
-        response,
-        origin,
-        allowedOrigins
-      ))
-    ) {
-      return true;
-    }
+    const identity = await requireWorkspaceIdentity(
+      request,
+      response,
+      origin,
+      allowedOrigins
+    );
+    if (!identity) return true;
 
     if (origin && !allowedOrigins.has(origin)) {
       json(
@@ -1100,6 +1197,7 @@ export async function handleKoshRequest(
         return true;
       }
 
+      await ensureKoshNamespaceForCreation(identity, namespace);
       await ensureBareRepository(namespace, slug);
 
       const cloneHttpUrl =
@@ -1121,7 +1219,21 @@ export async function handleKoshRequest(
         cloneHttpUrl
       });
 
-      json(response, 201, repository, origin, allowedOrigins);
+      await bootstrapKoshRepositoryOwner(repository.id, identity);
+
+      json(
+        response,
+        201,
+        {
+          ...repository,
+          access: {
+            role: "owner",
+            source: "user-grant"
+          }
+        },
+        origin,
+        allowedOrigins
+      );
     } catch (error) {
       routeError(response, error, origin, allowedOrigins);
     }

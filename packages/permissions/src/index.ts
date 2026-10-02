@@ -114,3 +114,102 @@ export class PermissionDeniedError extends Error {
     this.name = "PermissionDeniedError";
   }
 }
+
+
+export type KoshRepositoryRole =
+  | "owner"
+  | "maintainer"
+  | "contributor"
+  | "reviewer"
+  | "reader";
+
+export type KoshRepositoryPermission =
+  | "repository.read"
+  | "repository.write"
+  | "repository.review"
+  | "repository.merge"
+  | "repository.manage"
+  | "automation.run"
+  | "automation.manage"
+  | "packages.publish"
+  | "releases.manage"
+  | "security.manage"
+  | "access.manage";
+
+const koshRolePermissions: Record<
+  KoshRepositoryRole,
+  ReadonlySet<KoshRepositoryPermission>
+> = {
+  owner: new Set<KoshRepositoryPermission>([
+    "repository.read",
+    "repository.write",
+    "repository.review",
+    "repository.merge",
+    "repository.manage",
+    "automation.run",
+    "automation.manage",
+    "packages.publish",
+    "releases.manage",
+    "security.manage",
+    "access.manage"
+  ]),
+  maintainer: new Set<KoshRepositoryPermission>([
+    "repository.read",
+    "repository.write",
+    "repository.review",
+    "repository.merge",
+    "repository.manage",
+    "automation.run",
+    "automation.manage",
+    "packages.publish",
+    "releases.manage",
+    "security.manage",
+    "access.manage"
+  ]),
+  contributor: new Set<KoshRepositoryPermission>([
+    "repository.read",
+    "repository.write",
+    "repository.review",
+    "automation.run",
+    "packages.publish"
+  ]),
+  reviewer: new Set<KoshRepositoryPermission>([
+    "repository.read",
+    "repository.review"
+  ]),
+  reader: new Set<KoshRepositoryPermission>([
+    "repository.read"
+  ])
+};
+
+export function koshPermissionsForRole(role: KoshRepositoryRole) {
+  return new Set(koshRolePermissions[role]);
+}
+
+export function koshHasPermission(
+  role: KoshRepositoryRole,
+  permission: KoshRepositoryPermission
+) {
+  return koshRolePermissions[role].has(permission);
+}
+
+export function koshRequirePermission(
+  role: KoshRepositoryRole,
+  permission: KoshRepositoryPermission
+) {
+  if (!koshHasPermission(role, permission)) {
+    throw new KoshPermissionDeniedError(permission, role);
+  }
+}
+
+export class KoshPermissionDeniedError extends Error {
+  constructor(
+    readonly permission: KoshRepositoryPermission,
+    readonly role: KoshRepositoryRole
+  ) {
+    super(
+      `Kosh role "${role}" does not have permission "${permission}".`
+    );
+    this.name = "KoshPermissionDeniedError";
+  }
+}

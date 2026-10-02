@@ -1,5 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolveKoshIdentity } from "./kosh-auth.js";
+import {
+  evaluateKoshRepositoryAccess,
+  koshNamespaceAuthority
+} from "./kosh-access.js";
 import { getKoshStore } from "./kosh-store.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
 import { buildKoshFlowGraph } from "./kosh-flow.js";
@@ -14,6 +18,10 @@ const platformStore = getKoshPlatformStore();
 const meshStore = getKoshMeshStore();
 
 type JsonBody = Record<string, unknown>;
+
+type KoshMeshIdentity = NonNullable<
+  Awaited<ReturnType<typeof resolveKoshIdentity>>
+>;
 
 type MeshHealth = "good" | "attention" | "blocked" | "failed" | "neutral";
 
@@ -144,18 +152,35 @@ function healthFromState(state: string): MeshHealth {
   return "neutral";
 }
 
-export async function buildKoshMeshGraph() {
+export async function buildKoshMeshGraph(identity: KoshMeshIdentity) {
   await Promise.all([
     repositoryStore.ready(),
     meshStore.ready(),
     platformStore.ready()
   ]);
 
-  const [repositories, components, links] = await Promise.all([
+  const [allRepositories, allComponents, links] = await Promise.all([
     repositoryStore.list(),
     meshStore.listNodes(),
     meshStore.listLinks()
   ]);
+
+  const repositories = [];
+  for (const repository of allRepositories) {
+    const access = await evaluateKoshRepositoryAccess(
+      identity,
+      repository,
+      "repository.read"
+    );
+    if (access.allowed) repositories.push(repository);
+  }
+
+  const visibleNamespaces = new Set(
+    repositories.map((repository) => repository.namespace)
+  );
+  const components = allComponents.filter((component) =>
+    visibleNamespaces.has(component.namespace)
+  );
 
   const nodes: MeshNode[] = [];
   const graphLinks: MeshLink[] = links.map((link) => ({
@@ -335,6 +360,39 @@ export function calculateKoshMeshImpact(
   };
 }
 
+async function canManageMeshNode(
+  identity: KoshMeshIdentity,
+  node: MeshNode
+) {
+  if (node.kind === "repository") {
+    const repository = await repositoryStore.get(node.namespace, node.key);
+    if (!repository) return false;
+    const access = await evaluateKoshRepositoryAccess(
+      identity,
+      repository,
+      "repository.manage"
+    );
+    return access.allowed;
+  }
+
+  const authority = await koshNamespaceAuthority(
+    identity,
+    node.namespace
+  );
+  return authority.canManage;
+}
+
+async function requireMeshNodeManagement(
+  identity: KoshMeshIdentity,
+  node: MeshNode
+) {
+  if (!(await canManageMeshNode(identity, node))) {
+    throw Object.assign(new Error("mesh_manage_required"), {
+      status: 403
+    });
+  }
+}
+
 function routeError(
   response: ServerResponse,
   error: unknown,
@@ -389,7 +447,7 @@ export async function handleKoshMeshRequest(
       sendJson(
         response,
         200,
-        await buildKoshMeshGraph(),
+        await buildKoshMeshGraph(identity),
         origin,
         allowedOrigins
       );
@@ -404,7 +462,7 @@ export async function handleKoshMeshRequest(
       if (!ref) {
         throw Object.assign(new Error("mesh_ref_required"), { status: 400 });
       }
-      const graph = await buildKoshMeshGraph();
+      const graph = await buildKoshMeshGraph(identity);
       sendJson(
         response,
         200,
@@ -427,6 +485,13 @@ export async function handleKoshMeshRequest(
 
       if (!nodeTypes.has(type) || !namespace || !key || !name) {
         throw Object.assign(new Error("invalid_mesh_node"), { status: 400 });
+      }
+
+      const namespaceAccess = await koshNamespaceAuthority(identity, namespace);
+      if (!namespaceAccess.canManage) {
+        throw Object.assign(new Error("namespace_admin_required"), {
+          status: 403
+        });
       }
 
       const node = await meshStore.createNode({
@@ -462,6 +527,21 @@ export async function handleKoshMeshRequest(
     const nodeMatch = url.pathname.match(/^\/v1\/kosh\/mesh\/nodes\/([^/]+)$/);
     if (nodeMatch && request.method === "DELETE") {
       const id = decodeURIComponent(nodeMatch[1]);
+      const existing = (await meshStore.listNodes()).find(
+        (node) => node.id === id
+      );
+      if (!existing) {
+        throw Object.assign(new Error("mesh_node_not_found"), { status: 404 });
+      }
+      const namespaceAccess = await koshNamespaceAuthority(
+        identity,
+        existing.namespace
+      );
+      if (!namespaceAccess.canManage) {
+        throw Object.assign(new Error("namespace_admin_required"), {
+          status: 403
+        });
+      }
       const deleted = await meshStore.deleteNode(id);
       if (!deleted) {
         throw Object.assign(new Error("mesh_node_not_found"), { status: 404 });
@@ -488,11 +568,15 @@ export async function handleKoshMeshRequest(
         throw Object.assign(new Error("invalid_mesh_link"), { status: 400 });
       }
 
-      const graph = await buildKoshMeshGraph();
-      const refs = new Set(graph.nodes.map((node) => node.ref));
-      if (!refs.has(sourceRef) || !refs.has(targetRef)) {
+      const graph = await buildKoshMeshGraph(identity);
+      const sourceNode = graph.nodes.find((node) => node.ref === sourceRef);
+      const targetNode = graph.nodes.find((node) => node.ref === targetRef);
+      if (!sourceNode || !targetNode) {
         throw Object.assign(new Error("mesh_link_node_not_found"), { status: 404 });
       }
+
+      await requireMeshNodeManagement(identity, sourceNode);
+      await requireMeshNodeManagement(identity, targetNode);
 
       const link = await meshStore.createLink({
         sourceRef,
@@ -520,6 +604,28 @@ export async function handleKoshMeshRequest(
     const linkMatch = url.pathname.match(/^\/v1\/kosh\/mesh\/links\/([^/]+)$/);
     if (linkMatch && request.method === "DELETE") {
       const id = decodeURIComponent(linkMatch[1]);
+      const storedLink = (await meshStore.listLinks()).find(
+        (link) => link.id === id
+      );
+      if (!storedLink) {
+        throw Object.assign(new Error("mesh_link_not_found"), { status: 404 });
+      }
+
+      const graph = await buildKoshMeshGraph(identity);
+      const sourceNode = graph.nodes.find(
+        (node) => node.ref === storedLink.sourceRef
+      );
+      const targetNode = graph.nodes.find(
+        (node) => node.ref === storedLink.targetRef
+      );
+      if (!sourceNode || !targetNode) {
+        throw Object.assign(new Error("mesh_link_node_not_found"), {
+          status: 404
+        });
+      }
+      await requireMeshNodeManagement(identity, sourceNode);
+      await requireMeshNodeManagement(identity, targetNode);
+
       const deleted = await meshStore.deleteLink(id);
       if (!deleted) {
         throw Object.assign(new Error("mesh_link_not_found"), { status: 404 });

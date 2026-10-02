@@ -16,6 +16,10 @@ const platformStore = getKoshPlatformStore();
 
 type JsonBody = Record<string, unknown>;
 
+type KoshPulseIdentity = NonNullable<
+  Awaited<ReturnType<typeof resolveKoshIdentity>>
+>;
+
 type PulseSignal = {
   key: string;
   nodeRef: string;
@@ -165,17 +169,27 @@ function signalReason(
   return parts.join(" ");
 }
 
-export async function buildKoshPulse() {
+export async function buildKoshPulse(identity: KoshPulseIdentity) {
   await Promise.all([
     pulseStore.ready(),
     platformStore.ready()
   ]);
 
-  const [mesh, incidents, acknowledgements] = await Promise.all([
-    buildKoshMeshGraph(),
+  const [mesh, allIncidents, allAcknowledgements] = await Promise.all([
+    buildKoshMeshGraph(identity),
     pulseStore.listIncidents(),
     pulseStore.listAcknowledgements()
   ]);
+
+  const visibleRefs = new Set(mesh.nodes.map((node) => node.ref));
+  const incidents = allIncidents.filter((incident) =>
+    visibleRefs.has(incident.targetRef)
+  );
+  const acknowledgements = allAcknowledgements.filter((acknowledgement) =>
+    mesh.nodes.some((node) =>
+      acknowledgement.signalKey.startsWith(node.ref + ":")
+    )
+  );
 
   const openIncidents = incidents.filter(
     (incident) => incident.status !== "resolved"
@@ -349,7 +363,7 @@ export async function handleKoshPulseRequest(
       sendJson(
         response,
         200,
-        await buildKoshPulse(),
+        await buildKoshPulse(identity),
         origin,
         allowedOrigins
       );
@@ -360,10 +374,11 @@ export async function handleKoshPulseRequest(
       request.method === "GET" &&
       url.pathname === "/v1/kosh/pulse/incidents"
     ) {
+      const pulse = await buildKoshPulse(identity);
       sendJson(
         response,
         200,
-        { incidents: await pulseStore.listIncidents() },
+        { incidents: pulse.incidents },
         origin,
         allowedOrigins
       );
@@ -381,7 +396,7 @@ export async function handleKoshPulseRequest(
       const status =
         clean(body.status, 30) as KoshPulseIncidentStatus || "open";
 
-      const mesh = await buildKoshMeshGraph();
+      const mesh = await buildKoshMeshGraph(identity);
       if (!mesh.nodes.some((node) => node.ref === targetRef)) {
         throw Object.assign(new Error("pulse_target_not_found"), {
           status: 404
@@ -427,7 +442,8 @@ export async function handleKoshPulseRequest(
     if (incidentMatch && request.method === "PATCH") {
       const id = decodeURIComponent(incidentMatch[1]);
       const body = await readJson(request);
-      const current = (await pulseStore.listIncidents()).find(
+      const visiblePulse = await buildKoshPulse(identity);
+      const current = visiblePulse.incidents.find(
         (incident) => incident.id === id
       );
       if (!current) {
@@ -504,7 +520,7 @@ export async function handleKoshPulseRequest(
     ) {
       const body = await readJson(request);
       const signalKey = clean(body.signalKey, 500);
-      const pulse = await buildKoshPulse();
+      const pulse = await buildKoshPulse(identity);
       if (!pulse.signals.some((signal) => signal.key === signalKey)) {
         throw Object.assign(new Error("pulse_signal_not_found"), {
           status: 404

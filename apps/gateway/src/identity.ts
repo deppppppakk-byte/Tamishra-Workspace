@@ -360,6 +360,14 @@ export async function getWorkspaceIdentityUser(userId: string) {
   return user && !user.disabled ? user : null;
 }
 
+export async function getWorkspaceIdentityAuthorization(userId: string) {
+  await store.ready();
+  const user = await store.getUser(userId);
+  if (!user || user.disabled) return null;
+  const memberships = await store.listMemberships(userId);
+  return { user, memberships };
+}
+
 export async function listWorkspaceOrganizationMembers(organizationId: string) {
   await store.ready();
   return store.listOrganizationMembers(organizationId);
