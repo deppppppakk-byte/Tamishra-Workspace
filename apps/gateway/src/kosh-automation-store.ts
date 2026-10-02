@@ -33,6 +33,7 @@ export type KoshWorkflowJobDefinition = {
   memoryMb?: number;
   pidsLimit?: number;
   secrets?: string[];
+  runsOn?: string[];
   steps: KoshWorkflowStepDefinition[];
 };
 
@@ -184,6 +185,7 @@ export interface KoshAutomationStore {
   listJobs(runId: string): Promise<StoredKoshJob[]>;
   claimNextJob(
     runnerId: string,
+    runnerLabels: string[],
     leaseToken: string,
     leaseSeconds: number
   ): Promise<StoredKoshJob | null>;
@@ -357,12 +359,18 @@ class MemoryKoshAutomationStore implements KoshAutomationStore {
 
   async claimNextJob(
     runnerId: string,
+    runnerLabels: string[],
     leaseToken: string,
     leaseSeconds: number
   ) {
     await this.requeueExpiredJobs();
+    const labels = new Set(runnerLabels);
     const job = [...this.jobs.values()]
-      .filter((item) => item.status === "queued")
+      .filter(
+        (item) =>
+          item.status === "queued" &&
+          (item.definition.runsOn ?? []).every((label) => labels.has(label))
+      )
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
     if (!job) return null;
 
@@ -919,6 +927,7 @@ class PostgresKoshAutomationStore implements KoshAutomationStore {
 
   async claimNextJob(
     runnerId: string,
+    runnerLabels: string[],
     leaseToken: string,
     leaseSeconds: number
   ) {
@@ -927,27 +936,41 @@ class PostgresKoshAutomationStore implements KoshAutomationStore {
 
     const ttl = Math.max(30, Math.min(600, leaseSeconds));
     const hashedLease = leaseHash(leaseToken);
-    const rows = await this.sql.begin(async (tx) => tx`
-      WITH candidate AS (
-        SELECT id
+    const labelSet = new Set(runnerLabels);
+
+    const rows = await this.sql.begin(async (tx) => {
+      const candidates = await tx`
+        SELECT *
         FROM kosh_workflow_jobs
         WHERE status = 'queued'
         ORDER BY created_at ASC
         FOR UPDATE SKIP LOCKED
-        LIMIT 1
-      )
-      UPDATE kosh_workflow_jobs j
-      SET status = 'running',
-          runner_id = ${runnerId},
-          lease_hash = ${hashedLease},
-          lease_expires_at = NOW() + (${ttl} * INTERVAL '1 second'),
-          last_heartbeat_at = NOW(),
-          started_at = NOW(),
-          updated_at = NOW()
-      FROM candidate
-      WHERE j.id = candidate.id
-      RETURNING j.*
-    `);
+        LIMIT 100
+      `;
+
+      const candidate = candidates.find((row) => {
+        const job = jobFromRow(row as Record<string, unknown>);
+        return (job.definition.runsOn ?? []).every((label) =>
+          labelSet.has(label)
+        );
+      });
+
+      if (!candidate) return [];
+
+      return tx`
+        UPDATE kosh_workflow_jobs
+        SET status = 'running',
+            runner_id = ${runnerId},
+            lease_hash = ${hashedLease},
+            lease_expires_at = NOW() + (${ttl} * INTERVAL '1 second'),
+            last_heartbeat_at = NOW(),
+            started_at = NOW(),
+            updated_at = NOW()
+        WHERE id = ${String((candidate as Record<string, unknown>).id)}
+          AND status = 'queued'
+        RETURNING *
+      `;
+    });
     const row = rows[0] as Record<string, unknown> | undefined;
     if (!row) return null;
     const job = jobFromRow(row);
