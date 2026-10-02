@@ -912,6 +912,67 @@ export async function handleKoshRequest(
   }
 
   if (
+    await handleKoshAccessRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return true;
+  }
+
+  const repositoryAccessRoute = url.pathname.match(
+    /^\/v1\/kosh\/repos\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,63})\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,99})(?:\/.*)?$/
+  );
+
+  if (repositoryAccessRoute) {
+    const repository = await store.get(
+      repositoryAccessRoute[1],
+      repositoryAccessRoute[2]
+    );
+
+    if (!repository) {
+      json(
+        response,
+        404,
+        { error: "repository_not_found" },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+
+    const permission = permissionForKoshRepositoryRequest(
+      url,
+      request.method || "GET"
+    );
+    const authorization = await authorizeKoshRepositoryRequest(
+      request,
+      repository,
+      permission
+    );
+
+    if (!authorization.decision.allowed) {
+      json(
+        response,
+        authorization.identity ? 403 : 401,
+        {
+          error: authorization.identity
+            ? "repository_permission_denied"
+            : "authentication_required",
+          permission,
+          role: authorization.decision.role
+        },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+  }
+
+  if (
     await handleKoshChangeReviewRequest(
       request,
       response,
