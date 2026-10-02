@@ -1033,6 +1033,18 @@ export async function handleKoshRequest(
   }
 
   if (
+    await handleKoshPackageRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return true;
+  }
+
+  if (
     await handleKoshSecurityRequest(
       request,
       response,
