@@ -527,7 +527,7 @@ class PostgresKoshSecurityStore implements KoshSecurityStore {
     return rows.map((row) => scanFromRow(row as Record<string, unknown>));
   }
 
-  async putSbom(input: StoredKoshSbom) {
+  async putSbom(input: StoredKoshSbom): Promise<StoredKoshSbom> {
     await this.ready();
     const rows = await this.sql`
       INSERT INTO kosh_security_sbom(
