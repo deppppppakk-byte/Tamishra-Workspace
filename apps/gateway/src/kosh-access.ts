@@ -446,7 +446,10 @@ export function permissionForKoshRepositoryRequest(
     return "automation.manage";
   }
 
-  if (/\/platform\/packages$/.test(path)) {
+  if (
+    /\/platform\/packages$/.test(path) ||
+    /\/packages(?:\/|$)/.test(path)
+  ) {
     return "packages.publish";
   }
 

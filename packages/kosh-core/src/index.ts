@@ -69,9 +69,9 @@ export const koshModules: KoshModule[] = [
   },
   {
     id: "packages",
-    name: "Packages & Registries",
-    description: "Package metadata, channels, provenance and registry control-plane resources.",
-    status: "foundation"
+    name: "Packages & Registry",
+    description: "Immutable package versions, checksum-verified artifacts, channels, provenance and Automation publishing.",
+    status: "active"
   },
   {
     id: "releases",

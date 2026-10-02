@@ -10,7 +10,7 @@ import {
   writeFile
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 
 type StepDefinition = {
   name: string;
@@ -32,6 +32,7 @@ type JobDefinition = {
   pidsLimit?: number;
   secrets?: string[];
   runsOn?: string[];
+  publishPackages?: boolean;
   steps: StepDefinition[];
 };
 
@@ -748,6 +749,124 @@ async function uploadArtifacts(context: ClaimedJob, workspace: string) {
   }
 }
 
+type PackageManifestEntry = {
+  path: string;
+  key?: string;
+  name?: string;
+  version: string;
+  format?: string;
+  mediaType?: string;
+  channel?: string;
+  metadata?: Record<string, unknown>;
+};
+
+async function uploadPackages(
+  context: ClaimedJob,
+  workspace: string
+) {
+  if (context.job.definition.publishPackages !== true) return;
+
+  const manifestPath = join(
+    workspace,
+    ".kosh-packages",
+    "manifest.json"
+  );
+
+  let document: unknown;
+  try {
+    document = JSON.parse(await readFile(manifestPath, "utf8"));
+  } catch {
+    throw new Error("package_manifest_missing_or_invalid");
+  }
+
+  const entries =
+    document &&
+    typeof document === "object" &&
+    !Array.isArray(document) &&
+    Array.isArray((document as { packages?: unknown }).packages)
+      ? (document as { packages: unknown[] }).packages
+      : [];
+
+  if (!entries.length || entries.length > 50) {
+    throw new Error("package_manifest_entries_invalid");
+  }
+
+  const maxMb = Math.max(
+    1,
+    Math.min(
+      1024,
+      Number(process.env.KOSH_RUNNER_PACKAGE_MAX_MB) || 64
+    )
+  );
+  const maxBytes = Math.floor(maxMb * 1024 * 1024);
+
+  for (const raw of entries) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error("package_manifest_entry_invalid");
+    }
+
+    const entry = raw as Record<string, unknown>;
+    const sourcePath = String(entry.path ?? "").trim();
+    const version = String(entry.version ?? "").trim();
+
+    if (!sourcePath || !version) {
+      throw new Error("package_path_and_version_required");
+    }
+
+    const absolutePath = safeWorkingDirectory(workspace, sourcePath);
+    const info = await stat(absolutePath);
+    if (!info.isFile() || info.size <= 0 || info.size > maxBytes) {
+      throw new Error("package_file_size_invalid");
+    }
+
+    const bytes = await readFile(absolutePath);
+    const packageKey =
+      String(entry.key ?? "").trim() || context.repository.slug;
+    const filename = basename(absolutePath);
+    const metadata =
+      entry.metadata &&
+      typeof entry.metadata === "object" &&
+      !Array.isArray(entry.metadata)
+        ? entry.metadata as Record<string, unknown>
+        : {};
+
+    await postLog(
+      context,
+      "system",
+      "Publishing package " +
+        packageKey +
+        "@" +
+        version +
+        " from " +
+        sourcePath +
+        ".\n"
+    );
+
+    await requestJson(
+      "/v1/kosh/automation/runner/jobs/" +
+        encodeURIComponent(context.job.id) +
+        "/packages",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          key: packageKey,
+          name: String(entry.name ?? "").trim() || packageKey,
+          version,
+          filename,
+          format: String(entry.format ?? "").trim() || "generic",
+          mediaType:
+            String(entry.mediaType ?? "").trim() ||
+            "application/octet-stream",
+          channel: String(entry.channel ?? "").trim() || null,
+          metadata,
+          base64: bytes.toString("base64")
+        })
+      },
+      leaseHeaders(context)
+    );
+  }
+}
+
 async function complete(
   context: ClaimedJob,
   status: "success" | "failure"
@@ -819,6 +938,10 @@ async function execute(context: ClaimedJob) {
             workspace,
             () => leaseHealthy
           );
+
+    if (success && leaseHealthy) {
+      await uploadPackages(context, workspace);
+    }
 
     if (leaseHealthy) {
       await uploadArtifacts(context, workspace);

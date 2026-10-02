@@ -10,6 +10,7 @@ export type KoshWebhookEvent =
   | "issue.created"
   | "issue.updated"
   | "workflow.completed"
+  | "package.published"
   | "release.published";
 
 function allowedWebhookUrl(value: string) {

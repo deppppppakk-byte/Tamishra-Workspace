@@ -34,6 +34,7 @@ export type KoshWorkflowJobDefinition = {
   pidsLimit?: number;
   secrets?: string[];
   runsOn?: string[];
+  publishPackages?: boolean;
   steps: KoshWorkflowStepDefinition[];
 };
 

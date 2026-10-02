@@ -1118,3 +1118,220 @@ KOSH_RUNNER_ALLOW_HOST_EXECUTION=true
 ```
 
 Shared production runners should remain container-based.
+
+
+## Kosh Packages & Registry
+
+Kosh Packages is the repository-native binary package registry.
+
+Workspace route:
+
+`/apps/kosh/packages?namespace=<namespace>&slug=<repository>`
+
+### Registry model
+
+Kosh separates immutable package versions from mutable delivery channels.
+
+```text
+Package key
+  ├─ version 1.0.0  (immutable bytes + metadata)
+  ├─ version 1.1.0  (immutable bytes + metadata)
+  └─ channels
+       ├─ latest → 1.1.0
+       └─ stable → 1.0.0
+```
+
+A successfully published package version cannot be overwritten with different bytes.
+
+Package identity is:
+
+`repository + package key + version`
+
+Channels may move between already-published versions.
+
+### Stored package evidence
+
+Each package version records:
+
+- immutable version ID
+- package key and display name
+- version string
+- original filename
+- format
+- media type
+- byte size
+- SHA-256 checksum
+- published/yanked state
+- source commit SHA when available
+- Automation run ID when available
+- provenance metadata
+- publisher identity
+- creation/update timestamps
+
+Artifact bytes live under `KOSH_PACKAGE_ROOT`.
+
+Metadata lives in PostgreSQL.
+
+### Integrity
+
+The registry verifies the stored byte count and SHA-256 checksum before download.
+
+Integrity API:
+
+`GET /v1/kosh/repos/<namespace>/<repository>/packages/<key>/versions/<version>/verify`
+
+Downloads return the persisted checksum through `X-Kosh-SHA256` and an immutable ETag.
+
+A channel cannot be promoted to an artifact that fails integrity verification.
+
+### Version lifecycle
+
+Package version bytes and identity are immutable.
+
+Versions may be:
+
+- `published`
+- `yanked`
+
+Yanking does not rewrite or delete artifact bytes. It makes the version unavailable for normal download and prevents new channel promotion to that version.
+
+A yanked version can be restored.
+
+### Channels
+
+Channels are mutable named pointers such as:
+
+- `latest`
+- `stable`
+- `beta`
+- `production`
+
+Channel promotion requires the repository `packages.publish` permission.
+
+Channel resolution:
+
+`GET /v1/kosh/repos/<namespace>/<repository>/packages/<key>/channels/<channel>`
+
+Channel artifact download:
+
+`GET /v1/kosh/repos/<namespace>/<repository>/packages/<key>/channels/<channel>/download`
+
+### Manual publish
+
+Binary publish accepts the raw artifact body.
+
+Example shape:
+
+```text
+POST /v1/kosh/repos/<namespace>/<repository>/packages/publish
+  ?key=my-package
+  &version=1.2.0
+  &filename=my-package.tgz
+  &format=tgz
+  &channel=latest
+```
+
+The request body is the package bytes.
+
+JSON/base64 publishing is also supported for trusted programmatic clients.
+
+Maximum package size:
+
+```env
+KOSH_PACKAGE_MAX_MB=64
+```
+
+### Automation publishing
+
+Kosh Automation can publish packages without a user PAT.
+
+A job must opt in:
+
+```json
+{
+  "publishPackages": true
+}
+```
+
+After successful build steps, the runner reads:
+
+`.kosh-packages/manifest.json`
+
+Example:
+
+```json
+{
+  "packages": [
+    {
+      "path": "dist/kosh-cli.tgz",
+      "key": "kosh-cli",
+      "name": "Kosh CLI",
+      "version": "1.4.0",
+      "format": "tgz",
+      "mediaType": "application/gzip",
+      "channel": "latest",
+      "metadata": {
+        "platform": "node"
+      }
+    }
+  ]
+}
+```
+
+The runner:
+
+1. requires a healthy job lease
+2. validates every listed path stays inside the checked-out workspace
+3. enforces the runner package size limit
+4. uploads only the listed files
+5. attaches run, workflow, job, ref and commit provenance automatically
+
+Runner-side size guard:
+
+```env
+KOSH_RUNNER_PACKAGE_MAX_MB=64
+```
+
+Package publishing is rejected for jobs whose workflow definition does not set `publishPackages: true`.
+
+### Permissions
+
+Repository reads can list and download published package versions.
+
+Publishing, channel promotion, yanking and restoring require:
+
+`packages.publish`
+
+Automation publishing uses the trusted runner service identity plus the job-specific lease and explicit workflow opt-in.
+
+### Flow and webhooks
+
+Kosh Flow uses the native registry as its package source.
+
+Package nodes link back to:
+
+- producing workflow run
+- producing commit
+- future release promotion
+
+Package publication emits:
+
+`package.published`
+
+Signed Kosh webhooks can subscribe to that event.
+
+### Legacy generic package resources
+
+The older generic `package` and `package_channel` Platform resources remain readable for migration compatibility.
+
+They are no longer offered as the primary package creation surface.
+
+The native Package Registry is authoritative for package versions, channels, artifact bytes, integrity and provenance.
+
+### Storage requirements
+
+`KOSH_PACKAGE_ROOT` must point to durable storage in production.
+
+Do not place live package registry storage on ephemeral container filesystems.
+
+The current package artifact adapter is filesystem-backed and intentionally separate from repository metadata so a future object-storage adapter can replace the byte store without changing package identity or lifecycle rules.

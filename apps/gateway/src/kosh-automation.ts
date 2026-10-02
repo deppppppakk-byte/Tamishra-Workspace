@@ -10,6 +10,7 @@ import {
   type KoshRunnerExecutor
 } from "./kosh-runner-control-store.js";
 import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
+import { publishKoshPackage } from "./kosh-packages.js";
 import {
   automationStore,
   scheduleWorkflow,
@@ -482,6 +483,92 @@ async function handleRunner(
       }
 
       sendJson(response, 200, { job, run });
+      return true;
+    }
+
+    const packagePublishMatch = url.pathname.match(
+      /^\/v1\/kosh\/automation\/runner\/jobs\/([^/]+)\/packages$/
+    );
+    if (packagePublishMatch && request.method === "POST") {
+      const jobId = decodeURIComponent(packagePublishMatch[1]);
+      if (!(await requireJobLease(request, jobId))) {
+        throw Object.assign(new Error("job_lease_invalid"), { status: 403 });
+      }
+
+      const contexts = await Promise.all(
+        (await repositoryStore.list()).map(async (repository) => {
+          const runs = await store.listRuns(repository.id, 500);
+          for (const run of runs) {
+            const runJobs = await store.listJobs(run.id);
+            const found = runJobs.find((item) => item.id === jobId);
+            if (found) return { repository, run, job: found };
+          }
+          return null;
+        })
+      );
+      const context = contexts.find(Boolean);
+      if (!context) {
+        throw Object.assign(new Error("job_not_found"), { status: 404 });
+      }
+
+      if (context.job.definition.publishPackages !== true) {
+        throw Object.assign(new Error("job_package_publish_not_enabled"), {
+          status: 403
+        });
+      }
+
+      const body = await readJson(request, 96 * 1024 * 1024);
+      const packageKey = clean(body.key, 120);
+      const name = clean(body.name, 180) || packageKey;
+      const version = clean(body.version, 100);
+      const filename = clean(body.filename, 220);
+      const format = clean(body.format, 80) || "generic";
+      const mediaType =
+        clean(body.mediaType, 160) || "application/octet-stream";
+      const channel = clean(body.channel, 80) || null;
+      const encoded = String(body.base64 ?? "");
+      const bytes = Buffer.from(encoded, "base64");
+      const metadata =
+        body.metadata &&
+        typeof body.metadata === "object" &&
+        !Array.isArray(body.metadata)
+          ? body.metadata as Record<string, unknown>
+          : {};
+
+      const actorId =
+        context.run.actorUserId || "automation:" + context.job.id;
+      const actorName =
+        context.run.actorName || "Kosh Automation";
+
+      const published = await publishKoshPackage({
+        repository: context.repository,
+        packageKey,
+        name,
+        version,
+        filename,
+        format,
+        mediaType,
+        bytes,
+        commitSha: context.run.commitSha,
+        runId: context.run.id,
+        provenance: {
+          source: "automation",
+          workflowId: context.job.workflowId,
+          workflowName: context.run.workflowName,
+          jobId: context.job.id,
+          jobName: context.job.name,
+          refName: context.run.refName,
+          runnerId: context.job.runnerId
+        },
+        metadata,
+        actor: {
+          id: actorId,
+          displayName: actorName
+        },
+        channel
+      });
+
+      sendJson(response, 201, published);
       return true;
     }
 
