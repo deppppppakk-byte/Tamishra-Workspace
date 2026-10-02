@@ -3,7 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { resolveWorkspaceIdentity } from "./identity.js";
+import { resolveKoshIdentity } from "./kosh-auth.js";
 import { getKoshStore, type StoredKoshRepository } from "./kosh-store.js";
 import { getKoshWorkStore } from "./kosh-work-store.js";
 import { requiredChecksForCommit, scheduleAutomationEvent } from "./kosh-automation-service.js";
@@ -236,7 +236,7 @@ async function requireIdentity(
   origin: string | undefined,
   allowedOrigins: ReadonlySet<string>
 ) {
-  const identity = await resolveWorkspaceIdentity(request);
+  const identity = await resolveKoshIdentity(\n    request,\n    request.method === "GET" ? "repo:read" : "repo:write"\n  );
   if (!identity) {
     sendJson(
       response,
