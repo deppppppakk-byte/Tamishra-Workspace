@@ -11,6 +11,7 @@ import { handleKoshAutomationRequest } from "./kosh-automation.js";
 import { handleKoshPlatformRequest } from "./kosh-platform.js";
 import { handleKoshLfsRequest } from "./kosh-lfs.js";
 import { handleKoshPagesRequest } from "./kosh-pages.js";
+import { handleKoshFlowRequest } from "./kosh-flow.js";
 import { scheduleAutomationEvent } from "./kosh-automation-service.js";
 import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
@@ -895,6 +896,18 @@ export async function handleKoshRequest(
 
   if (
     await handleKoshAutomationRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    await handleKoshFlowRequest(
       request,
       response,
       url,
