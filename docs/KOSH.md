@@ -100,3 +100,37 @@ Static-export-compatible UI routes:
 `/apps/kosh/review?namespace=<namespace>&slug=<slug>&number=<number>`
 
 Change Review metadata lives in PostgreSQL. Branches, commits, diffs, merge bases and merge commits remain Git-native.
+
+## Phase 4 — Work Management
+
+Kosh now includes a native work-management layer that replaces the core GitHub Issues, Projects and Discussions workflow.
+
+Implemented:
+
+- repository issue numbering and lifecycle
+- issue descriptions, comments and self-assignment
+- labels and multi-label issue assignment
+- milestones and due dates
+- issue dependencies
+- issue links to commits and Change Requests
+- automatic commit-message issue linking
+- automatic Change Request issue linking
+- closing keywords on merged Change Requests: closes, fixes and resolves
+- project activity timeline
+- repository notifications for issue authors and assignees
+- issue templates
+- technical/project discussions with categories and replies
+- discussion locking
+- project boards with Backlog, Ready, In progress, In review and Done stages
+- board cards linked directly to issues
+- repository Work dashboard and planning UI
+
+Static-export-compatible workspace route:
+
+`/apps/kosh/work?namespace=<namespace>&slug=<slug>`
+
+Issue deep link:
+
+`/apps/kosh/work?namespace=<namespace>&slug=<slug>&issue=<number>`
+
+Work metadata is stored in PostgreSQL. Commit and Change Request links continue to resolve to Kosh's Git-native development layer.
