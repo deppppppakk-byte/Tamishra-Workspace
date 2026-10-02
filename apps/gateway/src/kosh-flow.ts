@@ -845,7 +845,31 @@ export async function buildKoshFlowGraph(
     });
   }
 
-  for (const resource of [...packages, ...releases, ...backups, ...pageSites]) {
+  for (const packageVersion of packages) {
+    timeline.push({
+      id: "package:" + packageVersion.id,
+      at: packageVersion.updatedAt,
+      kind: "package_" + packageVersion.state,
+      title:
+        packageVersion.packageKey +
+        "@" +
+        packageVersion.version,
+      detail:
+        packageVersion.state +
+        " · " +
+        packageVersion.format,
+      href:
+        "/apps/kosh/packages?namespace=" +
+        encodeURIComponent(repository.namespace) +
+        "&slug=" +
+        encodeURIComponent(repository.slug) +
+        "&package=" +
+        encodeURIComponent(packageVersion.packageKey),
+      actor: packageVersion.createdByName
+    });
+  }
+
+  for (const resource of [...releases, ...backups, ...pageSites]) {
     timeline.push({
       id: "resource:" + resource.id,
       at: resource.updatedAt,
