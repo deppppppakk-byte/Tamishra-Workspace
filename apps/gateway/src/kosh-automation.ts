@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, sep } from "node:path";
 import { resolveKoshIdentity } from "./kosh-auth.js";
 import { getKoshStore } from "./kosh-store.js";
+import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
   automationStore,
   scheduleWorkflow,
@@ -241,6 +242,24 @@ async function handleRunner(
       }
 
       const run = await syncRunCheck(job.runId);
+
+      if (
+        run &&
+        ["success", "failure", "cancelled"].includes(run.status)
+      ) {
+        void dispatchKoshWebhooks(
+          run.repositoryId,
+          "workflow.completed",
+          {
+            runId: run.id,
+            workflowName: run.workflowName,
+            status: run.status,
+            refName: run.refName,
+            commitSha: run.commitSha
+          }
+        ).catch(() => undefined);
+      }
+
       sendJson(response, 200, { job, run });
       return true;
     }
