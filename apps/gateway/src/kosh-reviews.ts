@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { resolveWorkspaceIdentity } from "./identity.js";
-import { getKoshStore } from "./kosh-store.js";
+import { getKoshStore, type StoredKoshRepository } from "./kosh-store.js";
 import { getKoshWorkStore } from "./kosh-work-store.js";
 import { requiredChecksForCommit, scheduleAutomationEvent } from "./kosh-automation-service.js";
 import {
@@ -622,11 +622,11 @@ function latestReviewStates(
 
 async function synchronizedRequest(
   gitDir: string,
-  repositoryId: string,
+  repository: StoredKoshRepository,
   requestNumber: number
 ) {
   const changeRequest = await reviewStore.getChangeRequest(
-    repositoryId,
+    repository.id,
     requestNumber
   );
 
@@ -640,15 +640,32 @@ async function synchronizedRequest(
 
   const base = await resolveBranch(gitDir, changeRequest.baseBranch);
   const head = await resolveBranch(gitDir, changeRequest.headBranch);
+  const refsChanged =
+    base.sha !== changeRequest.baseSha ||
+    head.sha !== changeRequest.headSha;
 
-  return (
-    await reviewStore.syncChangeRequest(
-      repositoryId,
-      requestNumber,
-      base.sha,
-      head.sha
-    )
-  ) ?? changeRequest;
+  const synchronized =
+    (
+      await reviewStore.syncChangeRequest(
+        repository.id,
+        requestNumber,
+        base.sha,
+        head.sha
+      )
+    ) ?? changeRequest;
+
+  if (refsChanged) {
+    await scheduleAutomationEvent(
+      repository,
+      "change_request",
+      synchronized.baseBranch,
+      synchronized.headSha,
+      { id: null, name: "Change Review update" },
+      synchronized.number
+    );
+  }
+
+  return synchronized;
 }
 
 async function mergeChangeRequest(
@@ -1076,7 +1093,7 @@ export async function handleKoshChangeReviewRequest(
 
       const changeRequest = await synchronizedRequest(
         gitDir,
-        repository.id,
+        repository,
         requestNumber
       );
 
@@ -1228,7 +1245,7 @@ export async function handleKoshChangeReviewRequest(
 
         const synchronized = await synchronizedRequest(
           gitDir,
-          repository.id,
+          repository,
           requestNumber
         );
         const [reviews, policy] = await Promise.all([
