@@ -265,6 +265,22 @@ function maxReferencesPerFile() {
     : 750;
 }
 
+function maxSymbolsPerIndex() {
+  const configured = Number(process.env.KOSH_CODE_INDEX_MAX_SYMBOLS ?? 50000);
+  return Number.isFinite(configured)
+    ? Math.max(1000, Math.min(250000, Math.floor(configured)))
+    : 50000;
+}
+
+function maxReferencesPerIndex() {
+  const configured = Number(
+    process.env.KOSH_CODE_INDEX_MAX_REFERENCES ?? 75000
+  );
+  return Number.isFinite(configured)
+    ? Math.max(5000, Math.min(500000, Math.floor(configured)))
+    : 75000;
+}
+
 async function listSupportedFiles(
   repository: StoredKoshRepository,
   commitSha: string
@@ -813,8 +829,27 @@ export async function indexKoshRepositoryCode(
       const text = await readBlob(repository, commitSha, path);
       if (text == null) continue;
       const parsed = parseFile(path, language, text);
-      symbols.push(...parsed.symbols);
-      references.push(...parsed.references);
+
+      if (symbols.length < maxSymbolsPerIndex()) {
+        symbols.push(
+          ...parsed.symbols.slice(0, maxSymbolsPerIndex() - symbols.length)
+        );
+      }
+      if (references.length < maxReferencesPerIndex()) {
+        references.push(
+          ...parsed.references.slice(
+            0,
+            maxReferencesPerIndex() - references.length
+          )
+        );
+      }
+
+      if (
+        symbols.length >= maxSymbolsPerIndex() &&
+        references.length >= maxReferencesPerIndex()
+      ) {
+        break;
+      }
     }
 
     const owners = await parseOwners(repository, commitSha);
