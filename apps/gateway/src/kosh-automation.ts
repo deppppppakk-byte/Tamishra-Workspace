@@ -599,6 +599,49 @@ export async function handleKoshAutomationRequest(
 ) {
   if (await handleRunner(request, response, url)) return true;
 
+  if (
+    request.method === "GET" &&
+    url.pathname === "/v1/kosh/automation/runners"
+  ) {
+    const identity = await requireIdentity(
+      request,
+      response,
+      origin,
+      allowedOrigins
+    );
+    if (!identity) return true;
+
+    const administrator = identity.memberships.some(
+      (item) =>
+        !item.membership.disabled &&
+        (item.membership.role === "owner" ||
+          item.membership.role === "admin")
+    );
+    if (!administrator) {
+      sendJson(
+        response,
+        403,
+        { error: "automation_admin_required" },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+
+    await runnerControlStore.ready();
+    sendJson(
+      response,
+      200,
+      {
+        runners: await runnerControlStore.listRunners(),
+        persistence: runnerControlStore.kind
+      },
+      origin,
+      allowedOrigins
+    );
+    return true;
+  }
+
   const match = url.pathname.match(
     /^\/v1\/kosh\/repos\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,63})\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,99})\/automation(.*)$/
   );
