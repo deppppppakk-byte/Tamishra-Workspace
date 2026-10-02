@@ -117,11 +117,16 @@ export interface KoshPlatformStore {
   deleteSecret(id: string): Promise<boolean>;
 
   listSshKeys(userId: string): Promise<StoredKoshSshKey[]>;
+  findSshKeyByFingerprint(
+    fingerprint: string
+  ): Promise<StoredKoshSshKey | null>;
+  getSshKey(userId: string, id: string): Promise<StoredKoshSshKey | null>;
   createSshKey(input: {
     userId: string;
     title: string;
     publicKey: string;
   }): Promise<StoredKoshSshKey>;
+  touchSshKey(userId: string, id: string): Promise<void>;
   deleteSshKey(userId: string, id: string): Promise<boolean>;
 
   listApiTokens(userId: string): Promise<StoredKoshApiToken[]>;
@@ -197,18 +202,43 @@ function decryptSecret(value: string) {
 }
 
 function sshFingerprint(publicKey: string) {
-  const parts = publicKey.trim().split(/\s+/);
+  const value = publicKey.trim();
+  if (!value || value.length > 32 * 1024 || value.includes("\n") || value.includes("\r")) {
+    throw Object.assign(new Error("invalid_ssh_public_key"), { status: 400 });
+  }
+
+  const parts = value.split(/\s+/);
+  const algorithm = parts[0] ?? "";
   const encoded = parts[1] ?? "";
-  let bytes: Buffer;
-  try {
-    bytes = Buffer.from(encoded, "base64");
-  } catch {
+  const allowedAlgorithms = new Set([
+    "ssh-ed25519",
+    "sk-ssh-ed25519@openssh.com",
+    "ecdsa-sha2-nistp256",
+    "ecdsa-sha2-nistp384",
+    "ecdsa-sha2-nistp521",
+    "sk-ecdsa-sha2-nistp256@openssh.com",
+    "ssh-rsa"
+  ]);
+
+  if (
+    !allowedAlgorithms.has(algorithm) ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)
+  ) {
+    throw Object.assign(new Error("unsupported_ssh_public_key"), { status: 400 });
+  }
+
+  const bytes = Buffer.from(encoded, "base64");
+  if (bytes.length < 32 || bytes.length > 16 * 1024) {
     throw Object.assign(new Error("invalid_ssh_public_key"), { status: 400 });
   }
-  if (!bytes.length) {
-    throw Object.assign(new Error("invalid_ssh_public_key"), { status: 400 });
-  }
-  return "SHA256:" + createHash("sha256").update(bytes).digest("base64").replace(/=+$/g, "");
+
+  return (
+    "SHA256:" +
+    createHash("sha256")
+      .update(bytes)
+      .digest("base64")
+      .replace(/=+$/g, "")
+  );
 }
 
 function newApiToken() {
@@ -350,6 +380,18 @@ class MemoryKoshPlatformStore implements KoshPlatformStore {
       .map(clone);
   }
 
+  async findSshKeyByFingerprint(fingerprint: string) {
+    const item = [...this.sshKeys.values()].find(
+      (candidate) => candidate.fingerprint === fingerprint
+    );
+    return item ? clone(item) : null;
+  }
+
+  async getSshKey(userId: string, id: string) {
+    const item = this.sshKeys.get(id);
+    return item && item.userId === userId ? clone(item) : null;
+  }
+
   async createSshKey(input: { userId: string; title: string; publicKey: string }) {
     const fingerprint = sshFingerprint(input.publicKey);
     const duplicate = [...this.sshKeys.values()].find(
@@ -369,6 +411,13 @@ class MemoryKoshPlatformStore implements KoshPlatformStore {
     };
     this.sshKeys.set(item.id, item);
     return clone(item);
+  }
+
+  async touchSshKey(userId: string, id: string) {
+    const item = this.sshKeys.get(id);
+    if (item && item.userId === userId) {
+      item.lastUsedAt = now();
+    }
   }
 
   async deleteSshKey(userId: string, id: string) {
@@ -736,6 +785,48 @@ class PostgresKoshPlatformStore implements KoshPlatformStore {
     }));
   }
 
+  async findSshKeyByFingerprint(fingerprint: string) {
+    await this.ready();
+    const rows = await this.sql`
+      SELECT * FROM kosh_ssh_keys
+      WHERE fingerprint = ${fingerprint}
+      LIMIT 1
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    return row
+      ? {
+          id: String(row.id),
+          userId: String(row.user_id),
+          title: String(row.title),
+          publicKey: String(row.public_key),
+          fingerprint: String(row.fingerprint),
+          createdAt: iso(row.created_at) ?? now(),
+          lastUsedAt: iso(row.last_used_at)
+        }
+      : null;
+  }
+
+  async getSshKey(userId: string, id: string) {
+    await this.ready();
+    const rows = await this.sql`
+      SELECT * FROM kosh_ssh_keys
+      WHERE id = ${id} AND user_id = ${userId}
+      LIMIT 1
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    return row
+      ? {
+          id: String(row.id),
+          userId: String(row.user_id),
+          title: String(row.title),
+          publicKey: String(row.public_key),
+          fingerprint: String(row.fingerprint),
+          createdAt: iso(row.created_at) ?? now(),
+          lastUsedAt: iso(row.last_used_at)
+        }
+      : null;
+  }
+
   async createSshKey(input: { userId: string; title: string; publicKey: string }) {
     await this.ready();
     const fingerprint = sshFingerprint(input.publicKey);
@@ -766,6 +857,15 @@ class PostgresKoshPlatformStore implements KoshPlatformStore {
       }
       throw error;
     }
+  }
+
+  async touchSshKey(userId: string, id: string) {
+    await this.ready();
+    await this.sql`
+      UPDATE kosh_ssh_keys
+      SET last_used_at = NOW()
+      WHERE id = ${id} AND user_id = ${userId}
+    `;
   }
 
   async deleteSshKey(userId: string, id: string) {

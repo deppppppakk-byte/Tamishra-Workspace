@@ -55,6 +55,7 @@ type SshKey = {
   publicKey: string;
   fingerprint: string;
   createdAt: string;
+  lastUsedAt: string | null;
 };
 
 type ApiToken = {
@@ -398,6 +399,24 @@ export function KoshPlatformWorkspace() {
     }
   }
 
+  async function deleteSshKey(key: SshKey) {
+    setMutating(true);
+    setError("");
+    try {
+      await mutateJson(
+        base + "/v1/kosh/platform/ssh-keys/" + encodeURIComponent(key.id),
+        "DELETE"
+      );
+      await load();
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Could not remove SSH key."
+      );
+    } finally {
+      setMutating(false);
+    }
+  }
+
   async function createToken() {
     if (!tokenName.trim()) return;
     setMutating(true);
@@ -726,7 +745,17 @@ export function KoshPlatformWorkspace() {
                 <div>
                   <strong>{key.title}</strong>
                   <span>{key.fingerprint}</span>
+                  <span>
+                    Last used: {key.lastUsedAt ? age(key.lastUsedAt) : "never"}
+                  </span>
                 </div>
+                <button
+                  className={styles.danger}
+                  disabled={mutating}
+                  onClick={() => void deleteSshKey(key)}
+                >
+                  Remove
+                </button>
               </article>
             ))}
           </section>

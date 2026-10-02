@@ -27,7 +27,11 @@ const platformStore = getKoshPlatformStore();
 
 type JsonBody = Record<string, unknown>;
 
-type KoshIdentity = NonNullable<
+export type KoshAccessIdentity = NonNullable<
+  Awaited<ReturnType<typeof getWorkspaceIdentityAuthorization>>
+>;
+
+type KoshRequestIdentity = NonNullable<
   Awaited<ReturnType<typeof resolveKoshIdentity>>
 >;
 
@@ -141,7 +145,7 @@ function requiredApiScope(permission: KoshRepositoryPermission) {
 }
 
 function membershipForNamespace(
-  identity: KoshIdentity,
+  identity: KoshAccessIdentity,
   namespace: string,
   organizationId: string | null
 ) {
@@ -157,7 +161,7 @@ function membershipForNamespace(
 }
 
 function organizationRole(
-  membership: KoshIdentity["memberships"][number] | null,
+  membership: KoshAccessIdentity["memberships"][number] | null,
   repository: StoredKoshRepository
 ): KoshRepositoryRole | null {
   if (!membership || membership.membership.disabled) return null;
@@ -184,7 +188,7 @@ function legacyMode() {
 }
 
 export async function evaluateKoshRepositoryAccess(
-  identity: KoshIdentity | null,
+  identity: KoshAccessIdentity | null,
   repository: StoredKoshRepository,
   permission: KoshRepositoryPermission
 ): Promise<KoshAccessDecision> {
@@ -391,7 +395,7 @@ export async function authorizeKoshPersonalToken(
     };
   }
 
-  const identity: KoshIdentity = {
+  const identity: KoshRequestIdentity = {
     ...authorization,
     session: null,
     authType: "api-token",
@@ -458,7 +462,7 @@ export function permissionForKoshRepositoryRequest(
 }
 
 export async function listKoshRepositoriesVisibleTo(
-  identity: KoshIdentity
+  identity: KoshAccessIdentity
 ) {
   const repositories = await repositoryStore.list();
   const visible: Array<{
@@ -481,7 +485,7 @@ export async function listKoshRepositoriesVisibleTo(
 }
 
 export async function ensureKoshNamespaceForCreation(
-  identity: KoshIdentity,
+  identity: KoshAccessIdentity,
   namespace: string
 ) {
   await accessStore.ready();
@@ -528,7 +532,7 @@ export async function ensureKoshNamespaceForCreation(
 }
 
 export async function koshNamespaceAuthority(
-  identity: KoshIdentity,
+  identity: KoshAccessIdentity,
   namespace: string
 ) {
   const binding = await accessStore.getNamespaceBinding(namespace);
@@ -550,7 +554,7 @@ export async function koshNamespaceAuthority(
 
 export async function bootstrapKoshRepositoryOwner(
   repositoryId: string,
-  identity: KoshIdentity
+  identity: KoshAccessIdentity
 ) {
   await accessStore.ready();
   const grants = await accessStore.listRepositoryGrants(repositoryId);

@@ -221,7 +221,7 @@ This expansion develops the broader Kosh platform domains while keeping maturity
 | 1 | Packages & registries | Generic immutable binary package publishing/download, SHA-256 metadata, package/channel resources |
 | 2 | Releases | Release resources plus persistent release-asset upload/download and checksums |
 | 3 | Security | AES-256-GCM encrypted secrets, security-finding resources, audit trail, code-owner policy resources |
-| 4 | SSH Git | SSH public-key registration and SHA-256 fingerprints; dedicated SSH transport remains a separate service |
+| 4 | SSH Git | Active OpenSSH transport with dynamic Kosh key authorization, forced Git-only commands, repository ACL checks, key usage tracking and push event ingestion |
 | 5 | Organizations & permissions | Active namespace ownership, teams, repository roles and enforcement across API, Git HTTP, LFS, Pages, Mesh and Pulse |
 | 6 | Merge queue | Persistent priority queue and processor using the same approval/CI/conflict/atomic merge engine as manual reviews |
 | 7 | Code search | Git-native code, path and commit-message search |
@@ -659,3 +659,127 @@ Mesh includes only repositories visible to the current identity and only compone
 Pulse derives its signals and visible incidents from that caller-filtered Mesh graph.
 
 This keeps Kosh lifecycle and impact intelligence inside the same authorization boundary as the underlying repositories.
+
+
+## Kosh SSH Git
+
+Kosh SSH is the second native Git transport alongside Smart HTTP.
+
+Clone format:
+
+```bash
+git clone git@kosh.tamishra.in:<namespace>/<repository>.git
+```
+
+For a non-default SSH port:
+
+```bash
+git clone ssh://git@kosh.tamishra.in:2222/<namespace>/<repository>.git
+```
+
+### Architecture
+
+Kosh uses OpenSSH for the wire protocol and cryptographic session boundary. Kosh owns identity, authorization and Git command execution.
+
+```text
+Git client
+   ↓ SSH
+OpenSSH sshd
+   ↓ AuthorizedKeysCommand
+kosh-ssh-authorized-keys
+   ↓ trusted internal API
+Kosh Gateway → SSH key → Workspace user
+   ↓
+forced kosh-ssh-shell
+   ↓ trusted internal API
+Kosh Access → repository permission
+   ↓
+git-upload-pack / git-receive-pack
+   ↓
+KOSH_REPO_ROOT
+```
+
+The SSH transport does not expose an interactive shell.
+
+Only these original SSH commands are accepted:
+
+- `git-upload-pack '<namespace>/<repository>.git'`
+- `git-receive-pack '<namespace>/<repository>.git'`
+
+All other commands are rejected.
+
+### Authorization
+
+Public-key authentication identifies the Kosh user through the registered SSH key fingerprint.
+
+Immediately before Git execution the Gateway re-checks:
+
+- the SSH key still exists
+- the Workspace user is still enabled
+- the repository still exists
+- the current Kosh repository role still allows the requested read/write operation
+
+This means key revocation or access changes take effect without regenerating static authorized-key files.
+
+Repository reads require `repository.read`.
+
+Repository pushes require `repository.write`.
+
+The same Access engine is used by HTTP, LFS, Pages, Flow, Mesh, Pulse and SSH.
+
+### SSH push behavior
+
+A successful SSH push is fed back into the Gateway so it triggers the same Kosh behavior as a Smart HTTP push:
+
+- Automation push triggers
+- signed Kosh webhook delivery
+- audit events
+- branch protection remains enforced by repository receive hooks
+
+Transport choice does not change Kosh lifecycle behavior.
+
+### Key security
+
+Supported registered public-key formats are restricted to modern OpenSSH-compatible key families:
+
+- Ed25519
+- security-key Ed25519
+- ECDSA NIST P-256/P-384/P-521
+- security-key ECDSA P-256
+- RSA
+
+DSA and malformed key records are rejected.
+
+SSH key records include:
+
+- fingerprint
+- creation time
+- last-used time
+- revocation through deletion
+
+### Production configuration
+
+Gateway and SSH host share a dedicated service secret:
+
+```env
+KOSH_SSH_SERVICE_TOKEN=<separate-high-entropy-secret>
+KOSH_SSH_PUBLIC_HOST=kosh.tamishra.in
+KOSH_SSH_PUBLIC_PORT=22
+```
+
+SSH helper host:
+
+```env
+KOSH_GATEWAY_ORIGIN=https://kosh.tamishra.in
+KOSH_SSH_SERVICE_TOKEN=<same-service-secret>
+KOSH_SSH_SHELL_COMMAND=/usr/local/bin/kosh-ssh-shell
+KOSH_REPO_ROOT=/var/lib/kosh/repos
+```
+
+The SSH service secret is an internal service credential. It must never be given to end users.
+
+The SSH host must share or mount the same persistent Git repository storage referenced by `KOSH_REPO_ROOT`.
+
+The hardened OpenSSH example and deployment instructions live under:
+
+`deploy/kosh-ssh/`

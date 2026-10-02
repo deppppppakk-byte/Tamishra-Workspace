@@ -12,6 +12,7 @@ export type KoshRepository = {
   defaultBranch: string;
   state: KoshRepositoryState;
   cloneHttpUrl: string;
+  cloneSshUrl?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -87,8 +88,8 @@ export const koshModules: KoshModule[] = [
   {
     id: "ssh",
     name: "SSH Git",
-    description: "SSH public-key management and fingerprints, ready for the dedicated SSH Git transport.",
-    status: "foundation"
+    description: "OpenSSH transport with Kosh key identity, forced Git commands, repository ACL enforcement and audit.",
+    status: "active"
   },
   {
     id: "organizations",

@@ -234,8 +234,14 @@ export function KoshWorkspace() {
                   </div>
                   <div className={styles.cloneBox}>
                     <code>{repository.cloneHttpUrl}</code>
-                    <button onClick={() => void copyCloneUrl(repository.cloneHttpUrl)}>Copy</button>
+                    <button onClick={() => void copyCloneUrl(repository.cloneHttpUrl)}>Copy HTTPS</button>
                   </div>
+                  {repository.cloneSshUrl && (
+                    <div className={styles.cloneBox}>
+                      <code>{repository.cloneSshUrl}</code>
+                      <button onClick={() => void copyCloneUrl(repository.cloneSshUrl!)}>Copy SSH</button>
+                    </div>
+                  )}
                   <div className={styles.repoMeta}>
                     <Link
                       className={styles.back}
@@ -249,7 +255,9 @@ export function KoshWorkspace() {
                       Open repository →
                     </Link>
                   </div>
-                  <small>git clone {repository.cloneHttpUrl}</small>
+                  <small>
+                    git clone {repository.cloneSshUrl || repository.cloneHttpUrl}
+                  </small>
                 </article>
               ))}
             </div>

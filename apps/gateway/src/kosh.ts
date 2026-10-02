@@ -23,6 +23,7 @@ import { handleKoshPagesRequest } from "./kosh-pages.js";
 import { handleKoshFlowRequest } from "./kosh-flow.js";
 import { handleKoshMeshRequest } from "./kosh-mesh.js";
 import { handleKoshPulseRequest } from "./kosh-pulse.js";
+import { handleKoshSshBridgeRequest } from "./kosh-ssh.js";
 import { scheduleAutomationEvent } from "./kosh-automation-service.js";
 import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
@@ -316,6 +317,29 @@ function publicOrigin(request: IncomingMessage) {
   const protocol = forwardedProto || (isProduction ? "https" : "http");
   const host = request.headers.host || "localhost:4100";
   return protocol + "://" + host;
+}
+
+function sshCloneUrl(repository: StoredKoshRepository) {
+  const host = process.env.KOSH_SSH_PUBLIC_HOST?.trim();
+  if (!host) return null;
+
+  const portValue = Number(process.env.KOSH_SSH_PUBLIC_PORT ?? 22);
+  const port =
+    Number.isInteger(portValue) && portValue > 0 && portValue <= 65535
+      ? portValue
+      : 22;
+  const path = repository.namespace + "/" + repository.slug + ".git";
+
+  return port === 22
+    ? "git@" + host + ":" + path
+    : "ssh://git@" + host + ":" + port + "/" + path;
+}
+
+function repositoryTransportView(repository: StoredKoshRepository) {
+  return {
+    ...repository,
+    cloneSshUrl: sshCloneUrl(repository)
+  };
 }
 
 function suppliedGitToken(request: IncomingMessage) {
@@ -911,6 +935,10 @@ export async function handleKoshRequest(
     return false;
   }
 
+  if (await handleKoshSshBridgeRequest(request, response, url)) {
+    return true;
+  }
+
   if (
     await handleKoshAccessRequest(
       request,
@@ -1066,6 +1094,12 @@ export async function handleKoshRequest(
         product: "Kosh",
         by: "Tamishra",
         gitProtocol: "smart-http",
+        gitProtocols: ["smart-http", "ssh"],
+        ssh: {
+          enabled: Boolean(process.env.KOSH_SSH_PUBLIC_HOST?.trim()),
+          host: process.env.KOSH_SSH_PUBLIC_HOST?.trim() || null,
+          port: Number(process.env.KOSH_SSH_PUBLIC_PORT ?? 22) || 22
+        },
         persistence: store.kind,
         gitStorage: process.env.KOSH_REPO_ROOT
           ? "configured-persistent-path"
@@ -1124,7 +1158,7 @@ export async function handleKoshRequest(
       200,
       {
         repositories: visible.map((item) => ({
-          ...item.repository,
+          ...repositoryTransportView(item.repository),
           access: item.access
         })),
         persistence: store.kind,
@@ -1225,7 +1259,7 @@ export async function handleKoshRequest(
         response,
         201,
         {
-          ...repository,
+          ...repositoryTransportView(repository),
           access: {
             role: "owner",
             source: "user-grant"
@@ -1285,7 +1319,7 @@ export async function handleKoshRequest(
           response,
           200,
           {
-            repository,
+            repository: repositoryTransportView(repository),
             headSha,
             empty: branches.length === 0,
             branchCount: branches.length,

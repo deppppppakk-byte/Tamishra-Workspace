@@ -1,0 +1,40 @@
+# Kosh SSH transport — OpenSSH boundary
+#
+# Run this as a dedicated sshd instance/container or merge the relevant
+# directives into a dedicated Kosh SSH host. Keep this service separate from
+# administrator SSH access.
+
+Port 22
+Protocol 2
+
+# Generate a dedicated host key outside the repository and mount it read-only.
+HostKey /etc/kosh/ssh_host_ed25519_key
+
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+PubkeyAuthentication yes
+PermitRootLogin no
+PermitEmptyPasswords no
+
+# Kosh accepts one non-interactive OS account. Identity comes from the
+# registered public key, not from Unix usernames.
+AllowUsers git
+PermitUserEnvironment no
+PermitTTY no
+AllowTcpForwarding no
+GatewayPorts no
+X11Forwarding no
+AllowAgentForwarding no
+PermitTunnel no
+
+# The helper returns the exact registered key plus a forced kosh-ssh-shell
+# command. It must run as an unprivileged account that can reach the Kosh
+# Gateway but cannot read repository storage.
+AuthorizedKeysCommand /usr/local/bin/kosh-ssh-authorized-keys %f
+AuthorizedKeysCommandUser kosh-ssh-auth
+
+# Keep Git protocol v2 available without allowing arbitrary client variables.
+AcceptEnv GIT_PROTOCOL
+
+LogLevel VERBOSE
