@@ -85,6 +85,24 @@ type Summary = {
   runnerConfigured: boolean;
 };
 
+type Runner = {
+  id: string;
+  executor: "container" | "host";
+  labels: string[];
+  capacity: number;
+  activeJobs: number;
+  version: string;
+  os: string;
+  arch: string;
+  status: "online" | "draining" | "offline";
+  lastSeenAt: string;
+};
+
+type RunnerPayload = {
+  runners: Runner[];
+  persistence: string;
+};
+
 type RunDetail = {
   run: Run;
   jobs: Job[];
@@ -139,6 +157,11 @@ const starterWorkflow = JSON.stringify(
         id: "quality",
         name: "Quality checks",
         timeoutMinutes: 30,
+        image: "node:22-bookworm-slim",
+        network: "egress",
+        cpu: 1,
+        memoryMb: 1024,
+        pidsLimit: 256,
         steps: [
           { name: "Install", run: "npm install" },
           { name: "Check", run: "npm run check" }
@@ -156,6 +179,7 @@ export function KoshAutomationWorkspace() {
   const [slug, setSlug] = useState("");
   const [summary, setSummary] = useState<Summary | null>(null);
   const [repoSummary, setRepoSummary] = useState<RepoSummary | null>(null);
+  const [runners, setRunners] = useState<Runner[]>([]);
   const [selectedRunId, setSelectedRunId] = useState("");
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
   const [workflowJson, setWorkflowJson] = useState(starterWorkflow);
@@ -236,12 +260,16 @@ export function KoshAutomationWorkspace() {
     setLoading(true);
     setError("");
     try {
-      const [automation, repository] = await Promise.all([
+      const [automation, repository, runnerPayload] = await Promise.all([
         fetchJson<Summary>(automationBase + "/summary"),
-        fetchJson<RepoSummary>(resourceBase)
+        fetchJson<RepoSummary>(resourceBase),
+        fetchJson<RunnerPayload>(base + "/v1/kosh/automation/runners").catch(
+          () => ({ runners: [], persistence: "restricted" })
+        )
       ]);
       setSummary(automation);
       setRepoSummary(repository);
+      setRunners(runnerPayload.runners);
       if (!deploymentEnvironment && automation.environments[0]) {
         setDeploymentEnvironment(automation.environments[0].id);
       }
@@ -259,6 +287,7 @@ export function KoshAutomationWorkspace() {
     }
   }, [
     automationBase,
+    base,
     deploymentEnvironment,
     fetchJson,
     resourceBase
@@ -432,16 +461,68 @@ export function KoshAutomationWorkspace() {
         <div className={styles.statusBox}>
           <span>Runner</span>
           <strong>
-            {summary.runnerConfigured ? "Configured" : "Development mode"}
+            {runners.length
+              ? runners.filter((runner) => runner.status === "online").length +
+                " online"
+              : summary.runnerConfigured
+                ? "Configured"
+                : "Development mode"}
           </strong>
           <em>
-            {summary.runs.filter((run) => run.status === "running").length} running
+            {runners.length
+              ? runners.reduce((total, runner) => total + runner.activeJobs, 0) +
+                " / " +
+                runners.reduce((total, runner) => total + runner.capacity, 0) +
+                " slots active"
+              : summary.runs.filter((run) => run.status === "running").length +
+                " running"}
           </em>
         </div>
       </header>
 
       <section className={styles.content}>
         {error && <div className={styles.error}>{error}</div>}
+
+        {runners.length > 0 && (
+          <section className={styles.panel + " " + styles.runnerPanel}>
+            <div className={styles.panelHeader}>
+              <div>
+                <strong>Runner fleet</strong>
+                <span>
+                  Disposable execution capacity and heartbeat state
+                </span>
+              </div>
+            </div>
+            <div className={styles.runnerGrid}>
+              {runners.map((runner) => (
+                <article className={styles.runnerCard} key={runner.id}>
+                  <div>
+                    <span className={styles[runner.status]}>
+                      {runner.status}
+                    </span>
+                    <strong>{runner.id}</strong>
+                    <small>
+                      {runner.executor} · {runner.os}/{runner.arch} · v
+                      {runner.version}
+                    </small>
+                  </div>
+                  <div className={styles.runnerCapacity}>
+                    <strong>
+                      {runner.activeJobs}/{runner.capacity}
+                    </strong>
+                    <span>active slots</span>
+                  </div>
+                  <div className={styles.runnerLabels}>
+                    {runner.labels.map((label) => (
+                      <em key={label}>{label}</em>
+                    ))}
+                  </div>
+                  <small>heartbeat {age(runner.lastSeenAt)}</small>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
 
         <div className={styles.grid}>
           <section className={styles.panel}>
