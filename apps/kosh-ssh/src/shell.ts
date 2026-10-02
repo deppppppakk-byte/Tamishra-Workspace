@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { resolve, sep } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 const gatewayOrigin = (
   process.env.KOSH_GATEWAY_ORIGIN?.trim() ||
@@ -47,6 +50,100 @@ function repositoryPath(namespace: string, slug: string) {
   }
 
   return path;
+}
+
+async function branchSnapshot(gitDir: string) {
+  const result = await execFileAsync(
+    "git",
+    [
+      "--git-dir",
+      gitDir,
+      "for-each-ref",
+      "--format=%(refname:short)%00%(objectname)",
+      "refs/heads"
+    ],
+    {
+      timeout: 10000,
+      maxBuffer: 4 * 1024 * 1024,
+      encoding: "utf8"
+    }
+  );
+
+  const refs = new Map<string, string>();
+  for (const line of String(result.stdout).split(/\r?\n/)) {
+    if (!line) continue;
+    const [name, sha] = line.split("\0");
+    if (
+      name &&
+      /^[a-zA-Z0-9][a-zA-Z0-9._\/-]{0,199}$/.test(name) &&
+      /^[0-9a-f]{40}$/i.test(sha ?? "")
+    ) {
+      refs.set(name, sha);
+    }
+  }
+  return refs;
+}
+
+async function notifyPush(input: {
+  userId: string;
+  keyId: string;
+  namespace: string;
+  slug: string;
+  branches: Array<{ name: string; sha: string }>;
+}) {
+  if (!input.branches.length) return;
+
+  const response = await fetch(
+    gatewayOrigin + "/v1/kosh/ssh/internal/push",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-kosh-ssh-service-token": serviceToken,
+        accept: "application/json"
+      },
+      body: JSON.stringify(input),
+      signal: AbortSignal.timeout(10000)
+    }
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(
+      "push event rejected (" + response.status + "): " + text.slice(0, 300)
+    );
+  }
+}
+
+async function runGitTransport(command: string, gitDir: string) {
+  return new Promise<{ code: number; signal: NodeJS.Signals | null }>(
+    (resolveResult, reject) => {
+      const child = spawn(command, [gitDir], {
+        stdio: "inherit",
+        env: process.env
+      });
+
+      const forward = (signal: NodeJS.Signals) => {
+        if (!child.killed) child.kill(signal);
+      };
+      const onTerm = () => forward("SIGTERM");
+      const onInt = () => forward("SIGINT");
+      process.on("SIGTERM", onTerm);
+      process.on("SIGINT", onInt);
+
+      child.on("error", (error) => {
+        process.off("SIGTERM", onTerm);
+        process.off("SIGINT", onInt);
+        reject(error);
+      });
+
+      child.on("exit", (code, signal) => {
+        process.off("SIGTERM", onTerm);
+        process.off("SIGINT", onInt);
+        resolveResult({ code: code ?? 1, signal });
+      });
+    }
+  );
 }
 
 async function authorize(input: {
@@ -120,30 +217,45 @@ async function main() {
       : "git-upload-pack";
   const gitDir = repositoryPath(command.namespace, command.slug);
 
-  const child = spawn(gitCommand, [gitDir], {
-    stdio: "inherit",
-    env: process.env
-  });
+  const before =
+    command.operation === "receive-pack"
+      ? await branchSnapshot(gitDir)
+      : new Map<string, string>();
 
-  child.on("error", (error) => {
-    process.stderr.write("Kosh SSH: Git transport failed: " + error.message + "\n");
+  const result = await runGitTransport(gitCommand, gitDir);
+
+  if (result.signal) {
+    process.stderr.write(
+      "Kosh SSH: Git transport stopped by " + result.signal + ".\n"
+    );
     process.exitCode = 1;
-  });
+    return;
+  }
 
-  child.on("exit", (code, signal) => {
-    if (signal) {
-      process.stderr.write("Kosh SSH: Git transport stopped by " + signal + ".\n");
-      process.exitCode = 1;
-      return;
+  if (result.code === 0 && command.operation === "receive-pack") {
+    try {
+      const after = await branchSnapshot(gitDir);
+      const branches = [...after.entries()]
+        .filter(([name, sha]) => before.get(name) !== sha)
+        .map(([name, sha]) => ({ name, sha }));
+
+      await notifyPush({
+        userId,
+        keyId,
+        namespace: command.namespace,
+        slug: command.slug,
+        branches
+      });
+    } catch (error) {
+      process.stderr.write(
+        "Kosh SSH: push completed, but event delivery failed: " +
+          (error instanceof Error ? error.message : "unknown error") +
+          "\n"
+      );
     }
-    process.exitCode = code ?? 1;
-  });
+  }
 
-  const forward = (signal: NodeJS.Signals) => {
-    if (!child.killed) child.kill(signal);
-  };
-  process.on("SIGTERM", () => forward("SIGTERM"));
-  process.on("SIGINT", () => forward("SIGINT"));
+  process.exitCode = result.code;
 }
 
 main().catch((error) => {
