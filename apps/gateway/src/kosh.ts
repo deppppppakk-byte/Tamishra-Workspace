@@ -10,6 +10,7 @@ import { handleKoshWorkRequest } from "./kosh-work.js";
 import { handleKoshAutomationRequest } from "./kosh-automation.js";
 import { handleKoshPlatformRequest } from "./kosh-platform.js";
 import { handleKoshLfsRequest } from "./kosh-lfs.js";
+import { handleKoshPagesRequest } from "./kosh-pages.js";
 import { scheduleAutomationEvent } from "./kosh-automation-service.js";
 import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
@@ -858,6 +859,10 @@ export async function handleKoshRequest(
 ) {
   if (url.pathname.startsWith("/git/")) {
     return handleGitHttp(request, response, url);
+  }
+
+  if (url.pathname.startsWith("/pages/")) {
+    return handleKoshPagesRequest(request, response, url);
   }
 
   if (!url.pathname.startsWith("/v1/kosh")) {
