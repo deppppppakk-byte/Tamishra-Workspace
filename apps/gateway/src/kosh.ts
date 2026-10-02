@@ -24,6 +24,7 @@ import { handleKoshFlowRequest } from "./kosh-flow.js";
 import { handleKoshMeshRequest } from "./kosh-mesh.js";
 import { handleKoshPulseRequest } from "./kosh-pulse.js";
 import { handleKoshSshBridgeRequest } from "./kosh-ssh.js";
+import { handleKoshSecurityRequest } from "./kosh-security.js";
 import { scheduleAutomationEvent } from "./kosh-automation-service.js";
 import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
@@ -998,6 +999,18 @@ export async function handleKoshRequest(
       );
       return true;
     }
+  }
+
+  if (
+    await handleKoshSecurityRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return true;
   }
 
   if (
