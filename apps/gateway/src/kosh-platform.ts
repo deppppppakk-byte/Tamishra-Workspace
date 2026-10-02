@@ -208,11 +208,23 @@ async function requireIdentity(
 function requirePlatformAdministrator(
   identity: NonNullable<Awaited<ReturnType<typeof resolveKoshIdentity>>>
 ) {
-  const allowed = identity.memberships.some(
-    (item) =>
-      item.membership.role === "owner" ||
-      item.membership.role === "admin"
+  const configured = new Set(
+    (process.env.KOSH_PLATFORM_ADMIN_USER_IDS ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
   );
+
+  const allowed =
+    configured.size > 0
+      ? configured.has(identity.user.id)
+      : process.env.NODE_ENV !== "production" &&
+        identity.memberships.some(
+          (item) =>
+            item.membership.role === "owner" ||
+            item.membership.role === "admin"
+        );
+
   if (!allowed) {
     throw Object.assign(new Error("platform_admin_required"), {
       status: 403
