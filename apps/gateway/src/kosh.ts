@@ -4,7 +4,7 @@ import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { resolveWorkspaceIdentity } from "./identity.js";
+import { resolveKoshIdentity } from "./kosh-auth.js";
 import { handleKoshChangeReviewRequest } from "./kosh-reviews.js";
 import { handleKoshWorkRequest } from "./kosh-work.js";
 import { handleKoshAutomationRequest } from "./kosh-automation.js";
@@ -567,7 +567,7 @@ async function requireWorkspaceIdentity(
   origin: string | undefined,
   allowedOrigins: ReadonlySet<string>
 ) {
-  const identity = await resolveWorkspaceIdentity(request);
+  const identity = await resolveKoshIdentity(\n    request,\n    request.method === "GET" ? "repo:read" : "repo:write"\n  );
 
   if (!identity) {
     json(
