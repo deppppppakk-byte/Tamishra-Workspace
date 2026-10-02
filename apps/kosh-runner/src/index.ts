@@ -36,6 +36,35 @@ type JobDefinition = {
   steps: StepDefinition[];
 };
 
+type ClaimedEnvironment = {
+  environment: {
+    id: string;
+    repositoryId: string;
+    namespace: string;
+    repositorySlug: string;
+    name: string;
+    refName: string;
+    commitSha: string;
+    image: string;
+    network: "none" | "egress";
+    cpu: number;
+    memoryMb: number;
+    pidsLimit: number;
+    ttlMinutes: number;
+    idleMinutes: number;
+    command: string;
+    state: string;
+    expiresAt: string;
+  };
+  repository: {
+    namespace: string;
+    slug: string;
+    cloneHttpUrl: string;
+  };
+  lease: { token: string; expiresAt: string | null };
+  checkoutCredential: { token: string; expiresAt: string };
+};
+
 type ClaimedJob = {
   job: {
     id: string;
@@ -142,6 +171,7 @@ const labels = [
   .filter((value) => /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,79}$/.test(value))
   .slice(0, 64);
 const activeJobs = new Set<string>();
+const activeEnvironments = new Set<string>();
 const runnerVersion = "0.2.0";
 
 if (!runnerToken && process.env.NODE_ENV === "production") {
@@ -167,7 +197,7 @@ function runnerPayload(status: "online" | "draining" = "online") {
     executor,
     labels,
     capacity: concurrency,
-    activeJobs: activeJobs.size,
+    activeJobs: activeJobs.size + activeEnvironments.size,
     version: runnerVersion,
     os: process.platform,
     arch: process.arch,
@@ -975,6 +1005,150 @@ async function execute(context: ClaimedJob) {
   }
 }
 
+async function runRaw(command: string, args: string[], cwd = tmpdir(), env: NodeJS.ProcessEnv = safeHostEnvironment()) {
+  return new Promise<{ code: number; stdout: string; stderr: string }>((resolveRun, rejectRun) => {
+    const child = spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => { stdout = (stdout + chunk.toString("utf8")).slice(-64 * 1024); });
+    child.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString("utf8")).slice(-64 * 1024); });
+    child.on("error", rejectRun);
+    child.on("close", (code) => resolveRun({ code: typeof code === "number" ? code : 1, stdout, stderr }));
+  });
+}
+
+async function claimEnvironment() {
+  return requestJson<Partial<ClaimedEnvironment> & { environment: ClaimedEnvironment["environment"] | null }>(
+    "/v1/kosh/dev-environments/runner/claim",
+    { method: "POST", body: JSON.stringify({ runnerId }) }
+  );
+}
+
+async function environmentHeartbeat(context: ClaimedEnvironment, containerId: string) {
+  return requestJson<{ stopRequested: boolean }>(
+    "/v1/kosh/dev-environments/runner/heartbeat",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        runnerId,
+        environmentId: context.environment.id,
+        leaseToken: context.lease.token,
+        containerId
+      })
+    }
+  );
+}
+
+async function completeEnvironment(
+  context: ClaimedEnvironment,
+  state: "stopped" | "failed" | "expired",
+  failureReason?: string
+) {
+  await requestJson(
+    "/v1/kosh/dev-environments/runner/complete",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        runnerId,
+        environmentId: context.environment.id,
+        leaseToken: context.lease.token,
+        state,
+        failureReason
+      })
+    }
+  );
+}
+
+async function executeEnvironment(context: ClaimedEnvironment) {
+  if (executor !== "container") {
+    await completeEnvironment(context, "failed", "development_environments_require_container_executor");
+    return;
+  }
+
+  const envRoot = await mkdtemp(join(tmpdir(), "kosh-dev-env-"));
+  const workspace = join(envRoot, "workspace");
+  const containerName = ("kosh-env-" + context.environment.id.slice(0, 12) + "-" + process.pid).replace(/[^a-zA-Z0-9_.-]/g, "-");
+  let containerId = "";
+  activeEnvironments.add(context.environment.id);
+
+  try {
+    if (!allowedImages.has(context.environment.image)) throw new Error("runner_image_not_allowed");
+    if (context.environment.network === "egress" && !allowNetwork) throw new Error("runner_network_not_allowed");
+
+    const authHeader = "Authorization: Basic " + Buffer.from("kosh-runner:" + context.checkoutCredential.token).toString("base64");
+    const cloneEnv = safeHostEnvironment({
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "http.extraHeader",
+      GIT_CONFIG_VALUE_0: authHeader
+    });
+    const clone = await runRaw("git", ["clone", "--no-checkout", "--filter=blob:none", context.repository.cloneHttpUrl, workspace], tmpdir(), cloneEnv);
+    if (clone.code !== 0) throw new Error(clone.stderr || "git_clone_failed");
+    const checkout = await runRaw("git", ["checkout", "--detach", context.environment.commitSha], workspace, cloneEnv);
+    if (checkout.code !== 0) throw new Error(checkout.stderr || "git_checkout_failed");
+
+    const cpu = Math.max(0.1, Math.min(maxCpu, context.environment.cpu || 1));
+    const memoryMb = Math.max(128, Math.min(maxMemoryMb, Math.floor(context.environment.memoryMb || 1024)));
+    const pidsLimit = Math.max(32, Math.min(maxPids, Math.floor(context.environment.pidsLimit || 256)));
+    const network = context.environment.network === "egress" && allowNetwork ? "bridge" : "none";
+
+    const launched = await runRaw(containerRuntime, [
+      "run", "-d", "--init", "--name", containerName,
+      "--workdir", "/workspace",
+      "--mount", "type=bind,src=" + workspace + ",dst=/workspace,rw",
+      "--read-only",
+      "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=268435456",
+      "--cap-drop", "ALL",
+      "--security-opt", "no-new-privileges",
+      "--pids-limit", String(pidsLimit),
+      "--memory", String(memoryMb) + "m",
+      "--cpus", String(cpu),
+      "--network", network,
+      "--label", "kosh.runner=" + runnerId,
+      "--label", "kosh.environment=" + context.environment.id,
+      context.environment.image,
+      "/bin/sh", "-lc", context.environment.command
+    ], envRoot);
+    if (launched.code !== 0) throw new Error(launched.stderr || "environment_container_start_failed");
+    containerId = launched.stdout.trim();
+
+    while (true) {
+      const beat = await environmentHeartbeat(context, containerId);
+      const expired = new Date(context.environment.expiresAt).getTime() <= Date.now();
+      const inspect = await runRaw(containerRuntime, ["inspect", "-f", "{{.State.Running}}", containerName], envRoot);
+      if (beat.stopRequested || expired || inspect.code !== 0 || inspect.stdout.trim() !== "true") {
+        await runRaw(containerRuntime, ["rm", "-f", containerName], envRoot).catch(() => undefined);
+        await completeEnvironment(context, expired ? "expired" : beat.stopRequested ? "stopped" : "failed", inspect.code !== 0 ? "container_unavailable" : undefined);
+        break;
+      }
+      await sleep(20_000);
+    }
+  } catch (error) {
+    if (containerId) await runRaw(containerRuntime, ["rm", "-f", containerName], envRoot).catch(() => undefined);
+    await completeEnvironment(context, "failed", error instanceof Error ? error.message.slice(0, 1000) : "environment_failed").catch(() => undefined);
+  } finally {
+    activeEnvironments.delete(context.environment.id);
+    await rm(envRoot, { recursive: true, force: true }).catch(() => undefined);
+    await heartbeat().catch(() => undefined);
+  }
+}
+
+async function environmentWorker() {
+  while (true) {
+    try {
+      const claimed = await claimEnvironment();
+      if (!claimed.environment || !claimed.repository || !claimed.lease || !claimed.checkoutCredential) {
+        await sleep(pollMs);
+        continue;
+      }
+      await executeEnvironment(claimed as ClaimedEnvironment);
+    } catch (error) {
+      process.stderr.write("Development environment worker error: " + (error instanceof Error ? error.message : "unknown error") + "\n");
+      await sleep(pollMs);
+    }
+  }
+}
+
 async function claimJob() {
   return requestJson<
     { job: ClaimedJob["job"] | null; reason?: string } & Partial<ClaimedJob>
@@ -1037,9 +1211,10 @@ async function main() {
 
   await heartbeat();
 
-  await Promise.all(
-    Array.from({ length: concurrency }, (_, index) => worker(index + 1))
-  );
+  await Promise.all([
+    environmentWorker(),
+    ...Array.from({ length: concurrency }, (_, index) => worker(index + 1))
+  ]);
 }
 
 void main();

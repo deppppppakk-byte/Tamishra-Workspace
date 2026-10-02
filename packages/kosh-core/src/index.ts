@@ -124,8 +124,8 @@ export const koshModules: KoshModule[] = [
   {
     id: "dev-environments",
     name: "Development Environments",
-    description: "Disposable environment definitions ready for isolated runner-backed execution.",
-    status: "foundation"
+    description: "Disposable exact-commit workspaces with atomic runner leases, bounded container isolation, lifecycle heartbeats and TTL expiry.",
+    status: "active"
   },
   {
     id: "wiki",
