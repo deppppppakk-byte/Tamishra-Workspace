@@ -98,8 +98,6 @@ type SearchResult = {
 };
 
 const resourceOptions: Array<{ value: ResourceType; label: string }> = [
-  { value: "package", label: "Package" },
-  { value: "package_channel", label: "Package channel" },
   { value: "release", label: "Release" },
   { value: "security_finding", label: "Security finding" },
   { value: "organization", label: "Organization" },
@@ -152,7 +150,17 @@ function defaultPayload(type: ResourceType) {
     dev_environment: { image: "", cpu: 2, memoryMb: 4096, ttlMinutes: 120 },
     wiki_page: { slug: "home", content: "# Home" },
     page_site: { sourceBranch: "main", sourcePath: "/", customDomain: "" },
-    webhook: { url: "", events: ["push", "change_review"], active: true },
+    webhook: {
+      url: "",
+      events: [
+        "push",
+        "change_review.opened",
+        "workflow.completed",
+        "package.published",
+        "release.published"
+      ],
+      active: true
+    },
     subscription: { events: ["review", "ci", "release"], channel: "inbox" },
     project_field: { fieldType: "text", required: false },
     storage_policy: { lfsEnabled: true, artifactRetentionDays: 30, quotaGb: 10 },
