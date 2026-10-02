@@ -236,7 +236,10 @@ async function requireIdentity(
   origin: string | undefined,
   allowedOrigins: ReadonlySet<string>
 ) {
-  const identity = await resolveKoshIdentity(\n    request,\n    request.method === "GET" ? "repo:read" : "repo:write"\n  );
+  const identity = await resolveKoshIdentity(
+    request,
+    request.method === "GET" ? "repo:read" : "repo:write"
+  );
   if (!identity) {
     sendJson(
       response,
