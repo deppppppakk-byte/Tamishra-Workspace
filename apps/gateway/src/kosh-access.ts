@@ -453,7 +453,10 @@ export function permissionForKoshRepositoryRequest(
     return "packages.publish";
   }
 
-  if (/\/platform\/releases\//.test(path)) {
+  if (
+    /\/platform\/releases(?:\/|$)/.test(path) ||
+    /\/releases(?:\/|$)/.test(path)
+  ) {
     return "releases.manage";
   }
 
