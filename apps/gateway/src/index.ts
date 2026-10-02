@@ -6,7 +6,8 @@ import { handleDocsRequest } from "./docs.js";
 import { handleFilesRequest } from "./files.js";
 import { handleContentRequest } from "./content.js";
 import { handleAssetsRequest } from "./assets.js";
-import { handleChatRequest } from "./chat.js";\nimport { handleKoshRequest } from "./kosh.js";
+import { handleChatRequest } from "./chat.js";
+import { handleKoshRequest } from "./kosh.js";
 
 const port = Number(process.env.WORKSPACE_GATEWAY_PORT ?? process.env.PORT ?? 4100);
 const isProduction = process.env.NODE_ENV === "production";
@@ -40,6 +41,11 @@ function validateProductionConfiguration() {
   const allowed = process.env.WORKSPACE_ALLOWED_ORIGINS?.trim();
   if (!allowed) {
     throw new Error("WORKSPACE_ALLOWED_ORIGINS is required in production.");
+  }
+
+  if (process.env.KOSH_PUBLIC_ORIGIN?.trim()) {
+    requireProductionValue("KOSH_REPO_ROOT", 2);
+    requireProductionValue("KOSH_GIT_TOKEN", 24);
   }
 
   if (!coreOnly) {
@@ -185,11 +191,24 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
           "meet",
           "notes",
           "forms",
-          "files"
+          "files",
+          "kosh"
         ]
       },
       origin
     );
+    return;
+  }
+
+  if (
+    await handleKoshRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
     return;
   }
 
