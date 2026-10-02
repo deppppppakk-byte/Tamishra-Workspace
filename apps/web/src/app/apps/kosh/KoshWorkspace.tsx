@@ -123,6 +123,7 @@ export function KoshWorkspace() {
           <a className={styles.active} href="#overview">Overview</a>
           <a href="#repositories">Repositories</a>
           <Link href="/apps/kosh/mesh">Mesh</Link>
+          <Link href="/apps/kosh/pulse">Pulse</Link>
           <a href="#platform">Platform</a>
           <a href="#infrastructure">Infrastructure</a>
         </nav>
@@ -149,8 +150,8 @@ export function KoshWorkspace() {
             <span className={styles.badge}>Git-compatible foundation</span>
             <h2>A development platform built the Kosh way.</h2>
             <p>
-              Kosh connects repository work through Flow and connects repositories,
-              services, APIs, engineering assets and runtime systems through Mesh.
+              Kosh connects repository work through Flow, connects systems through
+              Mesh, and turns live health plus impact into action through Pulse.
             </p>
           </div>
           <div className={styles.heroStats}>
