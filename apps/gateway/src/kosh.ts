@@ -24,7 +24,10 @@ import { handleKoshFlowRequest } from "./kosh-flow.js";
 import { handleKoshMeshRequest } from "./kosh-mesh.js";
 import { handleKoshPulseRequest } from "./kosh-pulse.js";
 import { handleKoshSshBridgeRequest } from "./kosh-ssh.js";
-import { handleKoshSecurityRequest } from "./kosh-security.js";
+import {
+  handleKoshSecurityRequest,
+  triggerKoshSecurityScanAfterPush
+} from "./kosh-security.js";
 import { scheduleAutomationEvent } from "./kosh-automation-service.js";
 import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
@@ -604,8 +607,10 @@ async function handleGitHttp(
     if (code === 0 && write && refsBefore) {
       try {
         const refsAfter = await branchRefSnapshot(path);
+        const changedBranches: string[] = [];
         for (const [branchName, commitSha] of refsAfter) {
           if (refsBefore.get(branchName) !== commitSha) {
+            changedBranches.push(branchName);
             await scheduleAutomationEvent(
               repository,
               "push",
@@ -626,6 +631,11 @@ async function handleGitHttp(
             ).catch(() => undefined);
           }
         }
+        triggerKoshSecurityScanAfterPush(
+          repository,
+          gitAccess.actor,
+          changedBranches
+        );
       } catch (automationError) {
         stderr =
           (stderr +
