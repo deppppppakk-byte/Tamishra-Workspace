@@ -205,6 +205,21 @@ async function requireIdentity(
   return identity;
 }
 
+function requirePlatformAdministrator(
+  identity: NonNullable<Awaited<ReturnType<typeof resolveKoshIdentity>>>
+) {
+  const allowed = identity.memberships.some(
+    (item) =>
+      item.membership.role === "owner" ||
+      item.membership.role === "admin"
+  );
+  if (!allowed) {
+    throw Object.assign(new Error("platform_admin_required"), {
+      status: 403
+    });
+  }
+}
+
 async function audit(
   repositoryId: string | null,
   actor: { id: string; displayName: string },
@@ -1370,6 +1385,7 @@ export async function handleKoshPlatformRequest(
       url.pathname === "/v1/kosh/platform/resources" &&
       request.method === "GET"
     ) {
+      requirePlatformAdministrator(identity);
       const typeParam = url.searchParams.get("type");
       const type = typeParam ? resourceType(typeParam) : undefined;
       sendJson(
@@ -1386,6 +1402,7 @@ export async function handleKoshPlatformRequest(
       url.pathname === "/v1/kosh/platform/resources" &&
       request.method === "POST"
     ) {
+      requirePlatformAdministrator(identity);
       const body = await readJson(request);
       const type = resourceType(body.type);
       const allowedGlobal = new Set<KoshPlatformResourceType>([
@@ -1437,6 +1454,7 @@ export async function handleKoshPlatformRequest(
       url.pathname === "/v1/kosh/platform/audit" &&
       request.method === "GET"
     ) {
+      requirePlatformAdministrator(identity);
       sendJson(
         response,
         200,
@@ -1451,6 +1469,7 @@ export async function handleKoshPlatformRequest(
       url.pathname === "/v1/kosh/platform/summary" &&
       request.method === "GET"
     ) {
+      requirePlatformAdministrator(identity);
       const [repositories, resources, events] = await Promise.all([
         repositoryStore.list(),
         platformStore.listResources(),
