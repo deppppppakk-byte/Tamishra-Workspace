@@ -13,6 +13,7 @@ import {
   getKoshStore,
   type StoredKoshRepository
 } from "./kosh-store.js";
+import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 
 const packageStore = getKoshPackageStore();
 const repositoryStore = getKoshStore();
@@ -65,9 +66,8 @@ function validPackageKey(value: string) {
   return (
     value.length > 0 &&
     value.length <= 120 &&
-    /^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(value) &&
-    !value.includes("..") &&
-    !value.endsWith("/")
+    /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(value) &&
+    !value.includes("..")
   );
 }
 
@@ -312,6 +312,22 @@ export async function publishKoshPackage(
       channel: channel?.channel ?? null
     }
   );
+
+  void dispatchKoshWebhooks(
+    input.repository.id,
+    "package.published",
+    {
+      packageKey: version.packageKey,
+      version: version.version,
+      filename: version.filename,
+      format: version.format,
+      sizeBytes: version.sizeBytes,
+      sha256: version.sha256,
+      channel: channel?.channel ?? null,
+      runId: version.runId,
+      commitSha: version.commitSha
+    }
+  ).catch(() => undefined);
 
   return { version, channel };
 }
@@ -664,6 +680,8 @@ export async function handleKoshPackageRequest(
             status: 409
           });
         }
+
+        await verifiedArtifact(version);
 
         const channel = await packageStore.putChannel({
           repositoryId: repository.id,
