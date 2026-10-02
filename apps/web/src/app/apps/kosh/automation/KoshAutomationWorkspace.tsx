@@ -162,6 +162,7 @@ const starterWorkflow = JSON.stringify(
         cpu: 1,
         memoryMb: 1024,
         pidsLimit: 256,
+        runsOn: ["executor:container"],
         steps: [
           { name: "Install", run: "npm install" },
           { name: "Check", run: "npm run check" }
