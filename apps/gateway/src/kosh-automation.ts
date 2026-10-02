@@ -568,19 +568,6 @@ async function handleRunner(
         channel
       });
 
-      void dispatchKoshWebhooks(
-        context.repository.id,
-        "package.published",
-        {
-          packageKey: published.version.packageKey,
-          version: published.version.version,
-          sha256: published.version.sha256,
-          channel: published.channel?.channel ?? null,
-          runId: context.run.id,
-          commitSha: context.run.commitSha
-        }
-      ).catch(() => undefined);
-
       sendJson(response, 201, published);
       return true;
     }
