@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import postgres from "postgres";
 
 export type KoshRunStatus =
@@ -20,11 +20,19 @@ export type KoshWorkflowStepDefinition = {
   continueOnError?: boolean;
 };
 
+export type KoshRunnerNetworkMode = "none" | "egress";
+
 export type KoshWorkflowJobDefinition = {
   id: string;
   name: string;
   timeoutMinutes?: number;
   env?: Record<string, string>;
+  image?: string;
+  network?: KoshRunnerNetworkMode;
+  cpu?: number;
+  memoryMb?: number;
+  pidsLimit?: number;
+  secrets?: string[];
   steps: KoshWorkflowStepDefinition[];
 };
 
@@ -82,6 +90,8 @@ export type StoredKoshJob = {
   attempt: number;
   timeoutMinutes: number;
   definition: KoshWorkflowJobDefinition;
+  leaseExpiresAt: string | null;
+  lastHeartbeatAt: string | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
@@ -172,7 +182,23 @@ export interface KoshAutomationStore {
     jobs: KoshWorkflowJobDefinition[]
   ): Promise<StoredKoshJob[]>;
   listJobs(runId: string): Promise<StoredKoshJob[]>;
-  claimNextJob(runnerId: string): Promise<StoredKoshJob | null>;
+  claimNextJob(
+    runnerId: string,
+    leaseToken: string,
+    leaseSeconds: number
+  ): Promise<StoredKoshJob | null>;
+  renewJobLease(
+    jobId: string,
+    runnerId: string,
+    leaseToken: string,
+    leaseSeconds: number
+  ): Promise<StoredKoshJob | null>;
+  verifyJobLease(
+    jobId: string,
+    runnerId: string,
+    leaseToken: string
+  ): Promise<boolean>;
+  requeueExpiredJobs(): Promise<StoredKoshJob[]>;
   updateJobStatus(jobId: string, status: KoshJobStatus): Promise<StoredKoshJob | null>;
 
   appendLog(jobId: string, stream: StoredKoshJobLog["stream"], text: string): Promise<StoredKoshJobLog>;
@@ -198,6 +224,10 @@ function now() {
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+function leaseHash(value: string) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function aggregateRunStatus(jobs: StoredKoshJob[]): KoshRunStatus {
