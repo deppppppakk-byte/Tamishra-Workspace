@@ -4,6 +4,8 @@ import { evaluateKoshRepositoryAccess } from "./kosh-access.js";
 import { getWorkspaceIdentityAuthorization } from "./identity.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
 import { getKoshStore } from "./kosh-store.js";
+import { scheduleAutomationEvent } from "./kosh-automation-service.js";
+import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 
 const platformStore = getKoshPlatformStore();
 const repositoryStore = getKoshStore();
@@ -145,6 +147,109 @@ export async function handleKoshSshBridgeRequest(
           displayName: authorization.user.displayName,
           email: authorization.user.email
         }
+      });
+      return true;
+    }
+
+    if (
+      request.method === "POST" &&
+      url.pathname === "/v1/kosh/ssh/internal/push"
+    ) {
+      const body = await readJson(request);
+      const userId = clean(body.userId, 240);
+      const keyId = clean(body.keyId, 240);
+      const namespace = clean(body.namespace, 64);
+      const slug = clean(body.slug, 100);
+      const rawBranches = Array.isArray(body.branches)
+        ? body.branches.slice(0, 200)
+        : [];
+
+      if (
+        !userId ||
+        !keyId ||
+        !validRepositorySegment(namespace, 64) ||
+        !validRepositorySegment(slug, 100)
+      ) {
+        throw Object.assign(new Error("invalid_ssh_push_event"), {
+          status: 400
+        });
+      }
+
+      const key = await platformStore.getSshKey(userId, keyId);
+      const identity = await getWorkspaceIdentityAuthorization(userId);
+      const repository = await repositoryStore.get(namespace, slug);
+
+      if (!key || !identity || !repository) {
+        sendJson(response, 403, { error: "ssh_push_event_not_authorized" });
+        return true;
+      }
+
+      const access = await evaluateKoshRepositoryAccess(
+        identity,
+        repository,
+        "repository.write"
+      );
+      if (!access.allowed) {
+        sendJson(response, 403, { error: "repository_permission_denied" });
+        return true;
+      }
+
+      const branches = rawBranches
+        .map((item) =>
+          item && typeof item === "object"
+            ? {
+                name: clean((item as Record<string, unknown>).name, 240),
+                sha: clean((item as Record<string, unknown>).sha, 64)
+              }
+            : { name: "", sha: "" }
+        )
+        .filter(
+          (item) =>
+            /^[a-zA-Z0-9][a-zA-Z0-9._\/-]{0,199}$/.test(item.name) &&
+            !item.name.includes("..") &&
+            /^[0-9a-f]{40}$/i.test(item.sha)
+        );
+
+      for (const branch of branches) {
+        await scheduleAutomationEvent(
+          repository,
+          "push",
+          branch.name,
+          branch.sha,
+          { id: identity.user.id, name: identity.user.displayName },
+          null
+        );
+        void dispatchKoshWebhooks(
+          repository.id,
+          "push",
+          {
+            namespace: repository.namespace,
+            slug: repository.slug,
+            branch: branch.name,
+            commitSha: branch.sha,
+            transport: "ssh"
+          }
+        ).catch(() => undefined);
+      }
+
+      await platformStore.appendAudit({
+        repositoryId: repository.id,
+        actorUserId: identity.user.id,
+        actorName: identity.user.displayName,
+        eventType: "ssh_git_push_completed",
+        resourceType: "repository",
+        resourceId: repository.id,
+        metadata: {
+          namespace,
+          slug,
+          keyId,
+          branches
+        }
+      });
+
+      sendJson(response, 200, {
+        accepted: true,
+        branchCount: branches.length
       });
       return true;
     }
