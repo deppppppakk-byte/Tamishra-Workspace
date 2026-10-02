@@ -112,8 +112,8 @@ export const koshModules: KoshModule[] = [
   {
     id: "code-intelligence",
     name: "Code Intelligence",
-    description: "Code-index and ownership resources for symbols, references and language-aware navigation.",
-    status: "foundation"
+    description: "Commit-aware symbol and reference indexing with definitions, ownership mapping, push-triggered delta refresh and language-aware navigation.",
+    status: "active"
   },
   {
     id: "browser-ide",
