@@ -8,6 +8,7 @@ import { resolveWorkspaceIdentity } from "./identity.js";
 import { handleKoshChangeReviewRequest } from "./kosh-reviews.js";
 import { handleKoshWorkRequest } from "./kosh-work.js";
 import { handleKoshAutomationRequest } from "./kosh-automation.js";
+import { handleKoshPlatformRequest } from "./kosh-platform.js";
 import { scheduleAutomationEvent } from "./kosh-automation-service.js";
 import {
   createKoshStore,
@@ -865,6 +866,18 @@ export async function handleKoshRequest(
     return true;
   }
 
+  if (
+    await handleKoshPlatformRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return true;
+  }
+
   if (request.method === "GET" && url.pathname === "/v1/kosh") {
     await store.ready();
 
@@ -887,6 +900,24 @@ export async function handleKoshRequest(
           "packages",
           "releases",
           "security",
+          "ssh",
+          "organizations",
+          "merge-queue",
+          "search",
+          "code-intelligence",
+          "browser-ide",
+          "dev-environments",
+          "wiki",
+          "pages",
+          "webhooks",
+          "api-cli",
+          "notifications",
+          "advanced-projects",
+          "release-management",
+          "storage",
+          "disaster-recovery",
+          "observability",
+          "administration",
           "extensions"
         ]
       },
