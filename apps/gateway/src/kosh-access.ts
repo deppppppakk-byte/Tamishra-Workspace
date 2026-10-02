@@ -664,6 +664,15 @@ export async function handleKoshAccessRequest(
             ])
           : [[], [], null];
 
+        const hydratedTeams = namespaceAccess.canManage
+          ? await Promise.all(
+              teams.map(async (team) => ({
+                ...team,
+                members: await accessStore.listTeamMembers(team.id)
+              }))
+            )
+          : teams.map((team) => ({ ...team, members: [] }));
+
         sendJson(
           response,
           200,
@@ -681,7 +690,7 @@ export async function handleKoshAccessRequest(
             namespaceAdmin: namespaceAccess.canManage,
             binding,
             grants,
-            teams
+            teams: hydratedTeams
           },
           origin,
           allowedOrigins
