@@ -383,4 +383,4 @@ Kosh Flow exists to answer:
 
 > What is this project trying to do, what changed, what proved it, what was delivered, and what is running now?
 
-This is a Kosh-native lifecycle model rather than a copy of another development platform's navigation or workflow.
+This is Kosh's own lifecycle model: one connected view of intent, change, proof, delivery and operation.
