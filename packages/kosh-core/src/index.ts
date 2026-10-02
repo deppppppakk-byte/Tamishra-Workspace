@@ -82,8 +82,8 @@ export const koshModules: KoshModule[] = [
   {
     id: "security",
     name: "Security",
-    description: "Encrypted secrets, findings, audit trails, code ownership and policy resources.",
-    status: "foundation"
+    description: "Repository secret scanning, dependency policy analysis, durable findings, SBOM, encrypted runtime secrets and Pulse signals.",
+    status: "active"
   },
   {
     id: "ssh",
