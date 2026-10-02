@@ -161,6 +161,7 @@ export function validateWorkflowDefinition(
       ),
       secrets,
       runsOn,
+      publishPackages: job.publishPackages === true,
       env:
         job.env && typeof job.env === "object"
           ? Object.fromEntries(
