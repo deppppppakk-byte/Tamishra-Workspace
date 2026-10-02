@@ -5,6 +5,7 @@ import { getKoshWorkStore } from "./kosh-work-store.js";
 import { getKoshReviewStore } from "./kosh-review-store.js";
 import { getKoshAutomationStore } from "./kosh-automation-store.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
+import { getKoshPackageStore } from "./kosh-package-store.js";
 import {
   getKoshFlowStore,
   type KoshFlowEntityType,
@@ -16,6 +17,7 @@ const workStore = getKoshWorkStore();
 const reviewStore = getKoshReviewStore();
 const automationStore = getKoshAutomationStore();
 const platformStore = getKoshPlatformStore();
+const packageStore = getKoshPackageStore();
 const flowStore = getKoshFlowStore();
 
 type JsonBody = Record<string, unknown>;
@@ -207,8 +209,10 @@ function makeHref(
   if (kind === "workflow_run" || kind === "deployment") {
     return "/apps/kosh/automation?" + base;
   }
+  if (kind === "package") {
+    return "/apps/kosh/packages?" + base;
+  }
   if (
-    kind === "package" ||
     kind === "release" ||
     kind === "backup" ||
     kind === "page_site"
@@ -229,6 +233,7 @@ export async function buildKoshFlowGraph(
     reviewStore.ready(),
     automationStore.ready(),
     platformStore.ready(),
+    packageStore.ready(),
     flowStore.ready()
   ]);
 
@@ -254,7 +259,7 @@ export async function buildKoshFlowGraph(
     reviewStore.listChangeRequests(repository.id),
     automationStore.listRuns(repository.id, 300),
     automationStore.listDeployments(repository.id, 300),
-    platformStore.listResources("package", repository.id),
+    packageStore.listVersions(repository.id),
     platformStore.listResources("release", repository.id),
     platformStore.listResources("backup", repository.id),
     platformStore.listResources("page_site", repository.id),
@@ -551,39 +556,65 @@ export async function buildKoshFlowGraph(
     }
   }
 
-  for (const resource of packages) {
-    const packageKey = String(resource.payload.packageKey ?? resource.name);
-    const version = String(resource.payload.version ?? "");
+  for (const packageVersion of packages) {
     addNode({
-      id: nodeId("package", resource.id),
+      id: nodeId("package", packageVersion.id),
       type: "package",
-      ref: resource.id,
-      title: packageKey + (version ? "@" + version : ""),
-      subtitle: String(resource.payload.format ?? "package"),
+      ref: packageVersion.id,
+      title:
+        packageVersion.packageKey +
+        "@" +
+        packageVersion.version,
+      subtitle:
+        packageVersion.format +
+        " · " +
+        packageVersion.filename,
       stage: "deliver",
-      state: resource.state,
-      health: healthForResource(resource.state),
-      href: makeHref(repository.namespace, repository.slug, "package", resource.id),
-      updatedAt: resource.updatedAt,
-      metadata: resource.payload
+      state: packageVersion.state,
+      health:
+        packageVersion.state === "published"
+          ? "good"
+          : "attention",
+      href:
+        "/apps/kosh/packages?namespace=" +
+        encodeURIComponent(repository.namespace) +
+        "&slug=" +
+        encodeURIComponent(repository.slug) +
+        "&package=" +
+        encodeURIComponent(packageVersion.packageKey),
+      updatedAt: packageVersion.updatedAt,
+      metadata: {
+        packageKey: packageVersion.packageKey,
+        version: packageVersion.version,
+        filename: packageVersion.filename,
+        format: packageVersion.format,
+        mediaType: packageVersion.mediaType,
+        sizeBytes: packageVersion.sizeBytes,
+        sha256: packageVersion.sha256,
+        commitSha: packageVersion.commitSha,
+        runId: packageVersion.runId,
+        provenance: packageVersion.provenance,
+        state: packageVersion.state
+      }
     });
 
-    const runId = String(resource.payload.runId ?? "");
-    const commitSha = String(resource.payload.commitSha ?? "");
-    if (runId) {
+    if (packageVersion.runId) {
       uniqueEdge(
         edges,
-        nodeId("workflow_run", runId),
-        nodeId("package", resource.id),
+        nodeId("workflow_run", packageVersion.runId),
+        nodeId("package", packageVersion.id),
         "produces",
         "derived"
       );
-    } else if (/^[0-9a-f]{40}$/i.test(commitSha)) {
-      addCommitNode(commitSha);
+    } else if (
+      packageVersion.commitSha &&
+      /^[0-9a-f]{40}$/i.test(packageVersion.commitSha)
+    ) {
+      addCommitNode(packageVersion.commitSha);
       uniqueEdge(
         edges,
-        nodeId("commit", commitSha),
-        nodeId("package", resource.id),
+        nodeId("commit", packageVersion.commitSha),
+        nodeId("package", packageVersion.id),
         "produces",
         "derived"
       );
