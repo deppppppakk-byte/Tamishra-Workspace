@@ -242,7 +242,7 @@ class MemoryKoshSecurityStore implements KoshSecurityStore {
       .map(clone);
   }
 
-  async putSbom(input: StoredKoshSbom) {
+  async putSbom(input: StoredKoshSbom): Promise<StoredKoshSbom> {
     this.sboms.set(input.repositoryId, clone(input));
     return clone(input);
   }
@@ -558,7 +558,9 @@ class PostgresKoshSecurityStore implements KoshSecurityStore {
     };
   }
 
-  async getSbom(repositoryId: string) {
+  async getSbom(
+    repositoryId: string
+  ): Promise<StoredKoshSbom | null> {
     await this.ready();
     const rows = await this.sql`
       SELECT * FROM kosh_security_sbom
