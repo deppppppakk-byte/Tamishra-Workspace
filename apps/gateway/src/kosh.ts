@@ -35,6 +35,7 @@ import {
   triggerKoshCodeIndexAfterPush
 } from "./kosh-code-intelligence.js";
 import { handleKoshBrowserIdeRequest } from "./kosh-browser-ide.js";
+import { handleKoshDevEnvironmentRequest } from "./kosh-dev-environments.js";
 import { scheduleAutomationEvent } from "./kosh-automation-service.js";
 import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
@@ -1091,6 +1092,18 @@ export async function handleKoshRequest(
 
   if (
     await handleKoshBrowserIdeRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    await handleKoshDevEnvironmentRequest(
       request,
       response,
       url,
