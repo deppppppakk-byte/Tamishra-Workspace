@@ -74,6 +74,12 @@ export interface KoshReviewStore {
   listChangeRequests(repositoryId: string): Promise<StoredKoshChangeRequest[]>;
   getChangeRequest(repositoryId: string, number: number): Promise<StoredKoshChangeRequest | null>;
   createChangeRequest(input: CreateChangeRequest): Promise<StoredKoshChangeRequest>;
+  syncChangeRequest(
+    repositoryId: string,
+    number: number,
+    baseSha: string,
+    headSha: string
+  ): Promise<StoredKoshChangeRequest | null>;
   closeChangeRequest(repositoryId: string, number: number): Promise<StoredKoshChangeRequest | null>;
   markMerged(
     repositoryId: string,
@@ -140,6 +146,23 @@ class MemoryKoshReviewStore implements KoshReviewStore {
     };
     this.changeRequests.set(input.repositoryId + ":" + record.number, record);
     return clone(record);
+  }
+
+  async syncChangeRequest(
+    repositoryId: string,
+    number: number,
+    baseSha: string,
+    headSha: string
+  ) {
+    const key = repositoryId + ":" + number;
+    const value = this.changeRequests.get(key);
+    if (!value) return null;
+    if (value.baseSha !== baseSha || value.headSha !== headSha) {
+      value.baseSha = baseSha;
+      value.headSha = headSha;
+      value.updatedAt = now();
+    }
+    return clone(value);
   }
 
   async closeChangeRequest(repositoryId: string, number: number) {
@@ -463,6 +486,30 @@ class PostgresKoshReviewStore implements KoshReviewStore {
 
       return changeRequestFromRow(rows[0] as Record<string, unknown>);
     });
+  }
+
+  async syncChangeRequest(
+    repositoryId: string,
+    number: number,
+    baseSha: string,
+    headSha: string
+  ) {
+    await this.ready();
+    const rows = await this.sql`
+      UPDATE kosh_change_requests
+      SET base_sha = ${baseSha},
+          head_sha = ${headSha},
+          updated_at = CASE
+            WHEN base_sha <> ${baseSha} OR head_sha <> ${headSha}
+            THEN NOW()
+            ELSE updated_at
+          END
+      WHERE repository_id = ${repositoryId}
+        AND number = ${number}
+      RETURNING *
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    return row ? changeRequestFromRow(row) : null;
   }
 
   async closeChangeRequest(repositoryId: string, number: number) {
