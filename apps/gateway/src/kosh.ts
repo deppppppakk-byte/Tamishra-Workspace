@@ -1139,16 +1139,13 @@ export async function handleKoshRequest(
   }
 
   if (request.method === "POST" && url.pathname === "/v1/kosh/repos") {
-    if (
-      !(await requireWorkspaceIdentity(
-        request,
-        response,
-        origin,
-        allowedOrigins
-      ))
-    ) {
-      return true;
-    }
+    const identity = await requireWorkspaceIdentity(
+      request,
+      response,
+      origin,
+      allowedOrigins
+    );
+    if (!identity) return true;
 
     if (origin && !allowedOrigins.has(origin)) {
       json(
@@ -1200,6 +1197,7 @@ export async function handleKoshRequest(
         return true;
       }
 
+      await ensureKoshNamespaceForCreation(identity, namespace);
       await ensureBareRepository(namespace, slug);
 
       const cloneHttpUrl =
@@ -1221,7 +1219,21 @@ export async function handleKoshRequest(
         cloneHttpUrl
       });
 
-      json(response, 201, repository, origin, allowedOrigins);
+      await bootstrapKoshRepositoryOwner(repository.id, identity);
+
+      json(
+        response,
+        201,
+        {
+          ...repository,
+          access: {
+            role: "owner",
+            source: "user-grant"
+          }
+        },
+        origin,
+        allowedOrigins
+      );
     } catch (error) {
       routeError(response, error, origin, allowedOrigins);
     }
