@@ -134,3 +134,80 @@ Issue deep link:
 `/apps/kosh/work?namespace=<namespace>&slug=<slug>&issue=<number>`
 
 Work metadata is stored in PostgreSQL. Commit and Change Request links continue to resolve to Kosh's Git-native development layer.
+
+## Phase 5 — Automation / CI-CD
+
+Kosh now includes its own event-driven CI/CD control plane and runner protocol.
+
+Implemented:
+
+- Kosh Workflow Definition v1 stored as provider-neutral JSON
+- manual workflow triggers
+- Git push triggers detected from real branch-ref changes after receive-pack
+- Change Review triggers against the exact reviewed head SHA
+- workflow runs, jobs and statuses
+- authenticated runner job claiming through KOSH_RUNNER_TOKEN
+- standalone @tamishra/kosh-runner service
+- exact-commit checkout over Kosh Git smart HTTP
+- per-job and per-step environment variables
+- step timeouts and continue-on-error behavior
+- stdout, stderr and system log streaming back to the Gateway
+- .kosh-artifacts convention for build artifacts
+- bounded artifact upload with SHA-256 metadata
+- environments and protected-branch deployment records
+- commit-level status checks
+- required Change Review checks
+- merge blocking while required checks are queued/running
+- merge blocking when required checks fail or are cancelled
+- Automation dashboard for workflows, runs, logs, artifacts, environments and deployments
+
+Static-export-compatible workspace route:
+
+`/apps/kosh/automation?namespace=<namespace>&slug=<slug>`
+
+### Runner deployment
+
+The Kosh Runner executes repository-provided commands and must be treated as a trusted execution worker. In production, deploy runners separately from the Gateway in disposable or strongly isolated containers/VMs with restricted filesystem, network and credentials.
+
+Required production values:
+
+```env
+KOSH_RUNNER_TOKEN=<separate-long-secret>
+KOSH_GATEWAY_ORIGIN=https://kosh.tamishra.in
+KOSH_GIT_TOKEN=<git-service-credential-available-only-to-trusted-runners>
+KOSH_ARTIFACT_ROOT=/var/lib/kosh/artifacts
+```
+
+Start a runner with:
+
+```bash
+npm run build:kosh-runner
+npm run start --workspace @tamishra/kosh-runner
+```
+
+Workflow Definition v1 example:
+
+```json
+{
+  "version": 1,
+  "name": "Build and test",
+  "triggers": {
+    "manual": true,
+    "push": { "branches": ["main"] },
+    "changeRequest": { "branches": ["main"] }
+  },
+  "jobs": [
+    {
+      "id": "quality",
+      "name": "Quality checks",
+      "timeoutMinutes": 30,
+      "steps": [
+        { "name": "Install", "run": "npm install" },
+        { "name": "Check", "run": "npm run check" }
+      ]
+    }
+  ]
+}
+```
+
+Build outputs placed under `.kosh-artifacts/` are uploaded by the runner after the job.
