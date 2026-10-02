@@ -360,6 +360,39 @@ export function calculateKoshMeshImpact(
   };
 }
 
+async function canManageMeshNode(
+  identity: KoshMeshIdentity,
+  node: MeshNode
+) {
+  if (node.kind === "repository") {
+    const repository = await repositoryStore.get(node.namespace, node.key);
+    if (!repository) return false;
+    const access = await evaluateKoshRepositoryAccess(
+      identity,
+      repository,
+      "repository.manage"
+    );
+    return access.allowed;
+  }
+
+  const authority = await koshNamespaceAuthority(
+    identity,
+    node.namespace
+  );
+  return authority.canManage;
+}
+
+async function requireMeshNodeManagement(
+  identity: KoshMeshIdentity,
+  node: MeshNode
+) {
+  if (!(await canManageMeshNode(identity, node))) {
+    throw Object.assign(new Error("mesh_manage_required"), {
+      status: 403
+    });
+  }
+}
+
 function routeError(
   response: ServerResponse,
   error: unknown,
