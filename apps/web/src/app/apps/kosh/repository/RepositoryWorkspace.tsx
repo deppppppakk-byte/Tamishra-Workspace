@@ -619,6 +619,16 @@ export function RepositoryWorkspace() {
           >
             Security
           </Link>
+          <Link
+            href={
+              "/apps/kosh/packages?namespace=" +
+              encodeURIComponent(namespace) +
+              "&slug=" +
+              encodeURIComponent(slug)
+            }
+          >
+            Packages
+          </Link>
         </nav>
       </header>
 
