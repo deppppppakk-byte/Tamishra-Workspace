@@ -58,7 +58,33 @@ type BlobPreview = {
   encoding: "utf8" | "base64" | "too-large";
 };
 
-type View = "code" | "commits" | "branches" | "tags";
+type ChangeRequest = {
+  id: string;
+  number: number;
+  title: string;
+  description: string;
+  baseBranch: string;
+  headBranch: string;
+  baseSha: string;
+  headSha: string;
+  authorName: string;
+  status: "open" | "merged" | "closed";
+  createdAt: string;
+  updatedAt: string;
+  mergeCommitSha: string | null;
+};
+
+type BranchPolicy = {
+  repositoryId: string;
+  branch: string;
+  requiredApprovals: number;
+  blockOnChangesRequested: boolean;
+  allowDirectPush: boolean;
+  allowDelete: boolean;
+  updatedAt: string;
+};
+
+type View = "code" | "commits" | "branches" | "tags" | "reviews";
 
 function apiBase() {
   const configured =
@@ -100,6 +126,7 @@ export function RepositoryWorkspace() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [commits, setCommits] = useState<Commit[]>([]);
   const [entries, setEntries] = useState<TreeEntry[]>([]);
+  const [changeRequests, setChangeRequests] = useState<ChangeRequest[]>([]);
   const [selectedRef, setSelectedRef] = useState("");
   const [path, setPath] = useState("");
   const [preview, setPreview] = useState<BlobPreview | null>(null);
@@ -107,6 +134,21 @@ export function RepositoryWorkspace() {
   const [loading, setLoading] = useState(true);
   const [contentLoading, setContentLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const [branchName, setBranchName] = useState("");
+  const [branchFrom, setBranchFrom] = useState("");
+  const [creatingBranch, setCreatingBranch] = useState(false);
+
+  const [policyBranch, setPolicyBranch] = useState("");
+  const [policy, setPolicy] = useState<BranchPolicy | null>(null);
+  const [savingPolicy, setSavingPolicy] = useState(false);
+
+  const [reviewFormOpen, setReviewFormOpen] = useState(false);
+  const [reviewTitle, setReviewTitle] = useState("");
+  const [reviewDescription, setReviewDescription] = useState("");
+  const [reviewBase, setReviewBase] = useState("");
+  const [reviewHead, setReviewHead] = useState("");
+  const [creatingReview, setCreatingReview] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -136,6 +178,27 @@ export function RepositoryWorkspace() {
     }
     return payload;
   }, []);
+
+  const mutateJson = useCallback(
+    async <T,>(
+      url: string,
+      method: "POST" | "PUT" | "PATCH" | "DELETE",
+      body?: unknown
+    ): Promise<T> => {
+      const response = await fetch(url, {
+        method,
+        credentials: "include",
+        headers: body === undefined ? undefined : { "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body)
+      });
+      const payload = (await response.json()) as T & { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || "Kosh request failed.");
+      }
+      return payload;
+    },
+    []
+  );
 
   const loadGitView = useCallback(
     async (ref: string, nextPath = "") => {
@@ -176,6 +239,23 @@ export function RepositoryWorkspace() {
     [fetchJson, resourceBase]
   );
 
+  const refreshBranches = useCallback(async () => {
+    if (!resourceBase) return;
+    const payload = await fetchJson<{ branches: Branch[] }>(
+      resourceBase + "/branches"
+    );
+    setBranches(payload.branches);
+    return payload.branches;
+  }, [fetchJson, resourceBase]);
+
+  const refreshReviews = useCallback(async () => {
+    if (!resourceBase) return;
+    const payload = await fetchJson<{ changeRequests: ChangeRequest[] }>(
+      resourceBase + "/change-requests"
+    );
+    setChangeRequests(payload.changeRequests);
+  }, [fetchJson, resourceBase]);
+
   useEffect(() => {
     if (!resourceBase) {
       if (namespace || slug) {
@@ -192,17 +272,22 @@ export function RepositoryWorkspace() {
       setError("");
 
       try {
-        const [repoPayload, branchPayload, tagPayload] = await Promise.all([
-          fetchJson<RepositoryOverview>(resourceBase),
-          fetchJson<{ branches: Branch[] }>(resourceBase + "/branches"),
-          fetchJson<{ tags: Tag[] }>(resourceBase + "/tags")
-        ]);
+        const [repoPayload, branchPayload, tagPayload, reviewPayload] =
+          await Promise.all([
+            fetchJson<RepositoryOverview>(resourceBase),
+            fetchJson<{ branches: Branch[] }>(resourceBase + "/branches"),
+            fetchJson<{ tags: Tag[] }>(resourceBase + "/tags"),
+            fetchJson<{ changeRequests: ChangeRequest[] }>(
+              resourceBase + "/change-requests"
+            )
+          ]);
 
         if (cancelled) return;
 
         setOverview(repoPayload);
         setBranches(branchPayload.branches);
         setTags(tagPayload.tags);
+        setChangeRequests(reviewPayload.changeRequests);
 
         const initialRef =
           branchPayload.branches.find(
@@ -213,6 +298,14 @@ export function RepositoryWorkspace() {
           "";
 
         setSelectedRef(initialRef);
+        setBranchFrom(initialRef);
+        setReviewBase(repoPayload.repository.defaultBranch);
+        setReviewHead(
+          branchPayload.branches.find(
+            (branch) => branch.name !== repoPayload.repository.defaultBranch
+          )?.name ?? ""
+        );
+        setPolicyBranch(repoPayload.repository.defaultBranch);
 
         if (initialRef) {
           await loadGitView(initialRef, "");
@@ -237,6 +330,31 @@ export function RepositoryWorkspace() {
       cancelled = true;
     };
   }, [fetchJson, loadGitView, namespace, resourceBase, slug]);
+
+  useEffect(() => {
+    if (!resourceBase || !policyBranch) {
+      setPolicy(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    void fetchJson<BranchPolicy>(
+      resourceBase + "/policies/" + encodeURIComponent(policyBranch)
+    )
+      .then((value) => {
+        if (!cancelled) setPolicy(value);
+      })
+      .catch((reason) => {
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : "Could not load branch policy.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchJson, policyBranch, resourceBase]);
 
   async function openEntry(entry: TreeEntry) {
     if (entry.type === "tree") {
@@ -266,6 +384,104 @@ export function RepositoryWorkspace() {
       );
     } finally {
       setContentLoading(false);
+    }
+  }
+
+  async function createBranch() {
+    if (!resourceBase || !branchName.trim()) return;
+    setCreatingBranch(true);
+    setError("");
+
+    try {
+      await mutateJson(
+        resourceBase + "/branches",
+        "POST",
+        { name: branchName.trim(), from: branchFrom || selectedRef }
+      );
+      setBranchName("");
+      const updated = await refreshBranches();
+      if (updated?.length) {
+        setBranchFrom(branchFrom || updated[0].name);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Branch creation failed.");
+    } finally {
+      setCreatingBranch(false);
+    }
+  }
+
+  async function deleteBranch(name: string) {
+    if (!resourceBase) return;
+    setError("");
+
+    try {
+      await mutateJson(
+        resourceBase + "/branches/" + encodeURIComponent(name),
+        "DELETE"
+      );
+      await refreshBranches();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Branch deletion failed.");
+    }
+  }
+
+  async function savePolicy() {
+    if (!resourceBase || !policyBranch || !policy) return;
+    setSavingPolicy(true);
+    setError("");
+
+    try {
+      const saved = await mutateJson<BranchPolicy>(
+        resourceBase + "/policies/" + encodeURIComponent(policyBranch),
+        "PUT",
+        {
+          requiredApprovals: policy.requiredApprovals,
+          blockOnChangesRequested: policy.blockOnChangesRequested,
+          allowDirectPush: policy.allowDirectPush,
+          allowDelete: policy.allowDelete
+        }
+      );
+      setPolicy(saved);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not save branch policy.");
+    } finally {
+      setSavingPolicy(false);
+    }
+  }
+
+  async function createChangeRequest() {
+    if (!resourceBase || !reviewTitle.trim() || !reviewHead) return;
+    setCreatingReview(true);
+    setError("");
+
+    try {
+      const created = await mutateJson<ChangeRequest>(
+        resourceBase + "/change-requests",
+        "POST",
+        {
+          title: reviewTitle.trim(),
+          description: reviewDescription.trim(),
+          baseBranch: reviewBase,
+          headBranch: reviewHead
+        }
+      );
+      setReviewFormOpen(false);
+      setReviewTitle("");
+      setReviewDescription("");
+      await refreshReviews();
+      window.location.href =
+        "/apps/kosh/review?namespace=" +
+        encodeURIComponent(namespace) +
+        "&slug=" +
+        encodeURIComponent(slug) +
+        "&number=" +
+        created.number;
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Change Request creation failed."
+      );
+    } finally {
+      setCreatingReview(false);
     }
   }
 
@@ -315,7 +531,7 @@ export function RepositoryWorkspace() {
         </div>
 
         <nav className={styles.tabs}>
-          {(["code", "commits", "branches", "tags"] as View[]).map(
+          {(["code", "commits", "branches", "tags", "reviews"] as View[]).map(
             (item) => (
               <button
                 key={item}
@@ -324,14 +540,18 @@ export function RepositoryWorkspace() {
               >
                 {item === "code"
                   ? "Code"
-                  : item.charAt(0).toUpperCase() + item.slice(1)}
+                  : item === "reviews"
+                    ? "Change Reviews"
+                    : item.charAt(0).toUpperCase() + item.slice(1)}
                 {item === "commits" && commits.length
                   ? " " + commits.length
                   : item === "branches"
                     ? " " + overview.branchCount
                     : item === "tags"
                       ? " " + overview.tagCount
-                      : ""}
+                      : item === "reviews"
+                        ? " " + changeRequests.filter((item) => item.status === "open").length
+                        : ""}
               </button>
             )
           )}
@@ -358,34 +578,36 @@ export function RepositoryWorkspace() {
           </section>
         ) : (
           <>
-            <div className={styles.toolbar}>
-              <label>
-                <span>Branch / ref</span>
-                <select
-                  value={selectedRef}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    setSelectedRef(next);
-                    void loadGitView(next, "");
-                  }}
-                >
-                  {branches.map((branch) => (
-                    <option key={branch.name} value={branch.name}>
-                      {branch.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className={styles.summary}>
-                <span>{overview.branchCount} branches</span>
-                <span>{overview.tagCount} tags</span>
-                <span>
-                  {overview.headSha
-                    ? overview.headSha.slice(0, 8)
-                    : "No HEAD"}
-                </span>
+            {view !== "reviews" && (
+              <div className={styles.toolbar}>
+                <label>
+                  <span>Branch / ref</span>
+                  <select
+                    value={selectedRef}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      setSelectedRef(next);
+                      void loadGitView(next, "");
+                    }}
+                  >
+                    {branches.map((branch) => (
+                      <option key={branch.name} value={branch.name}>
+                        {branch.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className={styles.summary}>
+                  <span>{overview.branchCount} branches</span>
+                  <span>{overview.tagCount} tags</span>
+                  <span>
+                    {overview.headSha
+                      ? overview.headSha.slice(0, 8)
+                      : "No HEAD"}
+                  </span>
+                </div>
               </div>
-            </div>
+            )}
 
             {view === "code" && (
               <section className={styles.codeLayout}>
@@ -421,9 +643,7 @@ export function RepositoryWorkspace() {
                         <button
                           className={styles.treeRow}
                           onClick={() => {
-                            const parent = breadcrumbs
-                              .slice(0, -1)
-                              .join("/");
+                            const parent = breadcrumbs.slice(0, -1).join("/");
                             void loadGitView(selectedRef, parent);
                           }}
                         >
@@ -506,19 +726,153 @@ export function RepositoryWorkspace() {
             )}
 
             {view === "branches" && (
-              <section className={styles.listPanel}>
-                {branches.map((branch) => (
-                  <article className={styles.refRow} key={branch.name}>
+              <section className={styles.managementGrid}>
+                <div className={styles.listPanel}>
+                  <div className={styles.panelTitle}>
                     <div>
-                      <strong>{branch.name}</strong>
-                      <span>
-                        {branch.subject || "No commit subject"} ·{" "}
-                        {ageLabel(branch.committedAt)}
-                      </span>
+                      <strong>Branches</strong>
+                      <span>Create feature branches and manage refs.</span>
                     </div>
-                    <code>{branch.sha.slice(0, 8)}</code>
-                  </article>
-                ))}
+                  </div>
+                  <div className={styles.inlineForm}>
+                    <input
+                      value={branchName}
+                      onChange={(event) => setBranchName(event.target.value)}
+                      placeholder="feature/new-work"
+                    />
+                    <select
+                      value={branchFrom}
+                      onChange={(event) => setBranchFrom(event.target.value)}
+                    >
+                      {branches.map((branch) => (
+                        <option key={branch.name} value={branch.name}>
+                          from {branch.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      disabled={creatingBranch || !branchName.trim()}
+                      onClick={() => void createBranch()}
+                    >
+                      {creatingBranch ? "Creating…" : "Create"}
+                    </button>
+                  </div>
+
+                  {branches.map((branch) => (
+                    <article className={styles.refRow} key={branch.name}>
+                      <div>
+                        <strong>{branch.name}</strong>
+                        <span>
+                          {branch.subject || "No commit subject"} ·{" "}
+                          {ageLabel(branch.committedAt)}
+                        </span>
+                      </div>
+                      <div className={styles.rowActions}>
+                        <code>{branch.sha.slice(0, 8)}</code>
+                        {branch.name !== repository.defaultBranch && (
+                          <button
+                            className={styles.dangerButton}
+                            onClick={() => void deleteBranch(branch.name)}
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+
+                <aside className={styles.policyPanel}>
+                  <div className={styles.panelTitle}>
+                    <div>
+                      <strong>Branch policy</strong>
+                      <span>Rules are enforced by Kosh and Git receive hooks.</span>
+                    </div>
+                  </div>
+
+                  <label>
+                    <span>Branch</span>
+                    <select
+                      value={policyBranch}
+                      onChange={(event) => setPolicyBranch(event.target.value)}
+                    >
+                      {branches.map((branch) => (
+                        <option key={branch.name} value={branch.name}>
+                          {branch.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {policy && (
+                    <>
+                      <label>
+                        <span>Required approvals</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={20}
+                          value={policy.requiredApprovals}
+                          onChange={(event) =>
+                            setPolicy({
+                              ...policy,
+                              requiredApprovals: Math.max(
+                                0,
+                                Math.min(20, Number(event.target.value) || 0)
+                              )
+                            })
+                          }
+                        />
+                      </label>
+                      <label className={styles.checkLabel}>
+                        <input
+                          type="checkbox"
+                          checked={policy.blockOnChangesRequested}
+                          onChange={(event) =>
+                            setPolicy({
+                              ...policy,
+                              blockOnChangesRequested: event.target.checked
+                            })
+                          }
+                        />
+                        <span>Block merge when changes are requested</span>
+                      </label>
+                      <label className={styles.checkLabel}>
+                        <input
+                          type="checkbox"
+                          checked={policy.allowDirectPush}
+                          onChange={(event) =>
+                            setPolicy({
+                              ...policy,
+                              allowDirectPush: event.target.checked
+                            })
+                          }
+                        />
+                        <span>Allow direct Git push</span>
+                      </label>
+                      <label className={styles.checkLabel}>
+                        <input
+                          type="checkbox"
+                          checked={policy.allowDelete}
+                          onChange={(event) =>
+                            setPolicy({
+                              ...policy,
+                              allowDelete: event.target.checked
+                            })
+                          }
+                        />
+                        <span>Allow branch deletion</span>
+                      </label>
+                      <button
+                        className={styles.primaryAction}
+                        disabled={savingPolicy}
+                        onClick={() => void savePolicy()}
+                      >
+                        {savingPolicy ? "Saving…" : "Save policy"}
+                      </button>
+                    </>
+                  )}
+                </aside>
               </section>
             )}
 
@@ -539,6 +893,133 @@ export function RepositoryWorkspace() {
                 ) : (
                   <div className={styles.progress}>No tags yet.</div>
                 )}
+              </section>
+            )}
+
+            {view === "reviews" && (
+              <section>
+                <div className={styles.reviewHeader}>
+                  <div>
+                    <strong>Change Reviews</strong>
+                    <span>
+                      Compare branches, discuss changes, approve and merge.
+                    </span>
+                  </div>
+                  <button
+                    className={styles.primaryAction}
+                    onClick={() => setReviewFormOpen((open) => !open)}
+                  >
+                    + New Change Request
+                  </button>
+                </div>
+
+                {reviewFormOpen && (
+                  <div className={styles.reviewCreate}>
+                    <label>
+                      <span>Title</span>
+                      <input
+                        value={reviewTitle}
+                        onChange={(event) => setReviewTitle(event.target.value)}
+                        placeholder="Describe this change"
+                      />
+                    </label>
+                    <label>
+                      <span>Description</span>
+                      <textarea
+                        value={reviewDescription}
+                        onChange={(event) =>
+                          setReviewDescription(event.target.value)
+                        }
+                        placeholder="Context, testing notes and review guidance"
+                      />
+                    </label>
+                    <div className={styles.branchPair}>
+                      <label>
+                        <span>Base</span>
+                        <select
+                          value={reviewBase}
+                          onChange={(event) => setReviewBase(event.target.value)}
+                        >
+                          {branches.map((branch) => (
+                            <option key={branch.name} value={branch.name}>
+                              {branch.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <span>← merge from ←</span>
+                      <label>
+                        <span>Head</span>
+                        <select
+                          value={reviewHead}
+                          onChange={(event) => setReviewHead(event.target.value)}
+                        >
+                          <option value="">Select branch</option>
+                          {branches
+                            .filter((branch) => branch.name !== reviewBase)
+                            .map((branch) => (
+                              <option key={branch.name} value={branch.name}>
+                                {branch.name}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                    </div>
+                    <div className={styles.formButtons}>
+                      <button
+                        className={styles.secondaryAction}
+                        onClick={() => setReviewFormOpen(false)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className={styles.primaryAction}
+                        disabled={
+                          creatingReview ||
+                          !reviewTitle.trim() ||
+                          !reviewHead ||
+                          reviewHead === reviewBase
+                        }
+                        onClick={() => void createChangeRequest()}
+                      >
+                        {creatingReview ? "Creating…" : "Open Change Request"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className={styles.reviewList}>
+                  {changeRequests.map((item) => (
+                    <Link
+                      key={item.id}
+                      className={styles.reviewRow}
+                      href={
+                        "/apps/kosh/review?namespace=" +
+                        encodeURIComponent(namespace) +
+                        "&slug=" +
+                        encodeURIComponent(slug) +
+                        "&number=" +
+                        item.number
+                      }
+                    >
+                      <div>
+                        <strong>
+                          #{item.number} {item.title}
+                        </strong>
+                        <span>
+                          {item.headBranch} → {item.baseBranch} ·{" "}
+                          {item.authorName} · {ageLabel(item.updatedAt)}
+                        </span>
+                      </div>
+                      <em className={styles[item.status]}>{item.status}</em>
+                    </Link>
+                  ))}
+                  {!changeRequests.length && (
+                    <div className={styles.progress}>
+                      No Change Requests yet.
+                    </div>
+                  )}
+                </div>
               </section>
             )}
           </>
