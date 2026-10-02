@@ -1,7 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import {
-  getWorkspaceIdentityUser,
-  resolveWorkspaceIdentity
+  getWorkspaceIdentityAuthorization,
+  resolveWorkspaceAuthorization
 } from "./identity.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
 
@@ -18,7 +18,7 @@ export async function resolveKoshIdentity(
   request: IncomingMessage,
   requiredScope?: string
 ) {
-  const sessionIdentity = await resolveWorkspaceIdentity(request);
+  const sessionIdentity = await resolveWorkspaceAuthorization(request);
   if (sessionIdentity) {
     return {
       ...sessionIdentity,
@@ -42,11 +42,11 @@ export async function resolveKoshIdentity(
     return null;
   }
 
-  const user = await getWorkspaceIdentityUser(apiToken.userId);
-  if (!user) return null;
+  const authorization = await getWorkspaceIdentityAuthorization(apiToken.userId);
+  if (!authorization) return null;
 
   return {
-    user,
+    ...authorization,
     session: null,
     authType: "api-token" as const,
     apiToken
