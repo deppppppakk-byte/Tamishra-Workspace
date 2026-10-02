@@ -122,6 +122,7 @@ export function KoshWorkspace() {
         <nav className={styles.nav}>
           <a className={styles.active} href="#overview">Overview</a>
           <a href="#repositories">Repositories</a>
+          <Link href="/apps/kosh/mesh">Mesh</Link>
           <a href="#platform">Platform</a>
           <a href="#infrastructure">Infrastructure</a>
         </nav>
@@ -148,8 +149,8 @@ export function KoshWorkspace() {
             <span className={styles.badge}>Git-compatible foundation</span>
             <h2>A development platform built the Kosh way.</h2>
             <p>
-              Kosh starts with real Git repository hosting and grows into reviews, issues,
-              automation, packages, releases, security, deployments and generic engineering assets.
+              Kosh connects repository work through Flow and connects repositories,
+              services, APIs, engineering assets and runtime systems through Mesh.
             </p>
           </div>
           <div className={styles.heroStats}>
