@@ -895,7 +895,7 @@ async function selectedIndex(
 
 export function triggerKoshCodeIndexAfterPush(
   repository: StoredKoshRepository,
-  actor: { id: string; displayName: string },
+  actor: { id: string | null; name: string },
   changedBranches: string[]
 ) {
   if (
@@ -907,7 +907,15 @@ export function triggerKoshCodeIndexAfterPush(
   for (const branch of [...new Set(changedBranches)].slice(0, 3)) {
     void indexKoshRepositoryCode(repository, branch)
       .then((index) =>
-        audit(repository.id, actor, "code_index_push_completed", index)
+        audit(
+          repository.id,
+          {
+            id: actor.id ?? "git",
+            displayName: actor.name
+          },
+          "code_index_push_completed",
+          index
+        )
       )
       .catch(() => undefined);
   }
