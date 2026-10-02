@@ -35,9 +35,11 @@ import {
   type KoshVisibility,
   type StoredKoshRepository
 } from "./kosh-store.js";
+import { getKoshRunnerControlStore } from "./kosh-runner-control-store.js";
 
 const execFileAsync = promisify(execFile);
 const store = createKoshStore();
+const runnerControlStore = getKoshRunnerControlStore();
 const repositoryRoot = resolve(process.env.KOSH_REPO_ROOT?.trim() || ".kosh/repos");
 const isProduction = process.env.NODE_ENV === "production";
 
@@ -396,6 +398,25 @@ async function resolveGitAccess(
   }
 
   const token = suppliedGitToken(request);
+
+  if (token.startsWith("kosh_job_")) {
+    const credential = await runnerControlStore.authenticateCredential(token);
+    if (
+      credential &&
+      credential.repositoryId === repository.id &&
+      credential.scope === "repository.read"
+    ) {
+      return {
+        canRead: true,
+        canWrite: false,
+        remoteUser: "kosh-runner",
+        actor: {
+          id: null as string | null,
+          name: "Kosh runner job " + credential.jobId.slice(0, 12)
+        }
+      };
+    }
+  }
 
   if (!token) {
     return {

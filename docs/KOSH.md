@@ -919,3 +919,202 @@ This keeps dependency/runtime health and security posture semantically separate 
 The older generic `security_finding` platform resource remains readable for compatibility, but it is not the authoritative state of the Security Engine.
 
 Authoritative scanner findings live in the dedicated Kosh security finding store and use the lifecycle described above.
+
+
+## Kosh Runner Isolation
+
+Kosh Automation jobs run through a leased runner contract.
+
+Production runner execution is container-first. Direct host-shell execution is disabled unless a runner operator explicitly opts into it.
+
+### Job isolation contract
+
+Each workflow job may request:
+
+```json
+{
+  "image": "node:22-bookworm-slim",
+  "network": "none",
+  "cpu": 1,
+  "memoryMb": 1024,
+  "pidsLimit": 256,
+  "secrets": ["PACKAGE_TOKEN"],
+  "runsOn": ["executor:container", "pool:default"]
+}
+```
+
+The workflow request is not the final authority. The runner clamps every request to operator-defined ceilings.
+
+Runner policy:
+
+```env
+KOSH_RUNNER_EXECUTOR=container
+KOSH_RUNNER_CONTAINER_RUNTIME=docker
+KOSH_RUNNER_CONCURRENCY=2
+KOSH_RUNNER_IMAGE_ALLOWLIST=node:22-bookworm-slim
+KOSH_RUNNER_MAX_CPU=4
+KOSH_RUNNER_MAX_MEMORY_MB=4096
+KOSH_RUNNER_MAX_PIDS=512
+KOSH_RUNNER_ALLOW_NETWORK=false
+KOSH_RUNNER_ALLOW_HOST_EXECUTION=false
+```
+
+### Container boundary
+
+Each workflow step runs in a disposable container with:
+
+- a read-only container root filesystem
+- the checked-out repository mounted only at `/workspace`
+- dropped Linux capabilities
+- `no-new-privileges`
+- PID limit
+- CPU limit
+- memory limit
+- dedicated temporary filesystem
+- outbound network disabled unless both the workflow requests egress and the runner pool explicitly allows it
+- no Docker socket mount
+- no runner service token in the job environment
+- no global Kosh Git token in the job environment
+
+The workspace persists between steps for the same job. The container itself does not.
+
+### Leased jobs
+
+A claimed job receives a short-lived lease.
+
+The runner renews the lease through heartbeat calls while the job is active.
+
+If heartbeats stop and the lease expires:
+
+1. Kosh marks the abandoned running job queued again
+2. runner ownership is cleared
+3. the attempt counter is incremented
+4. a new runner may claim the job
+
+Logs, artifacts and completion requests require both:
+
+- the trusted runner service token
+- the job-specific lease token
+
+A runner therefore cannot write to a job after losing its lease.
+
+### Ephemeral checkout credentials
+
+Runners no longer need the global `KOSH_GIT_TOKEN` for repository checkout.
+
+On claim, Kosh creates a random `kosh_job_...` credential bound to:
+
+- the claimed job
+- exactly one repository
+- read-only repository access
+- a short expiration time
+
+Git Smart HTTP accepts the credential only for that repository.
+
+The credential is revoked when the job completes and also expires automatically.
+
+The checkout credential is used by the trusted runner process only. It is not passed into workflow containers.
+
+### Runtime secrets
+
+A workflow requests secrets by **name**, for example:
+
+```json
+{
+  "secrets": ["PACKAGE_TOKEN", "SIGNING_KEY"]
+}
+```
+
+At claim time the Gateway resolves only those names from Kosh encrypted secret storage.
+
+Secrets are held in runner memory only for that active job.
+
+Single-line values are supplied through a temporary mode-0600 environment file.
+
+Multiline values are written to mode-0600 temporary secret files mounted read-only at:
+
+`/run/kosh-secrets/<NAME>`
+
+The job receives `<NAME>_FILE` for multiline secrets.
+
+Temporary secret files and environment files are deleted with the job workspace.
+
+Runner log forwarding redacts known secret values, the checkout token and the lease token before sending logs to Kosh.
+
+### Runner health and capacity
+
+Each runner heartbeats:
+
+- runner ID
+- executor type
+- labels
+- version
+- operating system / architecture
+- capacity
+- active job count
+- online/draining state
+
+Administrators can inspect the fleet from:
+
+`GET /v1/kosh/automation/runners`
+
+The Automation workspace shows the live runner fleet when the current user has organization administrator authority.
+
+A runner is reported offline when its heartbeat becomes stale.
+
+### Runner pools
+
+Jobs may declare `runsOn` labels.
+
+A queued job is claimable only when **every** requested label exists on the runner.
+
+Examples:
+
+- `executor:container`
+- `os:linux`
+- `arch:x64`
+- `pool:default`
+- `pool:trusted-egress`
+
+Runner labels come from built-in platform labels plus `KOSH_RUNNER_LABELS`.
+
+This allows separate runner pools to enforce different image, network and capacity policies without relying on workflow authors to choose the correct machine indirectly.
+
+### Concurrency
+
+`KOSH_RUNNER_CONCURRENCY` defines the maximum number of workers inside one runner process.
+
+Each worker has its own:
+
+- job lease
+- checkout credential
+- temporary checkout directory
+- secret directory
+- step containers
+
+This prevents different jobs from sharing working directories or secret files.
+
+### Network policy
+
+Network mode is deny-by-default.
+
+`"network": "none"` always runs without external networking.
+
+`"network": "egress"` works only on a pool configured with:
+
+```env
+KOSH_RUNNER_ALLOW_NETWORK=true
+```
+
+Use separate labeled runner pools when different workloads need different network or image policies.
+
+### Development host mode
+
+Host execution exists only as an explicit development/controlled-runner fallback:
+
+```env
+KOSH_RUNNER_EXECUTOR=host
+KOSH_RUNNER_ALLOW_HOST_EXECUTION=true
+```
+
+Shared production runners should remain container-based.

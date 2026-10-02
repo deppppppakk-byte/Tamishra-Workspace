@@ -46,6 +46,7 @@ function validateProductionConfiguration() {
   if (process.env.KOSH_PUBLIC_ORIGIN?.trim()) {
     requireProductionValue("KOSH_REPO_ROOT", 2);
     requireProductionValue("KOSH_GIT_TOKEN", 24);
+    requireProductionValue("KOSH_RUNNER_TOKEN", 24);
   }
 
   if (process.env.KOSH_SSH_PUBLIC_HOST?.trim()) {

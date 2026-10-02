@@ -46,7 +46,7 @@ export const koshModules: KoshModule[] = [
   {
     id: "automation",
     name: "Automation",
-    description: "Event-driven pipelines for build, test, validation, release and deployment.",
+    description: "Event-driven pipelines with leased isolated runners, bounded resources, ephemeral checkout credentials and runner health.",
     status: "active"
   },
   {

@@ -1,9 +1,14 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, sep } from "node:path";
 import { resolveKoshIdentity } from "./kosh-auth.js";
 import { getKoshStore } from "./kosh-store.js";
+import { getKoshPlatformStore } from "./kosh-platform-store.js";
+import {
+  getKoshRunnerControlStore,
+  type KoshRunnerExecutor
+} from "./kosh-runner-control-store.js";
 import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
   automationStore,
@@ -17,6 +22,8 @@ import type {
 } from "./kosh-automation-store.js";
 
 const repositoryStore = getKoshStore();
+const platformStore = getKoshPlatformStore();
+const runnerControlStore = getKoshRunnerControlStore();
 const store = automationStore();
 const artifactRoot = resolve(
   process.env.KOSH_ARTIFACT_ROOT?.trim() || ".kosh/artifacts"
@@ -88,6 +95,57 @@ function runnerAuthorized(request: IncomingMessage) {
   return tokenMatches(token, expected);
 }
 
+function runnerHeader(request: IncomingMessage, name: string) {
+  const value = request.headers[name.toLowerCase()];
+  return Array.isArray(value) ? value[0]?.trim() ?? "" : String(value ?? "").trim();
+}
+
+function jobLeaseToken(request: IncomingMessage) {
+  return runnerHeader(request, "x-kosh-job-lease");
+}
+
+function jobRunnerId(request: IncomingMessage) {
+  return runnerHeader(request, "x-kosh-runner-id");
+}
+
+async function requireJobLease(
+  request: IncomingMessage,
+  jobId: string
+) {
+  const runnerId = jobRunnerId(request);
+  const leaseToken = jobLeaseToken(request);
+  if (!runnerId || !leaseToken) return false;
+  return store.verifyJobLease(jobId, runnerId, leaseToken);
+}
+
+function runnerHeartbeatInput(body: JsonBody) {
+  const id = clean(body.runnerId, 160);
+  const executor: KoshRunnerExecutor =
+    body.executor === "host" ? "host" : "container";
+  const labels = Array.isArray(body.labels)
+    ? [...new Set(
+        body.labels
+          .map((value) => clean(value, 80))
+          .filter((value) => /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,79}$/.test(value))
+      )].slice(0, 64)
+    : [];
+
+  return {
+    id,
+    executor,
+    labels,
+    capacity: Math.max(1, Math.min(64, Number(body.capacity) || 1)),
+    activeJobs: Math.max(0, Math.min(64, Number(body.activeJobs) || 0)),
+    version: clean(body.version, 80),
+    os: clean(body.os, 80),
+    arch: clean(body.arch, 80),
+    status:
+      body.status === "draining"
+        ? "draining" as const
+        : "online" as const
+  };
+}
+
 async function requireIdentity(
   request: IncomingMessage,
   response: ServerResponse,
@@ -152,15 +210,82 @@ async function handleRunner(
 
     if (
       request.method === "POST" &&
-      url.pathname === "/v1/kosh/automation/runner/claim"
+      url.pathname === "/v1/kosh/automation/runner/heartbeat"
     ) {
       const body = await readJson(request, 64 * 1024);
-      const runnerId = clean(body.runnerId, 160);
-      if (!runnerId) {
+      const heartbeat = runnerHeartbeatInput(body);
+      if (!heartbeat.id) {
         throw Object.assign(new Error("runner_id_required"), { status: 400 });
       }
 
-      const job = await store.claimNextJob(runnerId);
+      const runner = await runnerControlStore.heartbeatRunner(heartbeat);
+      const jobId = clean(body.jobId, 240);
+      let job = null;
+
+      if (jobId) {
+        const leaseToken = jobLeaseToken(request);
+        if (!leaseToken) {
+          throw Object.assign(new Error("job_lease_required"), { status: 401 });
+        }
+        job = await store.renewJobLease(
+          jobId,
+          heartbeat.id,
+          leaseToken,
+          90
+        );
+        if (!job) {
+          throw Object.assign(new Error("job_lease_expired"), { status: 409 });
+        }
+      }
+
+      sendJson(response, 200, { runner, job });
+      return true;
+    }
+
+    if (
+      request.method === "POST" &&
+      url.pathname === "/v1/kosh/automation/runner/claim"
+    ) {
+      const body = await readJson(request, 64 * 1024);
+      const heartbeat = runnerHeartbeatInput(body);
+      if (!heartbeat.id) {
+        throw Object.assign(new Error("runner_id_required"), { status: 400 });
+      }
+
+      if (
+        heartbeat.executor === "host" &&
+        process.env.NODE_ENV === "production" &&
+        process.env.KOSH_RUNNER_ALLOW_HOST_EXECUTION?.trim().toLowerCase() !== "true"
+      ) {
+        throw Object.assign(new Error("host_runner_execution_disabled"), {
+          status: 403
+        });
+      }
+
+      await runnerControlStore.heartbeatRunner(heartbeat);
+
+      const expired = await store.requeueExpiredJobs();
+      for (const stale of expired) {
+        await store.appendLog(
+          stale.id,
+          "system",
+          "Runner lease expired; job returned to the queue for a new attempt.\n"
+        ).catch(() => undefined);
+      }
+
+      if (heartbeat.activeJobs >= heartbeat.capacity) {
+        sendJson(response, 200, { job: null, reason: "runner_at_capacity" });
+        return true;
+      }
+
+      const leaseToken =
+        "kosh_lease_" + randomBytes(32).toString("base64url");
+      const job = await store.claimNextJob(
+        heartbeat.id,
+        heartbeat.labels,
+        leaseToken,
+        90
+      );
       if (!job) {
         sendJson(response, 200, { job: null });
         return true;
@@ -174,6 +299,76 @@ async function handleRunner(
           status: 500
         });
       }
+
+      const definition = job.definition;
+      const image =
+        definition.image?.trim() || "node:22-bookworm-slim";
+      const allowedImages = (
+        process.env.KOSH_RUNNER_IMAGE_ALLOWLIST?.trim() ||
+        "node:22-bookworm-slim"
+      )
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+
+      if (
+        process.env.NODE_ENV === "production" &&
+        !allowedImages.includes(image)
+      ) {
+        await store.appendLog(
+          job.id,
+          "system",
+          "Runner policy rejected container image " + image + ".\n"
+        ).catch(() => undefined);
+        await store.updateJobStatus(job.id, "failure");
+        throw Object.assign(new Error("runner_image_not_allowed"), {
+          status: 409
+        });
+      }
+
+      const requestedNetwork =
+        definition.network === "egress" ? "egress" : "none";
+      if (
+        requestedNetwork === "egress" &&
+        process.env.KOSH_RUNNER_ALLOW_NETWORK?.trim().toLowerCase() !== "true"
+      ) {
+        await store.appendLog(
+          job.id,
+          "system",
+          "Runner policy rejected outbound network access.\n"
+        ).catch(() => undefined);
+        await store.updateJobStatus(job.id, "failure");
+        throw Object.assign(new Error("runner_network_not_allowed"), {
+          status: 409
+        });
+      }
+
+      const resolvedSecrets: Record<string, string> = {};
+      for (const name of definition.secrets ?? []) {
+        const value =
+          (await platformStore.resolveSecret(repository.id, null, name)) ??
+          (await platformStore.resolveSecret(null, null, name));
+        if (value == null) {
+          await store.appendLog(
+            job.id,
+            "system",
+            "Required runner secret " + name + " is not configured.\n"
+          ).catch(() => undefined);
+          await store.updateJobStatus(job.id, "failure");
+          throw Object.assign(new Error("runner_secret_missing"), {
+            status: 409
+          });
+        }
+        resolvedSecrets[name] = value;
+      }
+
+      const checkoutCredential =
+        await runnerControlStore.issueCredential({
+          jobId: job.id,
+          repositoryId: repository.id,
+          scope: "repository.read",
+          ttlSeconds: 600
+        });
 
       await syncRunCheck(run.id);
 
@@ -191,7 +386,21 @@ async function handleRunner(
           name: repository.name,
           cloneHttpUrl: repository.cloneHttpUrl
         },
-        workflowEnv: workflow?.definition.env ?? {}
+        workflowEnv: workflow?.definition.env ?? {},
+        secrets: resolvedSecrets,
+        lease: {
+          token: leaseToken,
+          expiresAt: job.leaseExpiresAt
+        },
+        checkoutCredential,
+        isolation: {
+          executor: heartbeat.executor,
+          image,
+          network: requestedNetwork,
+          cpu: Math.max(0.1, Math.min(8, definition.cpu ?? 1)),
+          memoryMb: Math.max(128, Math.min(16_384, definition.memoryMb ?? 1024)),
+          pidsLimit: Math.max(32, Math.min(2048, definition.pidsLimit ?? 256))
+        }
       });
       return true;
     }
@@ -200,6 +409,11 @@ async function handleRunner(
       /^\/v1\/kosh\/automation\/runner\/jobs\/([^/]+)\/logs$/
     );
     if (logsMatch && request.method === "POST") {
+      const jobId = decodeURIComponent(logsMatch[1]);
+      if (!(await requireJobLease(request, jobId))) {
+        throw Object.assign(new Error("job_lease_invalid"), { status: 403 });
+      }
+
       const body = await readJson(request, 256 * 1024);
       const stream =
         body.stream === "stderr" || body.stream === "system"
@@ -207,7 +421,7 @@ async function handleRunner(
           : "stdout";
       const text = String(body.text ?? "").slice(0, 64 * 1024);
       const log = await store.appendLog(
-        decodeURIComponent(logsMatch[1]),
+        jobId,
         stream,
         text
       );
@@ -219,6 +433,11 @@ async function handleRunner(
       /^\/v1\/kosh\/automation\/runner\/jobs\/([^/]+)\/complete$/
     );
     if (completeMatch && request.method === "POST") {
+      const jobId = decodeURIComponent(completeMatch[1]);
+      if (!(await requireJobLease(request, jobId))) {
+        throw Object.assign(new Error("job_lease_invalid"), { status: 403 });
+      }
+
       const body = await readJson(request, 64 * 1024);
       const status =
         body.status === "success" ||
@@ -234,12 +453,14 @@ async function handleRunner(
       }
 
       const job = await store.updateJobStatus(
-        decodeURIComponent(completeMatch[1]),
+        jobId,
         status
       );
       if (!job) {
         throw Object.assign(new Error("job_not_found"), { status: 404 });
       }
+
+      await runnerControlStore.revokeJobCredentials(job.id);
 
       const run = await syncRunCheck(job.runId);
 
@@ -268,8 +489,12 @@ async function handleRunner(
       /^\/v1\/kosh\/automation\/runner\/jobs\/([^/]+)\/artifacts$/
     );
     if (artifactMatch && request.method === "POST") {
-      const body = await readJson(request);
       const jobId = decodeURIComponent(artifactMatch[1]);
+      if (!(await requireJobLease(request, jobId))) {
+        throw Object.assign(new Error("job_lease_invalid"), { status: 403 });
+      }
+
+      const body = await readJson(request);
       const name = clean(body.name, 180);
       const encoded = String(body.base64 ?? "");
 
@@ -378,6 +603,49 @@ export async function handleKoshAutomationRequest(
   allowedOrigins: ReadonlySet<string>
 ) {
   if (await handleRunner(request, response, url)) return true;
+
+  if (
+    request.method === "GET" &&
+    url.pathname === "/v1/kosh/automation/runners"
+  ) {
+    const identity = await requireIdentity(
+      request,
+      response,
+      origin,
+      allowedOrigins
+    );
+    if (!identity) return true;
+
+    const administrator = identity.memberships.some(
+      (item) =>
+        !item.membership.disabled &&
+        (item.membership.role === "owner" ||
+          item.membership.role === "admin")
+    );
+    if (!administrator) {
+      sendJson(
+        response,
+        403,
+        { error: "automation_admin_required" },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+
+    await runnerControlStore.ready();
+    sendJson(
+      response,
+      200,
+      {
+        runners: await runnerControlStore.listRunners(),
+        persistence: runnerControlStore.kind
+      },
+      origin,
+      allowedOrigins
+    );
+    return true;
+  }
 
   const match = url.pathname.match(
     /^\/v1\/kosh\/repos\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,63})\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,99})\/automation(.*)$/

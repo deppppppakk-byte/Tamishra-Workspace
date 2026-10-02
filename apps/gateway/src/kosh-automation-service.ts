@@ -110,6 +110,37 @@ export function validateWorkflowDefinition(
       };
     });
 
+    const image = String(job.image ?? "node:22-bookworm-slim")
+      .trim()
+      .slice(0, 240);
+    if (
+      !image ||
+      !/^[a-zA-Z0-9][a-zA-Z0-9._/:@-]*$/.test(image)
+    ) {
+      throw Object.assign(new Error("invalid_runner_image"), { status: 400 });
+    }
+
+    const network =
+      job.network === "egress" ? "egress" as const : "none" as const;
+
+    const secrets = Array.isArray(job.secrets)
+      ? [...new Set(
+          job.secrets
+            .map((value) => String(value).trim())
+            .filter((value) => /^[A-Z][A-Z0-9_]{0,99}$/.test(value))
+        )].slice(0, 100)
+      : undefined;
+
+    const runsOn = Array.isArray(job.runsOn)
+      ? [...new Set(
+          job.runsOn
+            .map((value) => String(value).trim())
+            .filter((value) =>
+              /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,79}$/.test(value)
+            )
+        )].slice(0, 32)
+      : undefined;
+
     return {
       id,
       name: jobName || id,
@@ -117,11 +148,25 @@ export function validateWorkflowDefinition(
         1,
         Math.min(180, Number(job.timeoutMinutes) || 30)
       ),
+      image,
+      network,
+      cpu: Math.max(0.1, Math.min(8, Number(job.cpu) || 1)),
+      memoryMb: Math.max(
+        128,
+        Math.min(16_384, Math.floor(Number(job.memoryMb) || 1024))
+      ),
+      pidsLimit: Math.max(
+        32,
+        Math.min(2048, Math.floor(Number(job.pidsLimit) || 256))
+      ),
+      secrets,
+      runsOn,
       env:
         job.env && typeof job.env === "object"
           ? Object.fromEntries(
               Object.entries(job.env)
                 .slice(0, 100)
+                .filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]{0,99}$/.test(String(key)))
                 .map(([key, val]) => [
                   String(key).slice(0, 100),
                   String(val).slice(0, 4000)
