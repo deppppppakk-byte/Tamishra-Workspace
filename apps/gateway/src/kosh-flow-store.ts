@@ -24,7 +24,8 @@ export type KoshFlowRelation =
   | "delivers_to"
   | "blocks"
   | "relates_to"
-  | "supersedes";
+  | "supersedes"
+  | "contains";
 
 export type StoredKoshFlowLink = {
   id: string;
