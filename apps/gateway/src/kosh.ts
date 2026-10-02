@@ -4,7 +4,7 @@ import { mkdir, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createKoshStore, type KoshVisibility } from "./kosh-store.js";
+import { createKoshStore, type KoshVisibility } from "./kosh-store.js";\nimport { resolveWorkspaceIdentity } from "./identity.js";
 
 const execFileAsync = promisify(execFile);
 const store = createKoshStore();
@@ -355,7 +355,7 @@ export async function handleKoshRequest(
       const description = String(body.description ?? "").trim().slice(0, 500);
       const visibility = String(body.visibility ?? "private") as KoshVisibility;
 
-      if (!validSegment(namespace) || !validSegment(slug) || !name || name.length > 100) {
+      if (!validSegment(namespace, 64) || !validSegment(slug, 100) || !name || name.length > 100) {
         json(response, 400, { error: "invalid_repository_name" }, origin, allowedOrigins);
         return true;
       }
