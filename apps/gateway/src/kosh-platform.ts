@@ -1,9 +1,12 @@
 import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { resolveKoshIdentity } from "./kosh-auth.js";
 import { getKoshStore } from "./kosh-store.js";
+import { scheduleAutomationEvent } from "./kosh-automation-service.js";
 import {
   getKoshPlatformStore,
   type KoshPlatformResourceType
@@ -168,6 +171,154 @@ async function audit(
     resourceId,
     metadata
   });
+}
+
+function safeEditPath(workspace: string, input: string) {
+  const relative = input.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+  if (
+    !relative ||
+    relative.length > 2048 ||
+    relative.includes("\0") ||
+    relative.split("/").some((part) => !part || part === "." || part === "..") ||
+    relative === ".git" ||
+    relative.startsWith(".git/")
+  ) {
+    throw Object.assign(new Error("invalid_edit_path"), { status: 400 });
+  }
+
+  const path = resolve(workspace, relative);
+  const prefix = workspace.endsWith(sep) ? workspace : workspace + sep;
+  if (!path.startsWith(prefix)) {
+    throw Object.assign(new Error("invalid_edit_path"), { status: 400 });
+  }
+  return { relative, path };
+}
+
+async function execGitC(
+  cwd: string,
+  args: string[],
+  env?: Record<string, string | undefined>
+) {
+  try {
+    const result = await execFileAsync("git", args, {
+      cwd,
+      timeout: 60_000,
+      maxBuffer: 8 * 1024 * 1024,
+      encoding: "utf8",
+      env: env ? { ...process.env, ...env } : process.env
+    });
+    return String(result.stdout);
+  } catch (error) {
+    const value = error as { stderr?: string; stdout?: string };
+    throw Object.assign(
+      new Error(String(value.stderr || value.stdout || "git_command_failed").trim()),
+      { status: 409 }
+    );
+  }
+}
+
+async function browserIdeCommit(input: {
+  namespace: string;
+  slug: string;
+  defaultBranch: string;
+  branch: string;
+  baseBranch: string;
+  message: string;
+  files: Array<{ path: string; content: string | null }>;
+  actor: { id: string; displayName: string; email: string };
+}) {
+  if (
+    !input.branch ||
+    input.branch === input.defaultBranch ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9._\/-]{0,199}$/.test(input.branch) ||
+    input.branch.includes("..") ||
+    input.branch.endsWith("/")
+  ) {
+    throw Object.assign(
+      new Error("ide_requires_valid_non_default_branch"),
+      { status: 400 }
+    );
+  }
+
+  if (
+    !input.baseBranch ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9._\/-]{0,199}$/.test(input.baseBranch)
+  ) {
+    throw Object.assign(new Error("invalid_base_branch"), { status: 400 });
+  }
+
+  if (!input.message || input.files.length < 1 || input.files.length > 50) {
+    throw Object.assign(new Error("commit_message_and_files_required"), {
+      status: 400
+    });
+  }
+
+  const gitDir = repositoryPath(input.namespace, input.slug);
+  const workspace = await mkdtemp(joinTemp("kosh-ide-"));
+
+  try {
+    await execGitC(tmpdir(), ["clone", "--no-hardlinks", gitDir, workspace]);
+
+    const branchExists = await execFileAsync(
+      "git",
+      ["--git-dir", gitDir, "show-ref", "--verify", "--quiet", "refs/heads/" + input.branch],
+      { timeout: 10_000 }
+    ).then(() => true).catch(() => false);
+
+    if (branchExists) {
+      await execGitC(workspace, ["checkout", input.branch]);
+    } else {
+      await execGitC(workspace, ["checkout", input.baseBranch]);
+      await execGitC(workspace, ["checkout", "-b", input.branch]);
+    }
+
+    for (const file of input.files) {
+      const target = safeEditPath(workspace, file.path);
+      if (file.content === null) {
+        await unlink(target.path).catch(() => undefined);
+        continue;
+      }
+
+      const bytes = Buffer.byteLength(file.content, "utf8");
+      if (bytes > 1024 * 1024) {
+        throw Object.assign(new Error("ide_file_too_large"), { status: 413 });
+      }
+      await mkdir(dirname(target.path), { recursive: true });
+      await writeFile(target.path, file.content, "utf8");
+    }
+
+    await execGitC(workspace, ["add", "-A"]);
+    const status = await execGitC(workspace, ["status", "--porcelain"]);
+    if (!status.trim()) {
+      throw Object.assign(new Error("no_changes_to_commit"), { status: 409 });
+    }
+
+    await execGitC(
+      workspace,
+      ["commit", "-m", input.message],
+      {
+        GIT_AUTHOR_NAME: input.actor.displayName,
+        GIT_AUTHOR_EMAIL: input.actor.email,
+        GIT_COMMITTER_NAME: input.actor.displayName,
+        GIT_COMMITTER_EMAIL: input.actor.email
+      }
+    );
+
+    const commitSha = (await execGitC(workspace, ["rev-parse", "HEAD"])).trim();
+    await execGitC(
+      workspace,
+      ["push", "origin", "HEAD:refs/heads/" + input.branch]
+    );
+
+    return { branch: input.branch, commitSha };
+  } finally {
+    await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+function joinTemp(prefix: string) {
+  const root = tmpdir();
+  return root.endsWith(sep) ? root + prefix : root + sep + prefix;
 }
 
 async function searchRepository(
@@ -556,6 +707,128 @@ export async function handleKoshPlatformRequest(
           mode
         );
         sendJson(response, 200, result, origin, allowedOrigins);
+        return true;
+      }
+
+      if (
+        (tail === "/symbols" || tail === "/references") &&
+        request.method === "GET"
+      ) {
+        const query = clean(url.searchParams.get("q"), 300);
+        if (query.length < 2) {
+          throw Object.assign(new Error("search_query_too_short"), {
+            status: 400
+          });
+        }
+        const result = await searchRepository(
+          namespace,
+          slug,
+          repository.defaultBranch,
+          query,
+          "code"
+        );
+        sendJson(
+          response,
+          200,
+          {
+            ...result,
+            kind: tail === "/symbols" ? "symbols" : "references"
+          },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      if (tail === "/blame" && request.method === "GET") {
+        const path = clean(url.searchParams.get("path"), 2048);
+        const line = Math.max(1, Number(url.searchParams.get("line")) || 1);
+        if (!path || path.includes("..") || path.includes("\0")) {
+          throw Object.assign(new Error("valid_blame_path_required"), {
+            status: 400
+          });
+        }
+        const gitDir = repositoryPath(namespace, slug);
+        const output = await git(
+          gitDir,
+          [
+            "blame",
+            "--line-porcelain",
+            "-L",
+            line + "," + line,
+            repository.defaultBranch,
+            "--",
+            path
+          ],
+          1024 * 1024
+        );
+        sendJson(
+          response,
+          200,
+          { path, line, blame: output },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      if (tail === "/ide/commit" && request.method === "POST") {
+        const body = await readJson(request, 55 * 1024 * 1024);
+        const files = Array.isArray(body.files)
+          ? body.files
+              .slice(0, 50)
+              .map((item) =>
+                item && typeof item === "object"
+                  ? {
+                      path: clean((item as Record<string, unknown>).path, 2048),
+                      content:
+                        (item as Record<string, unknown>).content === null
+                          ? null
+                          : String((item as Record<string, unknown>).content ?? "")
+                    }
+                  : { path: "", content: "" }
+              )
+          : [];
+
+        const result = await browserIdeCommit({
+          namespace,
+          slug,
+          defaultBranch: repository.defaultBranch,
+          branch: clean(body.branch, 200),
+          baseBranch: clean(body.baseBranch, 200) || repository.defaultBranch,
+          message: clean(body.message, 500),
+          files,
+          actor: {
+            id: identity.user.id,
+            displayName: identity.user.displayName,
+            email: identity.user.email
+          }
+        });
+
+        await Promise.all([
+          audit(
+            repository.id,
+            identity.user,
+            "browser_ide_commit",
+            "repository",
+            repository.id,
+            {
+              branch: result.branch,
+              commitSha: result.commitSha,
+              files: files.map((item) => item.path)
+            }
+          ),
+          scheduleAutomationEvent(
+            repository,
+            "push",
+            result.branch,
+            result.commitSha,
+            { id: identity.user.id, name: identity.user.displayName },
+            null
+          )
+        ]);
+
+        sendJson(response, 201, result, origin, allowedOrigins);
         return true;
       }
 
