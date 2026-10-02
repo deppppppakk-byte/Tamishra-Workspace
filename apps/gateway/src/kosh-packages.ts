@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
@@ -220,65 +220,73 @@ export async function publishKoshPackage(
   }
 
   const checksum = sha256(input.bytes);
-
-  const version = await packageStore.createVersion({
-    repositoryId: input.repository.id,
-    packageKey: input.packageKey,
-    name: input.name || input.packageKey,
-    version: input.version,
-    filename: input.filename,
-    format: input.format || "generic",
-    mediaType: input.mediaType || "application/octet-stream",
-    sizeBytes: input.bytes.length,
-    sha256: checksum,
-    state: "published",
-    commitSha: input.commitSha,
-    runId: input.runId,
-    provenance: {
-      ...input.provenance,
-      repositoryId: input.repository.id,
-      namespace: input.repository.namespace,
-      repository: input.repository.slug,
-      commitSha: input.commitSha,
-      runId: input.runId,
-      sha256: checksum
-    },
-    metadata: input.metadata,
-    createdByUserId: input.actor.id,
-    createdByName: input.actor.displayName
-  });
-
+  const versionId = randomUUID();
   const directory = safeStoragePath(
     packageRoot,
     input.repository.id,
-    version.id
+    versionId
   );
-  const path = packageArtifactPath(version);
+  const path = safeStoragePath(
+    directory,
+    input.filename
+  );
 
+  await mkdir(directory, { recursive: true });
   try {
-    await mkdir(directory, { recursive: true });
     await writeFile(path, input.bytes, { flag: "wx" });
   } catch (error) {
     await rm(directory, { recursive: true, force: true }).catch(
       () => undefined
     );
-    await packageStore.deleteVersionForRollback(
-      input.repository.id,
-      version.id
-    ).catch(() => undefined);
+    throw error;
+  }
+
+  let version: StoredKoshPackageVersion;
+  try {
+    version = await packageStore.createVersion({
+      id: versionId,
+      repositoryId: input.repository.id,
+      packageKey: input.packageKey,
+      name: input.name || input.packageKey,
+      version: input.version,
+      filename: input.filename,
+      format: input.format || "generic",
+      mediaType: input.mediaType || "application/octet-stream",
+      sizeBytes: input.bytes.length,
+      sha256: checksum,
+      state: "published",
+      commitSha: input.commitSha,
+      runId: input.runId,
+      provenance: {
+        ...input.provenance,
+        repositoryId: input.repository.id,
+        namespace: input.repository.namespace,
+        repository: input.repository.slug,
+        commitSha: input.commitSha,
+        runId: input.runId,
+        sha256: checksum
+      },
+      metadata: input.metadata,
+      createdByUserId: input.actor.id,
+      createdByName: input.actor.displayName
+    });
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true }).catch(
+      () => undefined
+    );
     throw error;
   }
 
   let channel = null;
   if (input.channel) {
     if (!validChannel(input.channel)) {
-      await rm(directory, { recursive: true, force: true }).catch(
-        () => undefined
-      );
       await packageStore.deleteVersionForRollback(
         input.repository.id,
         version.id
       ).catch(() => undefined);
+      await rm(directory, { recursive: true, force: true }).catch(
+        () => undefined
+      );
       throw Object.assign(new Error("invalid_package_channel"), {
         status: 400
       });
