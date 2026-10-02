@@ -233,6 +233,19 @@ export function KoshWorkspace() {
                     <code>{repository.cloneHttpUrl}</code>
                     <button onClick={() => void copyCloneUrl(repository.cloneHttpUrl)}>Copy</button>
                   </div>
+                  <div className={styles.repoMeta}>
+                    <Link
+                      className={styles.back}
+                      href={
+                        "/apps/kosh/repository?namespace=" +
+                        encodeURIComponent(repository.namespace) +
+                        "&slug=" +
+                        encodeURIComponent(repository.slug)
+                      }
+                    >
+                      Open repository →
+                    </Link>
+                  </div>
                   <small>git clone {repository.cloneHttpUrl}</small>
                 </article>
               ))}

@@ -5,7 +5,11 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { resolveWorkspaceIdentity } from "./identity.js";
-import { createKoshStore, type KoshVisibility } from "./kosh-store.js";
+import {
+  createKoshStore,
+  type KoshVisibility,
+  type StoredKoshRepository
+} from "./kosh-store.js";
 
 const execFileAsync = promisify(execFile);
 const store = createKoshStore();
@@ -13,6 +17,42 @@ const repositoryRoot = resolve(process.env.KOSH_REPO_ROOT?.trim() || ".kosh/repo
 const isProduction = process.env.NODE_ENV === "production";
 
 type JsonBody = Record<string, unknown>;
+
+type KoshBranch = {
+  name: string;
+  sha: string;
+  subject: string;
+  author: string;
+  committedAt: string;
+};
+
+type KoshTag = {
+  name: string;
+  sha: string;
+  subject: string;
+  creator: string;
+  createdAt: string;
+};
+
+type KoshCommit = {
+  sha: string;
+  shortSha: string;
+  parents: string[];
+  authorName: string;
+  authorEmail: string;
+  authoredAt: string;
+  subject: string;
+  body: string;
+};
+
+type KoshTreeEntry = {
+  name: string;
+  path: string;
+  mode: string;
+  type: "blob" | "tree" | "commit";
+  sha: string;
+  size: number | null;
+};
 
 function json(
   response: ServerResponse,
@@ -83,34 +123,127 @@ async function pathExists(path: string) {
   }
 }
 
-async function ensureBareRepository(namespace: string, slug: string) {
-  const namespacePath = resolve(repositoryRoot, namespace);
-  const repositoryPath = resolve(namespacePath, slug + ".git");
-  const rootPrefix = repositoryRoot.endsWith(sep) ? repositoryRoot : repositoryRoot + sep;
+function repositoryPath(namespace: string, slug: string) {
+  const path = resolve(repositoryRoot, namespace, slug + ".git");
+  const rootPrefix = repositoryRoot.endsWith(sep)
+    ? repositoryRoot
+    : repositoryRoot + sep;
 
-  if (!repositoryPath.startsWith(rootPrefix)) {
+  if (!path.startsWith(rootPrefix)) {
     throw Object.assign(new Error("invalid_repository_path"), { status: 400 });
   }
 
+  return path;
+}
+
+async function runGit(
+  gitDir: string,
+  args: string[],
+  timeout = 15_000,
+  maxBuffer = 8 * 1024 * 1024
+) {
+  try {
+    const result = await execFileAsync(
+      "git",
+      ["--git-dir", gitDir, ...args],
+      {
+        timeout,
+        maxBuffer,
+        encoding: "utf8"
+      }
+    );
+    return String(result.stdout);
+  } catch (error) {
+    throw Object.assign(new Error("git_command_failed"), {
+      status: 500,
+      cause: error
+    });
+  }
+}
+
+async function runGitBuffer(
+  gitDir: string,
+  args: string[],
+  maxBytes = 1024 * 1024
+) {
+  return new Promise<Buffer>((resolveBuffer, reject) => {
+    const child = spawn("git", ["--git-dir", gitDir, ...args], {
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let stderr = "";
+    let finished = false;
+
+    const stop = (error: Error) => {
+      if (finished) return;
+      finished = true;
+      child.kill();
+      reject(error);
+    };
+
+    const timer = setTimeout(() => {
+      stop(Object.assign(new Error("git_command_timeout"), { status: 504 }));
+    }, 15_000);
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > maxBytes) {
+        stop(Object.assign(new Error("blob_preview_too_large"), { status: 413 }));
+        return;
+      }
+      chunks.push(chunk);
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr = (stderr + chunk.toString()).slice(-4096);
+    });
+
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      stop(Object.assign(new Error("git_command_failed"), { status: 500, cause: error }));
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (finished) return;
+      finished = true;
+      if (code !== 0) {
+        reject(
+          Object.assign(new Error(stderr.trim() || "git_command_failed"), {
+            status: 404
+          })
+        );
+        return;
+      }
+      resolveBuffer(Buffer.concat(chunks));
+    });
+  });
+}
+
+async function ensureBareRepository(namespace: string, slug: string) {
+  const namespacePath = resolve(repositoryRoot, namespace);
+  const path = repositoryPath(namespace, slug);
+
   await mkdir(namespacePath, { recursive: true });
 
-  if (await pathExists(resolve(repositoryPath, "HEAD"))) {
-    return repositoryPath;
+  if (await pathExists(resolve(path, "HEAD"))) {
+    return path;
   }
 
   await execFileAsync(
     "git",
-    ["init", "--bare", "--initial-branch=main", repositoryPath],
+    ["init", "--bare", "--initial-branch=main", path],
     { timeout: 20_000 }
   );
 
   await execFileAsync(
     "git",
-    ["--git-dir", repositoryPath, "config", "http.receivepack", "true"],
+    ["--git-dir", path, "config", "http.receivepack", "true"],
     { timeout: 10_000 }
   );
 
-  return repositoryPath;
+  return path;
 }
 
 function publicOrigin(request: IncomingMessage) {
@@ -200,9 +333,9 @@ async function handleGitHttp(
   const slug = match[2];
   const suffix = match[3] || "";
   const repository = await store.get(namespace, slug);
-  const repositoryPath = resolve(repositoryRoot, namespace, slug + ".git");
+  const path = repositoryPath(namespace, slug);
 
-  if (!repository || !(await pathExists(resolve(repositoryPath, "HEAD")))) {
+  if (!repository || !(await pathExists(resolve(path, "HEAD")))) {
     response.statusCode = 404;
     response.end("Repository not found.");
     return true;
@@ -353,6 +486,238 @@ async function requireWorkspaceIdentity(
   }
 
   return true;
+}
+
+function safeTreePath(input: string) {
+  const decoded = input.trim().replace(/^\/+|\/+$/g, "");
+  if (!decoded) return "";
+
+  if (
+    decoded.length > 2048 ||
+    decoded.includes("\0") ||
+    decoded.split("/").some((part) => !part || part === "." || part === "..")
+  ) {
+    throw Object.assign(new Error("invalid_repository_path"), { status: 400 });
+  }
+
+  return decoded;
+}
+
+async function resolveCommit(
+  gitDir: string,
+  requestedRef: string,
+  repository: StoredKoshRepository
+) {
+  const ref = requestedRef.trim() || repository.defaultBranch;
+
+  if (ref.length > 300 || ref.includes("\0")) {
+    throw Object.assign(new Error("invalid_ref"), { status: 400 });
+  }
+
+  const candidates = /^[0-9a-f]{7,40}$/i.test(ref)
+    ? [ref]
+    : ["refs/heads/" + ref, "refs/tags/" + ref];
+
+  for (const candidate of candidates) {
+    try {
+      const result = await execFileAsync(
+        "git",
+        ["--git-dir", gitDir, "rev-parse", "--verify", candidate + "^{commit}"],
+        { timeout: 10_000, encoding: "utf8" }
+      );
+      const sha = String(result.stdout).trim();
+      if (/^[0-9a-f]{40}$/i.test(sha)) {
+        return sha;
+      }
+    } catch {
+      // Continue to the next explicit ref namespace.
+    }
+  }
+
+  throw Object.assign(new Error("ref_not_found"), { status: 404 });
+}
+
+function parseBranches(output: string): KoshBranch[] {
+  return output
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => {
+      const [name, sha, subject, author, committedAt] = line.split("\0");
+      return {
+        name: name ?? "",
+        sha: sha ?? "",
+        subject: subject ?? "",
+        author: author ?? "",
+        committedAt: committedAt ?? ""
+      };
+    })
+    .filter((branch) => branch.name && branch.sha);
+}
+
+function parseTags(output: string): KoshTag[] {
+  return output
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => {
+      const [name, sha, subject, creator, createdAt] = line.split("\0");
+      return {
+        name: name ?? "",
+        sha: sha ?? "",
+        subject: subject ?? "",
+        creator: creator ?? "",
+        createdAt: createdAt ?? ""
+      };
+    })
+    .filter((tag) => tag.name && tag.sha);
+}
+
+async function listBranches(gitDir: string) {
+  const output = await runGit(gitDir, [
+    "for-each-ref",
+    "--sort=-committerdate",
+    "--format=%(refname:short)%00%(objectname)%00%(subject)%00%(authorname)%00%(committerdate:iso-strict)",
+    "refs/heads"
+  ]);
+  return parseBranches(output);
+}
+
+async function listTags(gitDir: string) {
+  const output = await runGit(gitDir, [
+    "for-each-ref",
+    "--sort=-creatordate",
+    "--format=%(refname:short)%00%(objectname)%00%(subject)%00%(creator)%00%(creatordate:iso-strict)",
+    "refs/tags"
+  ]);
+  return parseTags(output);
+}
+
+async function listCommits(
+  gitDir: string,
+  commitSha: string,
+  limit: number
+): Promise<KoshCommit[]> {
+  const output = await runGit(
+    gitDir,
+    [
+      "log",
+      commitSha,
+      "-n",
+      String(limit),
+      "--date=iso-strict",
+      "--format=%H%x00%h%x00%P%x00%an%x00%ae%x00%aI%x00%s%x00%b%x00"
+    ],
+    20_000,
+    16 * 1024 * 1024
+  );
+
+  const fields = output.split("\0");
+  const commits: KoshCommit[] = [];
+
+  for (let index = 0; index + 7 < fields.length; index += 8) {
+    const sha = fields[index]?.trim();
+    if (!sha) continue;
+
+    commits.push({
+      sha,
+      shortSha: fields[index + 1]?.trim() ?? sha.slice(0, 7),
+      parents: (fields[index + 2] ?? "").trim().split(/\s+/).filter(Boolean),
+      authorName: fields[index + 3] ?? "",
+      authorEmail: fields[index + 4] ?? "",
+      authoredAt: fields[index + 5]?.trim() ?? "",
+      subject: fields[index + 6] ?? "",
+      body: (fields[index + 7] ?? "").trim()
+    });
+  }
+
+  return commits;
+}
+
+async function listTree(
+  gitDir: string,
+  commitSha: string,
+  path: string
+): Promise<KoshTreeEntry[]> {
+  const treeish = path ? commitSha + ":" + path : commitSha;
+  const output = await runGitBuffer(
+    gitDir,
+    ["ls-tree", "-z", "--long", treeish],
+    8 * 1024 * 1024
+  );
+
+  const entries: KoshTreeEntry[] = [];
+
+  for (const record of output.toString("utf8").split("\0")) {
+    if (!record) continue;
+
+    const tab = record.indexOf("\t");
+    if (tab < 0) continue;
+
+    const meta = record.slice(0, tab).trim().split(/\s+/);
+    const name = record.slice(tab + 1);
+    const [mode, type, sha, sizeText] = meta;
+
+    if (
+      !mode ||
+      !sha ||
+      !name ||
+      (type !== "blob" && type !== "tree" && type !== "commit")
+    ) {
+      continue;
+    }
+
+    entries.push({
+      name,
+      path: path ? path + "/" + name : name,
+      mode,
+      type,
+      sha,
+      size:
+        sizeText && sizeText !== "-"
+          ? Number.isFinite(Number(sizeText))
+            ? Number(sizeText)
+            : null
+          : null
+    });
+  }
+
+  return entries.sort((left, right) => {
+    if (left.type === right.type) {
+      return left.name.localeCompare(right.name);
+    }
+    return left.type === "tree" ? -1 : 1;
+  });
+}
+
+async function repositoryForRoute(namespace: string, slug: string) {
+  if (!validSegment(namespace, 64) || !validSegment(slug, 100)) {
+    throw Object.assign(new Error("repository_not_found"), { status: 404 });
+  }
+
+  const repository = await store.get(namespace, slug);
+  const gitDir = repositoryPath(namespace, slug);
+
+  if (!repository || !(await pathExists(resolve(gitDir, "HEAD")))) {
+    throw Object.assign(new Error("repository_not_found"), { status: 404 });
+  }
+
+  return { repository, gitDir };
+}
+
+function routeError(
+  response: ServerResponse,
+  error: unknown,
+  origin: string | undefined,
+  allowedOrigins: ReadonlySet<string>
+) {
+  const status =
+    typeof error === "object" && error && "status" in error
+      ? Number((error as { status?: number }).status) || 500
+      : 500;
+
+  const message =
+    error instanceof Error ? error.message : "kosh_repository_error";
+
+  json(response, status, { error: message }, origin, allowedOrigins);
 }
 
 export async function handleKoshRequest(
@@ -516,26 +881,196 @@ export async function handleKoshRequest(
 
       json(response, 201, repository, origin, allowedOrigins);
     } catch (error) {
-      const status =
-        typeof error === "object" && error && "status" in error
-          ? Number((error as { status?: number }).status) || 500
-          : 500;
-
-      const message =
-        error instanceof Error
-          ? error.message
-          : "repository_creation_failed";
-
-      json(
-        response,
-        status,
-        { error: message },
-        origin,
-        allowedOrigins
-      );
+      routeError(response, error, origin, allowedOrigins);
     }
 
     return true;
+  }
+
+  const repositoryRoute = url.pathname.match(
+    /^\/v1\/kosh\/repos\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,63})\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,99})(?:\/(branches|tags|commits|tree|blob))?$/
+  );
+
+  if (repositoryRoute && request.method === "GET") {
+    if (
+      !(await requireWorkspaceIdentity(
+        request,
+        response,
+        origin,
+        allowedOrigins
+      ))
+    ) {
+      return true;
+    }
+
+    const [, namespace, slug, resource] = repositoryRoute;
+
+    try {
+      const { repository, gitDir } = await repositoryForRoute(namespace, slug);
+
+      if (!resource) {
+        const [branches, tags] = await Promise.all([
+          listBranches(gitDir),
+          listTags(gitDir)
+        ]);
+
+        let headSha: string | null = null;
+        if (branches.length) {
+          try {
+            headSha = await resolveCommit(
+              gitDir,
+              repository.defaultBranch,
+              repository
+            );
+          } catch {
+            headSha = branches[0]?.sha ?? null;
+          }
+        }
+
+        json(
+          response,
+          200,
+          {
+            repository,
+            headSha,
+            empty: branches.length === 0,
+            branchCount: branches.length,
+            tagCount: tags.length
+          },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      if (resource === "branches") {
+        json(
+          response,
+          200,
+          { branches: await listBranches(gitDir) },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      if (resource === "tags") {
+        json(
+          response,
+          200,
+          { tags: await listTags(gitDir) },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const requestedRef = url.searchParams.get("ref") ?? repository.defaultBranch;
+      const commitSha = await resolveCommit(gitDir, requestedRef, repository);
+
+      if (resource === "commits") {
+        const requestedLimit = Number(url.searchParams.get("limit") ?? 50);
+        const limit = Math.min(
+          100,
+          Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : 50)
+        );
+
+        json(
+          response,
+          200,
+          {
+            ref: requestedRef,
+            commitSha,
+            commits: await listCommits(gitDir, commitSha, limit)
+          },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const path = safeTreePath(url.searchParams.get("path") ?? "");
+
+      if (resource === "tree") {
+        json(
+          response,
+          200,
+          {
+            ref: requestedRef,
+            commitSha,
+            path,
+            entries: await listTree(gitDir, commitSha, path)
+          },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      if (resource === "blob") {
+        if (!path) {
+          throw Object.assign(new Error("file_path_required"), { status: 400 });
+        }
+
+        const sizeText = await runGit(
+          gitDir,
+          ["cat-file", "-s", commitSha + ":" + path],
+          10_000,
+          64 * 1024
+        );
+        const size = Number(sizeText.trim());
+
+        if (!Number.isFinite(size) || size < 0) {
+          throw Object.assign(new Error("file_not_found"), { status: 404 });
+        }
+
+        if (size > 1024 * 1024) {
+          json(
+            response,
+            200,
+            {
+              ref: requestedRef,
+              commitSha,
+              path,
+              size,
+              preview: null,
+              encoding: "too-large"
+            },
+            origin,
+            allowedOrigins
+          );
+          return true;
+        }
+
+        const buffer = await runGitBuffer(
+          gitDir,
+          ["show", commitSha + ":" + path],
+          1024 * 1024 + 1
+        );
+        const binary = buffer.includes(0);
+
+        json(
+          response,
+          200,
+          {
+            ref: requestedRef,
+            commitSha,
+            path,
+            size,
+            encoding: binary ? "base64" : "utf8",
+            preview: binary
+              ? buffer.toString("base64")
+              : buffer.toString("utf8")
+          },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+    } catch (error) {
+      routeError(response, error, origin, allowedOrigins);
+      return true;
+    }
   }
 
   json(

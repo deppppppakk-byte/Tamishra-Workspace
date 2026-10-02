@@ -50,3 +50,23 @@ For protected pushes, configure the Kosh token as the HTTP password in the user'
 10. Pages/deployments, extension SDK, search and organization administration
 
 Kosh must remain provider-neutral: PostgreSQL, Git storage and artifact storage are interfaces, not vendor assumptions.
+
+## Phase 2 — repository browser
+
+Kosh now reads repository state directly from the bare Git object database instead of duplicating branches, tags, commits or trees in PostgreSQL.
+
+Implemented repository APIs:
+
+- repository summary and HEAD state
+- branch listing
+- tag listing
+- commit history by ref
+- tree browsing at any path
+- bounded text-file previews directly from Git objects
+- binary/large-file preview guards
+
+The Workspace repository screen is static-export compatible at:
+
+`/apps/kosh/repository?namespace=<namespace>&slug=<slug>`
+
+This keeps the same route usable in the hosted site, desktop shell and mobile shell while the repository data remains fully runtime-driven.
