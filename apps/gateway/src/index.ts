@@ -48,6 +48,11 @@ function validateProductionConfiguration() {
     requireProductionValue("KOSH_GIT_TOKEN", 24);
   }
 
+  if (process.env.KOSH_SSH_PUBLIC_HOST?.trim()) {
+    requireProductionValue("KOSH_SSH_SERVICE_TOKEN", 24);
+    requireProductionValue("KOSH_REPO_ROOT", 2);
+  }
+
   if (!coreOnly) {
     const liveKitUrl = process.env.LIVEKIT_URL ?? "";
     if (!/^wss:\/\//i.test(liveKitUrl)) {
