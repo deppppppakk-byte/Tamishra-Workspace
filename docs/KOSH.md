@@ -220,7 +220,7 @@ This expansion develops the broader Kosh platform domains while keeping maturity
 |---|---|---|
 | 1 | Packages & registries | Generic immutable binary package publishing/download, SHA-256 metadata, package/channel resources |
 | 2 | Releases | Release resources plus persistent release-asset upload/download and checksums |
-| 3 | Security | AES-256-GCM encrypted secrets, security-finding resources, audit trail, code-owner policy resources |
+| 3 | Security | Active repository Security Engine with secret scanning, dependency policy, durable findings, Kosh SBOM, encrypted runtime secrets, audit and Pulse integration |
 | 4 | SSH Git | Active OpenSSH transport with dynamic Kosh key authorization, forced Git-only commands, repository ACL checks, key usage tracking and push event ingestion |
 | 5 | Organizations & permissions | Active namespace ownership, teams, repository roles and enforcement across API, Git HTTP, LFS, Pages, Mesh and Pulse |
 | 6 | Merge queue | Persistent priority queue and processor using the same approval/CI/conflict/atomic merge engine as manual reviews |
@@ -783,3 +783,139 @@ The SSH host must share or mount the same persistent Git repository storage refe
 The hardened OpenSSH example and deployment instructions live under:
 
 `deploy/kosh-ssh/`
+
+
+## Kosh Security Engine
+
+Kosh Security is repository-native and separate from runtime secret storage.
+
+Workspace route:
+
+`/apps/kosh/security?namespace=<namespace>&slug=<repository>`
+
+### Scanners
+
+The current engine runs two first-party scanners against the repository default-branch commit.
+
+**Secret scanner**
+
+Detects:
+
+- committed private-key material
+- Kosh personal access tokens
+- credential-like password/API-key/secret/token assignments
+- URLs containing inline credentials
+
+Kosh does not persist the discovered secret value. A finding stores only:
+
+- rule
+- severity
+- file path
+- line number
+- a one-way SHA-256 evidence hash
+- redacted metadata
+
+Environment-variable references, sample environment files and common placeholder values are suppressed to reduce false positives.
+
+**Dependency policy scanner**
+
+Builds declared dependency inventory from supported manifests and detects policy risks such as:
+
+- unbounded dependency declarations
+- insecure dependency transport
+- VCS dependencies not pinned to a commit
+
+Current manifest coverage:
+
+- npm `package.json`
+- Python `requirements.txt`
+
+This scanner is a repository policy scanner. It is **not** presented as a vulnerability/advisory database and does not invent CVEs. A future advisory feed can be added as a separate scanner without changing the finding model.
+
+### Kosh SBOM
+
+Each completed scan creates or refreshes a repository software inventory in `kosh-sbom-v1`.
+
+The SBOM records:
+
+- repository identity
+- scanned commit SHA
+- generation time
+- ecosystem
+- dependency name
+- declared version/specification
+- scope
+- source manifest path
+
+API:
+
+`GET /v1/kosh/repos/<namespace>/<repository>/security/sbom`
+
+### Finding lifecycle
+
+Finding states:
+
+`open → acknowledged → resolved`
+
+A finding may also be explicitly marked `ignored`.
+
+On every scan:
+
+1. still-present findings refresh their last-seen time
+2. previously resolved findings reopen if the evidence reappears
+3. open/acknowledged findings no longer detected by the same scanner resolve automatically
+4. ignored findings remain ignored unless changed explicitly
+
+Finding identity is derived from scanner, rule, location and a one-way evidence hash.
+
+### Security state
+
+Repository security state is derived from active findings:
+
+- `clear` — no active medium/high/critical findings
+- `watch` — at least one medium finding
+- `degraded` — at least one high finding
+- `critical` — at least one critical finding
+
+Low findings remain visible but do not raise repository security state by themselves.
+
+### Push scanning
+
+Unless explicitly disabled, successful pushes that change the repository default branch start a Security Engine scan.
+
+```env
+KOSH_SECURITY_SCAN_ON_PUSH=true
+```
+
+This applies to:
+
+- Smart HTTP pushes
+- SSH pushes
+
+Feature-branch-only pushes do not repeatedly rescan an unchanged default branch.
+
+Manual scan:
+
+`POST /v1/kosh/repos/<namespace>/<repository>/security/scan`
+
+Manual scan and finding-state mutations require the repository `security.manage` permission.
+
+### Pulse integration
+
+Security does not overwrite Mesh health.
+
+Instead Pulse receives a dedicated security signal for visible repository nodes when Security state is watch, degraded or critical.
+
+Pulse combines:
+
+- security severity
+- active finding counts
+- Mesh downstream blast radius
+
+This keeps dependency/runtime health and security posture semantically separate while still giving one command layer for attention.
+
+### Legacy manual findings
+
+The older generic `security_finding` platform resource remains readable for compatibility, but it is not the authoritative state of the Security Engine.
+
+Authoritative scanner findings live in the dedicated Kosh security finding store and use the lifecycle described above.
