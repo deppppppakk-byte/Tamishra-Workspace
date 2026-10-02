@@ -5,6 +5,15 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { resolveKoshIdentity } from "./kosh-auth.js";
+import {
+  authorizeKoshPersonalToken,
+  authorizeKoshRepositoryRequest,
+  bootstrapKoshRepositoryOwner,
+  ensureKoshNamespaceForCreation,
+  handleKoshAccessRequest,
+  listKoshRepositoriesVisibleTo,
+  permissionForKoshRepositoryRequest
+} from "./kosh-access.js";
 import { handleKoshChangeReviewRequest } from "./kosh-reviews.js";
 import { handleKoshWorkRequest } from "./kosh-work.js";
 import { handleKoshAutomationRequest } from "./kosh-automation.js";
@@ -339,14 +348,52 @@ function tokenMatches(actual: string, expected: string) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-function gitTokenAuthorized(request: IncomingMessage) {
+function gitServiceTokenAuthorized(request: IncomingMessage) {
   const expected = process.env.KOSH_GIT_TOKEN?.trim();
+  if (!expected) return false;
+  return tokenMatches(suppliedGitToken(request), expected);
+}
 
-  if (!expected) {
-    return !isProduction;
+async function resolveGitAccess(
+  request: IncomingMessage,
+  repository: StoredKoshRepository
+) {
+  if (gitServiceTokenAuthorized(request)) {
+    return {
+      canRead: true,
+      canWrite: true,
+      remoteUser: "kosh-service",
+      actor: { id: null as string | null, name: "Kosh service" }
+    };
   }
 
-  return tokenMatches(suppliedGitToken(request), expected);
+  const token = suppliedGitToken(request);
+
+  if (!token) {
+    return {
+      canRead: repository.visibility === "public",
+      canWrite: false,
+      remoteUser: "",
+      actor: { id: null as string | null, name: "Anonymous Git" }
+    };
+  }
+
+  const [readAccess, writeAccess] = await Promise.all([
+    authorizeKoshPersonalToken(token, repository, "repository.read"),
+    authorizeKoshPersonalToken(token, repository, "repository.write")
+  ]);
+
+  const identity = writeAccess.identity ?? readAccess.identity;
+
+  return {
+    canRead: readAccess.decision.allowed,
+    canWrite: writeAccess.decision.allowed,
+    remoteUser: identity?.user.email ?? "",
+    actor: {
+      id: identity?.user.id ?? null,
+      name: identity?.user.displayName ?? "Git user"
+    }
+  };
 }
 
 function isGitWrite(url: URL) {
@@ -356,17 +403,10 @@ function isGitWrite(url: URL) {
   );
 }
 
-function rejectGitAuthentication(
-  response: ServerResponse,
-  hasConfiguredToken: boolean
-) {
-  response.statusCode = hasConfiguredToken ? 401 : 503;
+function rejectGitAuthentication(response: ServerResponse) {
+  response.statusCode = 401;
   response.setHeader("www-authenticate", 'Basic realm="Kosh Git"');
-  response.end(
-    hasConfiguredToken
-      ? "Authentication required."
-      : "KOSH_GIT_TOKEN is required for protected production Git access."
-  );
+  response.end("Kosh repository permission denied.");
 }
 
 async function branchRefSnapshot(gitDir: string) {
