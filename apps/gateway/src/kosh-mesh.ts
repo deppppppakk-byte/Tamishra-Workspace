@@ -159,11 +159,28 @@ export async function buildKoshMeshGraph(identity: KoshMeshIdentity) {
     platformStore.ready()
   ]);
 
-  const [repositories, components, links] = await Promise.all([
+  const [allRepositories, allComponents, links] = await Promise.all([
     repositoryStore.list(),
     meshStore.listNodes(),
     meshStore.listLinks()
   ]);
+
+  const repositories = [];
+  for (const repository of allRepositories) {
+    const access = await evaluateKoshRepositoryAccess(
+      identity,
+      repository,
+      "repository.read"
+    );
+    if (access.allowed) repositories.push(repository);
+  }
+
+  const visibleNamespaces = new Set(
+    repositories.map((repository) => repository.namespace)
+  );
+  const components = allComponents.filter((component) =>
+    visibleNamespaces.has(component.namespace)
+  );
 
   const nodes: MeshNode[] = [];
   const graphLinks: MeshLink[] = links.map((link) => ({
