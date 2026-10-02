@@ -374,10 +374,11 @@ export async function handleKoshPulseRequest(
       request.method === "GET" &&
       url.pathname === "/v1/kosh/pulse/incidents"
     ) {
+      const pulse = await buildKoshPulse(identity);
       sendJson(
         response,
         200,
-        { incidents: await pulseStore.listIncidents() },
+        { incidents: pulse.incidents },
         origin,
         allowedOrigins
       );
@@ -441,7 +442,8 @@ export async function handleKoshPulseRequest(
     if (incidentMatch && request.method === "PATCH") {
       const id = decodeURIComponent(incidentMatch[1]);
       const body = await readJson(request);
-      const current = (await pulseStore.listIncidents()).find(
+      const visiblePulse = await buildKoshPulse(identity);
+      const current = visiblePulse.incidents.find(
         (incident) => incident.id === id
       );
       if (!current) {
