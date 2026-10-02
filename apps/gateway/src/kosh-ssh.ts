@@ -196,12 +196,7 @@ export async function handleKoshSshBridgeRequest(
           : "repository.read";
 
       const access = await evaluateKoshRepositoryAccess(
-        {
-          ...identity,
-          session: null,
-          authType: "ssh" as const,
-          apiToken: null
-        } as never,
+        identity,
         repository,
         permission
       );
