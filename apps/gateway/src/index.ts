@@ -6,7 +6,7 @@ import { handleDocsRequest } from "./docs.js";
 import { handleFilesRequest } from "./files.js";
 import { handleContentRequest } from "./content.js";
 import { handleAssetsRequest } from "./assets.js";
-import { handleChatRequest } from "./chat.js";
+import { handleChatRequest } from "./chat.js";\nimport { handleKoshRequest } from "./kosh.js";
 
 const port = Number(process.env.WORKSPACE_GATEWAY_PORT ?? process.env.PORT ?? 4100);
 const isProduction = process.env.NODE_ENV === "production";
