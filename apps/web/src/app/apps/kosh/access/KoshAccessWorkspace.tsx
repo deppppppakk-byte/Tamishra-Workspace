@@ -56,12 +56,22 @@ type Grant = {
   updatedAt: string;
 };
 
+type TeamMember = {
+  id: string;
+  teamId: string;
+  userId: string;
+  role: "maintainer" | "member";
+  addedByName: string;
+  createdAt: string;
+};
+
 type Team = {
   id: string;
   namespace: string;
   slug: string;
   name: string;
   description: string;
+  members: TeamMember[];
 };
 
 type RepositoryAccess = {
@@ -115,6 +125,9 @@ export function KoshAccessWorkspace() {
 
   const [teamName, setTeamName] = useState("");
   const [teamDescription, setTeamDescription] = useState("");
+  const [memberTeamId, setMemberTeamId] = useState("");
+  const [memberUserId, setMemberUserId] = useState("");
+  const [memberRole, setMemberRole] = useState<"maintainer" | "member">("member");
 
   const [grantType, setGrantType] = useState<"user" | "team">("user");
   const [grantSubject, setGrantSubject] = useState("");
@@ -266,6 +279,54 @@ export function KoshAccessWorkspace() {
       await loadRepositoryAccess();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Team creation failed.");
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function addTeamMember(event: FormEvent) {
+    event.preventDefault();
+    if (!memberTeamId || !memberUserId.trim()) return;
+    setMutating(true);
+    setError("");
+    try {
+      await mutateJson(
+        "/v1/kosh/access/teams/" +
+          encodeURIComponent(memberTeamId) +
+          "/members",
+        "POST",
+        {
+          userId: memberUserId.trim(),
+          role: memberRole
+        }
+      );
+      setMemberUserId("");
+      await loadRepositoryAccess();
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Team member update failed."
+      );
+    } finally {
+      setMutating(false);
+    }
+  }
+
+  async function removeTeamMember(teamId: string, userId: string) {
+    setMutating(true);
+    setError("");
+    try {
+      await mutateJson(
+        "/v1/kosh/access/teams/" +
+          encodeURIComponent(teamId) +
+          "/members/" +
+          encodeURIComponent(userId),
+        "DELETE"
+      );
+      await loadRepositoryAccess();
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Team member removal failed."
+      );
     } finally {
       setMutating(false);
     }
@@ -613,12 +674,77 @@ export function KoshAccessWorkspace() {
                   </button>
                 </form>
 
+                {access.teams.length > 0 && (
+                  <form className={styles.form} onSubmit={addTeamMember}>
+                    <label>
+                      <span>Team</span>
+                      <select
+                        value={memberTeamId}
+                        onChange={(event) => setMemberTeamId(event.target.value)}
+                      >
+                        <option value="">Choose team</option>
+                        {access.teams.map((team) => (
+                          <option key={team.id} value={team.id}>
+                            {team.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Member role</span>
+                      <select
+                        value={memberRole}
+                        onChange={(event) =>
+                          setMemberRole(
+                            event.target.value as "maintainer" | "member"
+                          )
+                        }
+                      >
+                        <option value="member">Member</option>
+                        <option value="maintainer">Maintainer</option>
+                      </select>
+                    </label>
+                    <label className={styles.wide}>
+                      <span>Workspace user ID</span>
+                      <input
+                        value={memberUserId}
+                        onChange={(event) => setMemberUserId(event.target.value)}
+                        placeholder="Workspace user ID"
+                      />
+                    </label>
+                    <button
+                      className={styles.primary}
+                      disabled={mutating || !memberTeamId || !memberUserId.trim()}
+                    >
+                      Add member
+                    </button>
+                  </form>
+                )}
+
                 <div className={styles.list}>
                   {access.teams.map((team) => (
                     <article key={team.id}>
                       <strong>{team.name}</strong>
                       <span>{team.slug}</span>
                       <em>{team.description || "No description."}</em>
+                      <div className={styles.memberList}>
+                        {team.members.map((member) => (
+                          <div key={member.id}>
+                            <span>{member.userId}</span>
+                            <small>{member.role}</small>
+                            <button
+                              type="button"
+                              disabled={mutating}
+                              onClick={() =>
+                                void removeTeamMember(team.id, member.userId)
+                              }
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                        {!team.members.length && <small>No members yet.</small>}
+                      </div>
                     </article>
                   ))}
                   {!access.teams.length && (
