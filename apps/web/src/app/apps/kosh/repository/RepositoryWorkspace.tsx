@@ -629,6 +629,16 @@ export function RepositoryWorkspace() {
           >
             Packages
           </Link>
+          <Link
+            href={
+              "/apps/kosh/releases?namespace=" +
+              encodeURIComponent(namespace) +
+              "&slug=" +
+              encodeURIComponent(slug)
+            }
+          >
+            Releases
+          </Link>
         </nav>
       </header>
 
