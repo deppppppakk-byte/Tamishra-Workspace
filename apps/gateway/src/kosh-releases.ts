@@ -10,7 +10,6 @@ import { verifyKoshPackageVersion } from "./kosh-packages.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
 import {
   getKoshReleaseStore,
-  type KoshReleaseState,
   type StoredKoshRelease,
   type StoredKoshReleaseAsset
 } from "./kosh-release-store.js";
@@ -368,7 +367,7 @@ async function createRelease(input: {
     commitSha
   );
 
-  let release: StoredKoshRelease;
+  let release: StoredKoshRelease | null = null;
   try {
     release = await releaseStore.createRelease({
       id: randomUUID(),
@@ -402,7 +401,7 @@ async function createRelease(input: {
       });
     }
   } catch (error) {
-    if (release!) {
+    if (release) {
       await releaseStore.deleteReleaseForRollback(
         input.repository.id,
         release.id
@@ -416,6 +415,12 @@ async function createRelease(input: {
       ).catch(() => undefined);
     }
     throw error;
+  }
+
+  if (!release) {
+    throw Object.assign(new Error("release_creation_failed"), {
+      status: 500
+    });
   }
 
   await audit(
@@ -482,6 +487,12 @@ async function publishRelease(input: {
     await verifyKoshPackageVersion(packageVersion);
   }
 
+  if (input.channel && !validChannel(input.channel)) {
+    throw Object.assign(new Error("invalid_release_channel"), {
+      status: 400
+    });
+  }
+
   const published = await releaseStore.setReleaseState(
     input.repository.id,
     input.release.id,
@@ -495,11 +506,6 @@ async function publishRelease(input: {
 
   let channel = null;
   if (input.channel) {
-    if (!validChannel(input.channel)) {
-      throw Object.assign(new Error("invalid_release_channel"), {
-        status: 400
-      });
-    }
     channel = await releaseStore.putChannel({
       repositoryId: input.repository.id,
       channel: input.channel,
