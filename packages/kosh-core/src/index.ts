@@ -55,6 +55,12 @@ export const koshModules: KoshModule[] = [
     status: "active"
   },
   {
+    id: "mesh",
+    name: "Mesh",
+    description: "A cross-repository and cross-asset system map with dependency and impact analysis.",
+    status: "active"
+  },
+  {
     id: "packages",
     name: "Packages & Registries",
     description: "Package metadata, channels, provenance and registry control-plane resources.",
