@@ -232,25 +232,11 @@ async function ensureKoshReceiveHook(
 
   await mkdir(resolve(gitDir, "hooks"), { recursive: true });
 
-  let protectedRefs = "";
   try {
-    protectedRefs = await readFile(protectedRefsPath, "utf8");
+    await readFile(protectedRefsPath, "utf8");
   } catch {
-    protectedRefs = "";
+    await writeFile(protectedRefsPath, defaultRef + "\n", "utf8");
   }
-
-  const refs = new Set(
-    protectedRefs
-      .split(/\r?\n/)
-      .map((value) => value.trim())
-      .filter(Boolean)
-  );
-  refs.add(defaultRef);
-  await writeFile(
-    protectedRefsPath,
-    [...refs].sort().join("\n") + "\n",
-    "utf8"
-  );
 
   const script = [
     "#!/bin/sh",
