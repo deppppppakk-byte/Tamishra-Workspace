@@ -24,6 +24,7 @@ export interface KoshStore {
   readonly kind: "ephemeral-memory" | "postgres";
   ready(): Promise<void>;
   list(): Promise<StoredKoshRepository[]>;
+  get(namespace: string, slug: string): Promise<StoredKoshRepository | null>;
   create(input: CreateRepositoryInput): Promise<StoredKoshRepository>;
 }
 
@@ -41,6 +42,11 @@ class MemoryKoshStore implements KoshStore {
     return [...this.records.values()]
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .map(clone);
+  }
+
+  async get(namespace: string, slug: string) {
+    const value = this.records.get(namespace + "/" + slug);
+    return value ? clone(value) : null;
   }
 
   async create(input: CreateRepositoryInput) {
@@ -125,6 +131,19 @@ class PostgresKoshStore implements KoshStore {
     return rows.map((row) => rowToRepository(row as Record<string, unknown>));
   }
 
+  async get(namespace: string, slug: string) {
+    await this.ready();
+    const rows = await this.sql`
+      SELECT id, namespace, slug, name, description, visibility,
+             default_branch, state, clone_http_url, created_at, updated_at
+      FROM kosh_repositories
+      WHERE namespace = ${namespace} AND slug = ${slug}
+      LIMIT 1
+    `;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    return row ? rowToRepository(row) : null;
+  }
+
   async create(input: CreateRepositoryInput) {
     await this.ready();
     try {
@@ -144,7 +163,12 @@ class PostgresKoshStore implements KoshStore {
       `;
       return rowToRepository(rows[0] as Record<string, unknown>);
     } catch (error) {
-      if (typeof error === "object" && error && "code" in error && (error as { code?: string }).code === "23505") {
+      if (
+        typeof error === "object" &&
+        error &&
+        "code" in error &&
+        (error as { code?: string }).code === "23505"
+      ) {
         throw Object.assign(new Error("repository_exists"), { status: 409 });
       }
       throw error;
