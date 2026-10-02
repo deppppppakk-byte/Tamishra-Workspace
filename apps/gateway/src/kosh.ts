@@ -4,11 +4,15 @@ import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { resolveWorkspaceIdentity } from "./identity.js";
+import { resolveKoshIdentity } from "./kosh-auth.js";
 import { handleKoshChangeReviewRequest } from "./kosh-reviews.js";
 import { handleKoshWorkRequest } from "./kosh-work.js";
 import { handleKoshAutomationRequest } from "./kosh-automation.js";
+import { handleKoshPlatformRequest } from "./kosh-platform.js";
+import { handleKoshLfsRequest } from "./kosh-lfs.js";
+import { handleKoshPagesRequest } from "./kosh-pages.js";
 import { scheduleAutomationEvent } from "./kosh-automation-service.js";
+import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
   createKoshStore,
   type KoshVisibility,
@@ -407,6 +411,25 @@ async function handleGitHttp(
     return true;
   }
 
+  if (
+    await handleKoshLfsRequest({
+      request,
+      response,
+      repository,
+      suffix,
+      baseUrl:
+        publicOrigin(request) +
+        "/git/" +
+        encodeURIComponent(namespace) +
+        "/" +
+        encodeURIComponent(slug) +
+        ".git",
+      authorized: gitTokenAuthorized(request)
+    })
+  ) {
+    return true;
+  }
+
   await ensureKoshReceiveHook(path, repository.defaultBranch);
 
   const write = isGitWrite(url);
@@ -524,6 +547,16 @@ async function handleGitHttp(
               { id: null, name: "Git push" },
               null
             );
+            void dispatchKoshWebhooks(
+              repository.id,
+              "push",
+              {
+                namespace: repository.namespace,
+                slug: repository.slug,
+                branch: branchName,
+                commitSha
+              }
+            ).catch(() => undefined);
           }
         }
       } catch (automationError) {
@@ -566,7 +599,10 @@ async function requireWorkspaceIdentity(
   origin: string | undefined,
   allowedOrigins: ReadonlySet<string>
 ) {
-  const identity = await resolveWorkspaceIdentity(request);
+  const identity = await resolveKoshIdentity(
+    request,
+    request.method === "GET" ? "repo:read" : "repo:write"
+  );
 
   if (!identity) {
     json(
@@ -825,6 +861,10 @@ export async function handleKoshRequest(
     return handleGitHttp(request, response, url);
   }
 
+  if (url.pathname.startsWith("/pages/")) {
+    return handleKoshPagesRequest(request, response, url);
+  }
+
   if (!url.pathname.startsWith("/v1/kosh")) {
     return false;
   }
@@ -865,6 +905,18 @@ export async function handleKoshRequest(
     return true;
   }
 
+  if (
+    await handleKoshPlatformRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return true;
+  }
+
   if (request.method === "GET" && url.pathname === "/v1/kosh") {
     await store.ready();
 
@@ -887,6 +939,24 @@ export async function handleKoshRequest(
           "packages",
           "releases",
           "security",
+          "ssh",
+          "organizations",
+          "merge-queue",
+          "search",
+          "code-intelligence",
+          "browser-ide",
+          "dev-environments",
+          "wiki",
+          "pages",
+          "webhooks",
+          "api-cli",
+          "notifications",
+          "advanced-projects",
+          "release-management",
+          "storage",
+          "disaster-recovery",
+          "observability",
+          "administration",
           "extensions"
         ]
       },

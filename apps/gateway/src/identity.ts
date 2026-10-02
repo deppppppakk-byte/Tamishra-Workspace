@@ -354,6 +354,12 @@ export async function resolveWorkspaceAuthorization(request: IncomingMessage) {
   return { ...identity, memberships };
 }
 
+export async function getWorkspaceIdentityUser(userId: string) {
+  await store.ready();
+  const user = await store.getUser(userId);
+  return user && !user.disabled ? user : null;
+}
+
 export async function listWorkspaceOrganizationMembers(organizationId: string) {
   await store.ready();
   return store.listOrganizationMembers(organizationId);

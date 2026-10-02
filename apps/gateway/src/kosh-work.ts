@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { resolveWorkspaceIdentity } from "./identity.js";
+import { resolveKoshIdentity } from "./kosh-auth.js";
 import { getKoshStore } from "./kosh-store.js";
+import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
   getKoshWorkStore,
   type KoshBoardColumn,
@@ -82,7 +83,10 @@ async function requireIdentity(
   origin: string | undefined,
   allowedOrigins: ReadonlySet<string>
 ) {
-  const identity = await resolveWorkspaceIdentity(request);
+  const identity = await resolveKoshIdentity(
+    request,
+    request.method === "GET" ? "repo:read" : "repo:write"
+  );
   if (!identity) {
     sendJson(
       response,
@@ -341,6 +345,17 @@ export async function handleKoshWorkRequest(
         { title: issue.title }
       );
 
+      void dispatchKoshWebhooks(
+        repository.id,
+        "issue.created",
+        {
+          number: issue.number,
+          title: issue.title,
+          state: issue.state,
+          author: issue.authorName
+        }
+      ).catch(() => undefined);
+
       sendJson(
         response,
         201,
@@ -446,6 +461,18 @@ export async function handleKoshWorkRequest(
           "Issue #" + updated.number + " updated",
           updated.title
         );
+
+        void dispatchKoshWebhooks(
+          repository.id,
+          "issue.updated",
+          {
+            number: updated.number,
+            title: updated.title,
+            state: updated.state,
+            assignee: updated.assigneeName,
+            updatedBy: identity.user.displayName
+          }
+        ).catch(() => undefined);
 
         sendJson(response, 200, updated, origin, allowedOrigins);
         return true;

@@ -3,10 +3,12 @@ import { readFile, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { resolveWorkspaceIdentity } from "./identity.js";
+import { resolveKoshIdentity } from "./kosh-auth.js";
 import { getKoshStore, type StoredKoshRepository } from "./kosh-store.js";
 import { getKoshWorkStore } from "./kosh-work-store.js";
 import { requiredChecksForCommit, scheduleAutomationEvent } from "./kosh-automation-service.js";
+import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
+import { getKoshPlatformStore } from "./kosh-platform-store.js";
 import {
   getKoshReviewStore,
   type KoshReviewState,
@@ -18,6 +20,7 @@ const execFileAsync = promisify(execFile);
 const repositoryStore = getKoshStore();
 const reviewStore = getKoshReviewStore();
 const workStore = getKoshWorkStore();
+const platformStore = getKoshPlatformStore();
 const repositoryRoot = resolve(process.env.KOSH_REPO_ROOT?.trim() || ".kosh/repos");
 
 type JsonBody = Record<string, unknown>;
@@ -236,7 +239,10 @@ async function requireIdentity(
   origin: string | undefined,
   allowedOrigins: ReadonlySet<string>
 ) {
-  const identity = await resolveWorkspaceIdentity(request);
+  const identity = await resolveKoshIdentity(
+    request,
+    request.method === "GET" ? "repo:read" : "repo:write"
+  );
   if (!identity) {
     sendJson(
       response,
@@ -794,6 +800,133 @@ async function mergeChangeRequest(
   return mergeSha;
 }
 
+async function executeApprovedMerge(input: {
+  gitDir: string;
+  repository: StoredKoshRepository;
+  requestNumber: number;
+  actor: { id: string; displayName: string; email: string };
+}) {
+  const { gitDir, repository, requestNumber, actor } = input;
+
+  const changeRequest = await reviewStore.getChangeRequest(
+    repository.id,
+    requestNumber
+  );
+  if (!changeRequest || changeRequest.status !== "open") {
+    throw Object.assign(new Error("change_request_not_open"), { status: 409 });
+  }
+
+  const synchronized = await synchronizedRequest(
+    gitDir,
+    repository,
+    requestNumber
+  );
+  const [reviews, policy] = await Promise.all([
+    reviewStore.listReviews(synchronized.id),
+    reviewStore.getBranchPolicy(
+      repository.id,
+      synchronized.baseBranch
+    )
+  ]);
+
+  const reviewState = latestReviewStates(reviews, synchronized);
+
+  if (reviewState.approvals < policy.requiredApprovals) {
+    throw Object.assign(new Error("required_approvals_missing"), {
+      status: 409
+    });
+  }
+
+  if (
+    policy.blockOnChangesRequested &&
+    reviewState.changesRequested > 0
+  ) {
+    throw Object.assign(new Error("changes_requested"), { status: 409 });
+  }
+
+  let checks = await requiredChecksForCommit(
+    repository.id,
+    synchronized.headSha
+  );
+
+  if (checks.required.length === 0) {
+    const scheduled = await scheduleAutomationEvent(
+      repository,
+      "change_request",
+      synchronized.baseBranch,
+      synchronized.headSha,
+      { id: actor.id, name: actor.displayName },
+      synchronized.number
+    );
+    if (scheduled.length > 0) {
+      checks = await requiredChecksForCommit(
+        repository.id,
+        synchronized.headSha
+      );
+    }
+  }
+
+  if (checks.pending > 0) {
+    throw Object.assign(new Error("required_checks_pending"), {
+      status: 409
+    });
+  }
+
+  if (checks.failing > 0 || !checks.passing) {
+    throw Object.assign(new Error("required_checks_failed"), {
+      status: 409
+    });
+  }
+
+  const mergeCommitSha = await mergeChangeRequest(
+    gitDir,
+    synchronized,
+    actor
+  );
+
+  const merged = await reviewStore.markMerged(
+    repository.id,
+    requestNumber,
+    actor.id,
+    actor.displayName,
+    mergeCommitSha
+  );
+
+  const closedIssues = merged
+    ? await closeIssuesFromChangeRequest(
+        repository.id,
+        merged,
+        {
+          id: actor.id,
+          displayName: actor.displayName
+        }
+      )
+    : [];
+
+  if (merged) {
+    void dispatchKoshWebhooks(
+      repository.id,
+      "change_review.merged",
+      {
+        number: merged.number,
+        title: merged.title,
+        baseBranch: merged.baseBranch,
+        headBranch: merged.headBranch,
+        mergeCommitSha,
+        closedIssues,
+        mergedBy: actor.displayName
+      }
+    ).catch(() => undefined);
+  }
+
+  return {
+    merged: true,
+    mergeCommitSha,
+    changeRequest: merged,
+    closedIssues
+  };
+}
+
 function routeError(
   response: ServerResponse,
   error: unknown,
@@ -833,6 +966,8 @@ export async function handleKoshChangeReviewRequest(
     /^\/branches\/.+/.test(tail) ||
     /^\/policies\/.+/.test(tail) ||
     tail === "/change-requests" ||
+    tail === "/merge-queue" ||
+    tail === "/merge-queue/process" ||
     /^\/change-requests\/\d+(?:\/(?:reviews|comments|merge))?$/.test(tail);
 
   if (!recognized) return false;
@@ -993,6 +1128,176 @@ export async function handleKoshChangeReviewRequest(
       }
     }
 
+    if (tail === "/merge-queue" && request.method === "GET") {
+      const entries = (await platformStore.listResources(
+        "merge_queue_entry",
+        repository.id
+      )).sort((a, b) => {
+        const ap = Number(a.payload.priority ?? 0);
+        const bp = Number(b.payload.priority ?? 0);
+        if (ap !== bp) return bp - ap;
+        return a.createdAt.localeCompare(b.createdAt);
+      });
+      sendJson(
+        response,
+        200,
+        { entries },
+        origin,
+        allowedOrigins
+      );
+      return true;
+    }
+
+    if (tail === "/merge-queue" && request.method === "POST") {
+      const body = await readJson(request);
+      const requestNumber = Number(body.changeRequestNumber);
+      if (!Number.isInteger(requestNumber) || requestNumber < 1) {
+        throw Object.assign(new Error("valid_change_request_number_required"), {
+          status: 400
+        });
+      }
+
+      const changeRequest = await reviewStore.getChangeRequest(
+        repository.id,
+        requestNumber
+      );
+      if (!changeRequest || changeRequest.status !== "open") {
+        throw Object.assign(new Error("change_request_not_open"), {
+          status: 409
+        });
+      }
+
+      const existing = (await platformStore.listResources(
+        "merge_queue_entry",
+        repository.id
+      )).find(
+        (item) =>
+          Number(item.payload.changeRequestNumber) === requestNumber &&
+          ["queued", "blocked"].includes(item.state)
+      );
+      if (existing) {
+        throw Object.assign(new Error("change_request_already_queued"), {
+          status: 409
+        });
+      }
+
+      const entry = await platformStore.createResource({
+        repositoryId: repository.id,
+        namespace,
+        type: "merge_queue_entry",
+        key:
+          "cr-" +
+          requestNumber +
+          "-" +
+          Date.now().toString(36),
+        name: "Change Request #" + requestNumber,
+        state: "queued",
+        payload: {
+          changeRequestNumber: requestNumber,
+          priority: Math.max(
+            -100,
+            Math.min(100, Number(body.priority) || 0)
+          ),
+          headSha: changeRequest.headSha,
+          baseBranch: changeRequest.baseBranch,
+          enqueuedAt: new Date().toISOString()
+        },
+        createdByUserId: identity.user.id,
+        createdByName: identity.user.displayName
+      });
+
+      sendJson(response, 201, entry, origin, allowedOrigins);
+      return true;
+    }
+
+    if (tail === "/merge-queue/process" && request.method === "POST") {
+      const entries = (await platformStore.listResources(
+        "merge_queue_entry",
+        repository.id
+      ))
+        .filter((item) => ["queued", "blocked"].includes(item.state))
+        .sort((a, b) => {
+          const ap = Number(a.payload.priority ?? 0);
+          const bp = Number(b.payload.priority ?? 0);
+          if (ap !== bp) return bp - ap;
+          return a.createdAt.localeCompare(b.createdAt);
+        });
+
+      const entry = entries[0];
+      if (!entry) {
+        sendJson(
+          response,
+          200,
+          { processed: false, reason: "merge_queue_empty" },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+
+      const requestNumber = Number(entry.payload.changeRequestNumber);
+      try {
+        await platformStore.updateResource(entry.id, {
+          state: "processing",
+          payload: {
+            ...entry.payload,
+            processingStartedAt: new Date().toISOString(),
+            lastError: null
+          }
+        });
+
+        const result = await executeApprovedMerge({
+          gitDir,
+          repository,
+          requestNumber,
+          actor: {
+            id: identity.user.id,
+            displayName: identity.user.displayName,
+            email: identity.user.email
+          }
+        });
+
+        const completed = await platformStore.updateResource(entry.id, {
+          state: "merged",
+          payload: {
+            ...entry.payload,
+            mergeCommitSha: result.mergeCommitSha,
+            completedAt: new Date().toISOString(),
+            lastError: null
+          }
+        });
+
+        sendJson(
+          response,
+          200,
+          { processed: true, entry: completed, result },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "merge_queue_failed";
+        const blocked = await platformStore.updateResource(entry.id, {
+          state: "blocked",
+          payload: {
+            ...entry.payload,
+            lastError: message,
+            lastAttemptAt: new Date().toISOString()
+          }
+        });
+
+        sendJson(
+          response,
+          409,
+          { processed: false, entry: blocked, error: message },
+          origin,
+          allowedOrigins
+        );
+        return true;
+      }
+    }
+
     if (tail === "/change-requests" && request.method === "GET") {
       const items = await reviewStore.listChangeRequests(repository.id);
       sendJson(
@@ -1072,6 +1377,19 @@ export async function handleKoshChangeReviewRequest(
         { id: identity.user.id, name: identity.user.displayName },
         created.number
       );
+
+      void dispatchKoshWebhooks(
+        repository.id,
+        "change_review.opened",
+        {
+          number: created.number,
+          title: created.title,
+          baseBranch: created.baseBranch,
+          headBranch: created.headBranch,
+          headSha: created.headSha,
+          author: created.authorName
+        }
+      ).catch(() => undefined);
 
       sendJson(response, 201, created, origin, allowedOrigins);
       return true;
@@ -1239,110 +1557,21 @@ export async function handleKoshChangeReviewRequest(
       }
 
       if (action === "merge" && request.method === "POST") {
-        if (changeRequest.status !== "open") {
-          throw Object.assign(new Error("change_request_not_open"), { status: 409 });
-        }
-
-        const synchronized = await synchronizedRequest(
+        const result = await executeApprovedMerge({
           gitDir,
           repository,
-          requestNumber
-        );
-        const [reviews, policy] = await Promise.all([
-          reviewStore.listReviews(synchronized.id),
-          reviewStore.getBranchPolicy(
-            repository.id,
-            synchronized.baseBranch
-          )
-        ]);
-
-        const reviewState = latestReviewStates(reviews, synchronized);
-
-        if (reviewState.approvals < policy.requiredApprovals) {
-          throw Object.assign(new Error("required_approvals_missing"), {
-            status: 409
-          });
-        }
-
-        if (
-          policy.blockOnChangesRequested &&
-          reviewState.changesRequested > 0
-        ) {
-          throw Object.assign(new Error("changes_requested"), { status: 409 });
-        }
-
-        let checks = await requiredChecksForCommit(
-          repository.id,
-          synchronized.headSha
-        );
-
-        if (checks.required.length === 0) {
-          const scheduled = await scheduleAutomationEvent(
-            repository,
-            "change_request",
-            synchronized.baseBranch,
-            synchronized.headSha,
-            { id: identity.user.id, name: identity.user.displayName },
-            synchronized.number
-          );
-          if (scheduled.length > 0) {
-            checks = await requiredChecksForCommit(
-              repository.id,
-              synchronized.headSha
-            );
-          }
-        }
-
-        if (checks.pending > 0) {
-          throw Object.assign(new Error("required_checks_pending"), {
-            status: 409
-          });
-        }
-
-        if (checks.failing > 0 || !checks.passing) {
-          throw Object.assign(new Error("required_checks_failed"), {
-            status: 409
-          });
-        }
-
-        const mergeCommitSha = await mergeChangeRequest(
-          gitDir,
-          synchronized,
-          {
+          requestNumber,
+          actor: {
             id: identity.user.id,
             displayName: identity.user.displayName,
             email: identity.user.email
           }
-        );
-
-        const merged = await reviewStore.markMerged(
-          repository.id,
-          requestNumber,
-          identity.user.id,
-          identity.user.displayName,
-          mergeCommitSha
-        );
-
-        const closedIssues = merged
-          ? await closeIssuesFromChangeRequest(
-              repository.id,
-              merged,
-              {
-                id: identity.user.id,
-                displayName: identity.user.displayName
-              }
-            )
-          : [];
+        });
 
         sendJson(
           response,
           200,
-          {
-            merged: true,
-            mergeCommitSha,
-            changeRequest: merged,
-            closedIssues
-          },
+          result,
           origin,
           allowedOrigins
         );

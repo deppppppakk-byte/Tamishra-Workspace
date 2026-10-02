@@ -50,29 +50,137 @@ export const koshModules: KoshModule[] = [
   },
   {
     id: "packages",
-    name: "Packages",
-    description: "Package and container registries with immutable versions and provenance.",
-    status: "planned"
+    name: "Packages & Registries",
+    description: "Package metadata, channels, provenance and registry control-plane resources.",
+    status: "foundation"
   },
   {
     id: "releases",
     name: "Releases",
-    description: "Release assets, notes, signing, artifacts and deployment promotion.",
-    status: "planned"
+    description: "Release metadata, assets, promotion channels and artifact-to-release control plane.",
+    status: "foundation"
   },
   {
     id: "security",
     name: "Security",
-    description: "Secrets, dependency review, code scanning, audit trails and policy enforcement.",
-    status: "planned"
+    description: "Encrypted secrets, findings, audit trails, code ownership and policy resources.",
+    status: "foundation"
+  },
+  {
+    id: "ssh",
+    name: "SSH Git",
+    description: "SSH public-key management and fingerprints, ready for the dedicated SSH Git transport.",
+    status: "foundation"
+  },
+  {
+    id: "organizations",
+    name: "Organizations & Permissions",
+    description: "Organizations, teams and policy resources for repository and enterprise access control.",
+    status: "foundation"
+  },
+  {
+    id: "merge-queue",
+    name: "Merge Queue",
+    description: "Queue-entry control plane for validated serial or parallel merge processing.",
+    status: "foundation"
+  },
+  {
+    id: "search",
+    name: "Code Search",
+    description: "Real Git-native code, path and commit search against repository objects.",
+    status: "active"
+  },
+  {
+    id: "code-intelligence",
+    name: "Code Intelligence",
+    description: "Code-index and ownership resources for symbols, references and language-aware navigation.",
+    status: "foundation"
+  },
+  {
+    id: "browser-ide",
+    name: "Browser IDE",
+    description: "Repository editing workspace foundation for multi-file edits, commits and previews.",
+    status: "foundation"
+  },
+  {
+    id: "dev-environments",
+    name: "Development Environments",
+    description: "Disposable environment definitions ready for isolated runner-backed execution.",
+    status: "foundation"
+  },
+  {
+    id: "wiki",
+    name: "Wiki & Documentation",
+    description: "Versionable repository knowledge pages stored as structured Kosh resources.",
+    status: "foundation"
+  },
+  {
+    id: "pages",
+    name: "Pages & Static Hosting",
+    description: "Static-site configuration and deployment policy resources for repository publishing.",
+    status: "foundation"
+  },
+  {
+    id: "webhooks",
+    name: "Webhooks & Integrations",
+    description: "Webhook and integration registrations with auditable configuration.",
+    status: "foundation"
+  },
+  {
+    id: "api-cli",
+    name: "Public API & CLI",
+    description: "Scoped personal API tokens with one-time token reveal and hashed-at-rest authentication.",
+    status: "foundation"
+  },
+  {
+    id: "notifications",
+    name: "Notifications",
+    description: "Repository notifications plus subscription resources for future cross-platform delivery.",
+    status: "active"
+  },
+  {
+    id: "advanced-projects",
+    name: "Advanced Project Management",
+    description: "Custom-field resources extending Kosh Work toward roadmaps, iterations and cross-repository planning.",
+    status: "foundation"
+  },
+  {
+    id: "release-management",
+    name: "Release & Deployment Management",
+    description: "Deployment-policy resources extending Automation environments and deployment history.",
+    status: "foundation"
+  },
+  {
+    id: "storage",
+    name: "Storage Layer",
+    description: "Storage-policy resources for Git LFS, artifacts, quotas, lifecycle and adapter selection.",
+    status: "foundation"
+  },
+  {
+    id: "disaster-recovery",
+    name: "Disaster Recovery",
+    description: "Backup and restore-point resources with auditable lifecycle state.",
+    status: "foundation"
+  },
+  {
+    id: "observability",
+    name: "Observability",
+    description: "Platform summary, resource counts and audit telemetry across Kosh control-plane services.",
+    status: "foundation"
+  },
+  {
+    id: "administration",
+    name: "Administration",
+    description: "Global settings and policy resources for platform administrators.",
+    status: "foundation"
   },
   {
     id: "extensions",
-    name: "Extensions",
-    description: "Generic extension SDK for code, CAD/BIM, documents, datasets and future assets.",
-    status: "planned"
+    name: "Extension SDK",
+    description: "Generic extension registrations for code, CAD/BIM, documents, datasets and future assets.",
+    status: "foundation"
   }
-];
+]
 
 export function normalizeKoshSlug(input: string) {
   return input

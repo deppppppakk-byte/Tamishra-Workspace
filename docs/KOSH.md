@@ -211,3 +211,90 @@ Workflow Definition v1 example:
 ```
 
 Build outputs placed under `.kosh-artifacts/` are uploaded by the runner after the job.
+
+## Expansion 1–22
+
+This expansion starts all remaining GitHub-replacement domains while keeping maturity explicit.
+
+| # | Capability | Current Kosh implementation |
+|---|---|---|
+| 1 | Packages & registries | Generic immutable binary package publishing/download, SHA-256 metadata, package/channel resources |
+| 2 | Releases | Release resources plus persistent release-asset upload/download and checksums |
+| 3 | Security | AES-256-GCM encrypted secrets, security-finding resources, audit trail, code-owner policy resources |
+| 4 | SSH Git | SSH public-key registration and SHA-256 fingerprints; dedicated SSH transport remains a separate service |
+| 5 | Organizations & permissions | Organization/team control-plane resources; deeper repository ACL enforcement remains to be hardened |
+| 6 | Merge queue | Persistent priority queue and processor using the same approval/CI/conflict/atomic merge engine as manual reviews |
+| 7 | Code search | Git-native code, path and commit-message search |
+| 8 | Code intelligence | Symbol/reference search surface, blame endpoint, code-index and code-owner resources |
+| 9 | Browser IDE | Authenticated multi-file commit backend on non-default branches with Git hooks, audit and CI trigger |
+| 10 | Development environments | Persistent environment definitions; disposable long-running runtime orchestration remains a runner expansion |
+| 11 | Wiki / documentation | Repository-scoped wiki-page resources |
+| 12 | Pages / static hosting | Static files served directly from configured Git branch/path with private-repo authentication and CSP |
+| 13 | Webhooks & integrations | Signed outbound webhooks for push, reviews, issues and completed workflows |
+| 14 | Public API & CLI | Scoped hashed API tokens and first-party `@tamishra/kosh-cli` |
+| 15 | Notifications | Existing Kosh Work notifications plus subscription resources |
+| 16 | Advanced project management | Custom-field resources extending Kosh Work |
+| 17 | Release/deployment management | Existing environments/deployments plus deployment-policy resources |
+| 18 | Storage layer | Git LFS basic transfer protocol, packages, release assets, CI artifacts and storage-policy resources |
+| 19 | Disaster recovery | Native Git-bundle repository backups, SHA-256 verification and downloads |
+| 20 | Observability | Global/repository platform summaries, resource counts and audit telemetry |
+| 21 | Administration | Global administration-setting resources |
+| 22 | Extension SDK | Extension registrations/control plane; richer sandboxed runtime SDK remains an expansion target |
+
+### Platform security rules
+
+- `KOSH_MASTER_KEY` encrypts repository/environment secrets at rest using AES-256-GCM.
+- API token plaintext is returned only when a token is created. Only its SHA-256 hash is persisted.
+- API token authentication resolves back to the real Workspace user and is accepted across Kosh repository APIs.
+- API tokens cannot mint or manage other API tokens or SSH keys; those actions require an interactive Workspace session.
+- Browser IDE commits cannot target the default branch directly.
+- Git LFS validates uploaded objects against their SHA-256 object IDs.
+- Package versions are immutable once published.
+- Merge-queue processing cannot bypass Change Review policy or Automation checks.
+
+### Storage configuration
+
+```env
+KOSH_MASTER_KEY=<high-entropy-secret>
+KOSH_LFS_ROOT=/var/lib/kosh/lfs
+KOSH_LFS_MAX_MB=1024
+KOSH_PACKAGE_ROOT=/var/lib/kosh/packages
+KOSH_RELEASE_ROOT=/var/lib/kosh/releases
+KOSH_BACKUP_ROOT=/var/lib/kosh/backups
+```
+
+### First-party CLI
+
+```bash
+npm run build:kosh-cli
+export KOSH_ORIGIN=https://kosh.tamishra.in
+export KOSH_TOKEN=kosh_pat_...
+node apps/kosh-cli/dist/index.js repo list
+node apps/kosh-cli/dist/index.js search tamishra/project "symbolName" code
+```
+
+### Kosh Pages
+
+Create a `page_site` resource with a payload such as:
+
+```json
+{
+  "sourceBranch": "main",
+  "sourcePath": "site",
+  "indexFile": "index.html"
+}
+```
+
+The site is then available at:
+
+`/pages/<namespace>/<repository>/`
+
+Private repository Pages require Kosh authentication.
+
+### Git LFS
+
+Kosh exposes the standard basic LFS endpoint beneath the normal Git remote:
+
+`/git/<namespace>/<repository>.git/info/lfs/`
+
+The same Git credential protects LFS uploads; public repositories may serve LFS downloads without authentication.
