@@ -222,7 +222,7 @@ This expansion develops the broader Kosh platform domains while keeping maturity
 | 2 | Releases | Release resources plus persistent release-asset upload/download and checksums |
 | 3 | Security | AES-256-GCM encrypted secrets, security-finding resources, audit trail, code-owner policy resources |
 | 4 | SSH Git | SSH public-key registration and SHA-256 fingerprints; dedicated SSH transport remains a separate service |
-| 5 | Organizations & permissions | Organization/team control-plane resources; deeper repository ACL enforcement remains to be hardened |
+| 5 | Organizations & permissions | Active namespace ownership, teams, repository roles and enforcement across API, Git HTTP, LFS, Pages, Mesh and Pulse |
 | 6 | Merge queue | Persistent priority queue and processor using the same approval/CI/conflict/atomic merge engine as manual reviews |
 | 7 | Code search | Git-native code, path and commit-message search |
 | 8 | Code intelligence | Symbol/reference search surface, blame endpoint, code-index and code-owner resources |
@@ -551,3 +551,111 @@ Repository systems
         ↓
 Human attention / incident action
 ```
+
+
+## Kosh Access
+
+Kosh Access is the native authorization layer for namespaces, repositories and cross-system visibility.
+
+Workspace route:
+
+`/apps/kosh/access`
+
+Repository-specific route:
+
+`/apps/kosh/access?namespace=<namespace>&slug=<slug>`
+
+### Repository roles
+
+Kosh repository roles are independent from general Workspace membership roles.
+
+| Role | Capabilities |
+|---|---|
+| Reader | Read repository content and visible repository systems |
+| Reviewer | Reader capabilities plus Change Review participation |
+| Contributor | Reviewer capabilities plus Git writes, workflow runs and package publishing |
+| Maintainer | Contributor capabilities plus merge, repository management, Automation management, releases, security and access administration |
+| Owner | Full repository authority |
+
+Effective repository access can come from:
+
+1. explicit user grant
+2. team grant
+3. namespace organization authority
+4. public read access
+5. temporary legacy migration mode for pre-ACL repositories
+
+Kosh chooses the strongest applicable repository role.
+
+### Namespace ownership
+
+Every new Kosh repository namespace is bound to a Workspace organization.
+
+A namespace can be claimed by an organization owner or admin. On first repository creation, Kosh can automatically bind an unclaimed namespace when the user has exactly one organization where they are owner/admin.
+
+If Kosh cannot determine the intended organization safely, repository creation returns `namespace_binding_required` and the namespace must be bound explicitly in Kosh Access.
+
+### Teams
+
+Teams are namespace-scoped groups.
+
+A repository grant may target:
+
+- one Workspace user
+- one Kosh team
+
+Team members inherit the repository role assigned to that team.
+
+### Enforcement boundary
+
+Kosh Access is enforced at the service boundary rather than only in the UI.
+
+Current enforcement includes:
+
+- repository list visibility
+- repository browser APIs
+- Work
+- Change Reviews
+- Automation
+- Flow
+- repository Platform APIs
+- Git smart HTTP clone/fetch/push
+- Git LFS read/write
+- Kosh Pages
+- Mesh repository visibility
+- Mesh component/link mutations
+- Pulse signals and incidents
+- global platform administration
+
+Git HTTP supports scoped Kosh personal access tokens. The internal `KOSH_GIT_TOKEN` remains a trusted service credential for Kosh-controlled workers and must not be distributed as a user credential.
+
+### Legacy repository migration
+
+Repositories created before Kosh Access may not yet have a namespace binding or explicit grants.
+
+`KOSH_ACCESS_LEGACY_MODE` controls that migration:
+
+- `deny` — no implicit access; production-safe default
+- `authenticated` — authenticated Kosh users receive temporary maintainer compatibility access
+
+Production defaults to `deny` when the variable is omitted. Development defaults to `authenticated` to avoid blocking local migration.
+
+Recommended migration:
+
+1. temporarily use `authenticated` only in a controlled migration environment if needed
+2. open Kosh Access
+3. bind each legacy namespace to the correct Workspace organization
+4. assign explicit repository/team grants where needed
+5. restore `KOSH_ACCESS_LEGACY_MODE=deny`
+
+New repositories receive an explicit owner grant automatically and do not rely on legacy mode.
+
+### Cross-system visibility
+
+Flow remains repository-scoped.
+
+Mesh includes only repositories visible to the current identity and only components inside those visible namespaces.
+
+Pulse derives its signals and visible incidents from that caller-filtered Mesh graph.
+
+This keeps Kosh lifecycle and impact intelligence inside the same authorization boundary as the underlying repositories.
