@@ -82,6 +82,18 @@ CREATE TABLE IF NOT EXISTS kosh_issue_dependencies (
   CHECK (issue_id <> depends_on_issue_id)
 );
 
+CREATE TABLE IF NOT EXISTS kosh_issue_links (
+  id TEXT PRIMARY KEY,
+  issue_id TEXT NOT NULL,
+  link_type TEXT NOT NULL,
+  ref_value TEXT NOT NULL,
+  title TEXT,
+  created_by_user_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(issue_id, link_type, ref_value),
+  CHECK (link_type IN ('change_request','commit'))
+);
+
 CREATE TABLE IF NOT EXISTS kosh_discussion_counters (
   repository_id TEXT PRIMARY KEY,
   next_number INTEGER NOT NULL CHECK (next_number > 0)
