@@ -34,7 +34,7 @@ export const koshModules: KoshModule[] = [
     id: "reviews",
     name: "Change Reviews",
     description: "Branches, diffs, merge requests, approvals and protected merge policies.",
-    status: "foundation"
+    status: "active"
   },
   {
     id: "work",

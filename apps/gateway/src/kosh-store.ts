@@ -176,9 +176,17 @@ class PostgresKoshStore implements KoshStore {
   }
 }
 
-export function createKoshStore(): KoshStore {
+let singleton: KoshStore | null = null;
+
+export function getKoshStore(): KoshStore {
+  if (singleton) return singleton;
   const databaseUrl = process.env.WORKSPACE_DATABASE_URL?.trim();
-  return databaseUrl
+  singleton = databaseUrl
     ? new PostgresKoshStore(postgres(databaseUrl, { max: 5, prepare: false }))
     : new MemoryKoshStore();
+  return singleton;
+}
+
+export function createKoshStore(): KoshStore {
+  return getKoshStore();
 }

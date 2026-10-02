@@ -1,10 +1,11 @@
 import { execFile, spawn } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
-import { mkdir, stat } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { resolveWorkspaceIdentity } from "./identity.js";
+import { handleKoshChangeReviewRequest } from "./kosh-reviews.js";
 import {
   createKoshStore,
   type KoshVisibility,
@@ -221,6 +222,44 @@ async function runGitBuffer(
   });
 }
 
+async function ensureKoshReceiveHook(
+  gitDir: string,
+  defaultBranch: string
+) {
+  const hookPath = resolve(gitDir, "hooks", "pre-receive");
+  const protectedRefsPath = resolve(gitDir, "kosh-protected-refs");
+  const defaultRef = "refs/heads/" + defaultBranch;
+
+  await mkdir(resolve(gitDir, "hooks"), { recursive: true });
+
+  try {
+    await readFile(protectedRefsPath, "utf8");
+  } catch {
+    await writeFile(protectedRefsPath, defaultRef + "\n", "utf8");
+  }
+
+  const script = [
+    "#!/bin/sh",
+    "protected_file=\"$(git rev-parse --git-dir)/kosh-protected-refs\"",
+    "zero=0000000000000000000000000000000000000000",
+    "while read old_sha new_sha ref_name",
+    "do",
+    "  if [ \"$old_sha\" = \"$zero\" ]; then",
+    "    continue",
+    "  fi",
+    "  if [ -f \"$protected_file\" ] && grep -Fqx \"$ref_name\" \"$protected_file\"; then",
+    "    echo \"Kosh: direct push to protected branch $ref_name is blocked. Use a Change Request.\" >&2",
+    "    exit 1",
+    "  fi",
+    "done",
+    "exit 0",
+    ""
+  ].join("\n");
+
+  await writeFile(hookPath, script, "utf8");
+  await chmod(hookPath, 0o755);
+}
+
 async function ensureBareRepository(namespace: string, slug: string) {
   const namespacePath = resolve(repositoryRoot, namespace);
   const path = repositoryPath(namespace, slug);
@@ -228,6 +267,7 @@ async function ensureBareRepository(namespace: string, slug: string) {
   await mkdir(namespacePath, { recursive: true });
 
   if (await pathExists(resolve(path, "HEAD"))) {
+    await ensureKoshReceiveHook(path, "main");
     return path;
   }
 
@@ -243,6 +283,7 @@ async function ensureBareRepository(namespace: string, slug: string) {
     { timeout: 10_000 }
   );
 
+  await ensureKoshReceiveHook(path, "main");
   return path;
 }
 
@@ -340,6 +381,8 @@ async function handleGitHttp(
     response.end("Repository not found.");
     return true;
   }
+
+  await ensureKoshReceiveHook(path, repository.defaultBranch);
 
   const write = isGitWrite(url);
   const tokenRequired = write || repository.visibility !== "public";
@@ -733,6 +776,18 @@ export async function handleKoshRequest(
 
   if (!url.pathname.startsWith("/v1/kosh")) {
     return false;
+  }
+
+  if (
+    await handleKoshChangeReviewRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return true;
   }
 
   if (request.method === "GET" && url.pathname === "/v1/kosh") {
