@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -263,6 +264,38 @@ async function repositoryContext(namespace: string, slug: string) {
     repository,
     gitDir: repoPath(namespace, slug)
   };
+}
+
+async function setProtectedBranch(
+  gitDir: string,
+  branch: string,
+  protectedBranch: boolean
+) {
+  const filePath = resolve(gitDir, "kosh-protected-refs");
+  const refName = "refs/heads/" + branch;
+  let content = "";
+
+  try {
+    content = await readFile(filePath, "utf8");
+  } catch {
+    content = "";
+  }
+
+  const refs = new Set(
+    content
+      .split(/\r?\n/)
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+
+  if (protectedBranch) refs.add(refName);
+  else refs.delete(refName);
+
+  await writeFile(
+    filePath,
+    [...refs].sort().join("\n") + ([...refs].length ? "\n" : ""),
+    "utf8"
+  );
 }
 
 async function checkBranchName(gitDir: string, branch: string) {
@@ -727,6 +760,8 @@ export async function handleKoshChangeReviewRequest(
         throw Object.assign(new Error("branch_delete_failed"), { status: 500 });
       }
 
+      await setProtectedBranch(gitDir, branchName, false);
+
       sendJson(
         response,
         200,
@@ -771,6 +806,12 @@ export async function handleKoshChangeReviewRequest(
             allowDirectPush: body.allowDirectPush === true,
             allowDelete: body.allowDelete === true
           }
+        );
+
+        await setProtectedBranch(
+          gitDir,
+          branchName,
+          !policy.allowDirectPush
         );
 
         sendJson(response, 200, policy, origin, allowedOrigins);
