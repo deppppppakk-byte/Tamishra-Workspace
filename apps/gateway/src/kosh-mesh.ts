@@ -278,7 +278,7 @@ export async function buildKoshMeshGraph() {
 }
 
 export function calculateKoshMeshImpact(
-  graph: Awaited<ReturnType<typeof buildKoshMeshGraph>>>,
+  graph: Awaited<ReturnType<typeof buildKoshMeshGraph>>,
   ref: string
 ) {
   const nodeMap = new Map(graph.nodes.map((node) => [node.ref, node]));
