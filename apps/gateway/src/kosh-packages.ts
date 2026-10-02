@@ -340,7 +340,9 @@ export async function publishKoshPackage(
   return { version, channel };
 }
 
-async function verifiedArtifact(version: StoredKoshPackageVersion) {
+export async function verifyKoshPackageVersion(
+  version: StoredKoshPackageVersion
+) {
   const path = packageArtifactPath(version);
   let bytes: Buffer;
   try {
@@ -375,7 +377,7 @@ async function sendArtifact(
     return;
   }
 
-  const bytes = await verifiedArtifact(version);
+  const bytes = await verifyKoshPackageVersion(version);
   const filename = version.filename.replace(/["\r\n]/g, "_");
   response.statusCode = 200;
   response.setHeader("content-type", version.mediaType);
@@ -704,7 +706,7 @@ export async function handleKoshPackageRequest(
           });
         }
 
-        await verifiedArtifact(version);
+        await verifyKoshPackageVersion(version);
 
         const channel = await packageStore.putChannel({
           repositoryId: repository.id,
@@ -776,7 +778,7 @@ export async function handleKoshPackageRequest(
       }
 
       if (request.method === "GET" && action === "verify") {
-        const bytes = await verifiedArtifact(version);
+        const bytes = await verifyKoshPackageVersion(version);
         json(
           response,
           200,

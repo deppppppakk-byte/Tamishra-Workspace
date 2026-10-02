@@ -29,6 +29,7 @@ import {
   triggerKoshSecurityScanAfterPush
 } from "./kosh-security.js";
 import { handleKoshPackageRequest } from "./kosh-packages.js";
+import { handleKoshReleaseRequest } from "./kosh-releases.js";
 import { scheduleAutomationEvent } from "./kosh-automation-service.js";
 import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
@@ -267,10 +268,19 @@ async function ensureKoshReceiveHook(
 
   const script = [
     "#!/bin/sh",
-    "protected_file=\"$(git rev-parse --git-dir)/kosh-protected-refs\"",
+    "git_dir=\"$(git rev-parse --git-dir)\"",
+    "protected_file=\"$git_dir/kosh-protected-refs\"",
+    "release_tags_file=\"$git_dir/kosh-release-tags\"",
     "zero=0000000000000000000000000000000000000000",
     "while read old_sha new_sha ref_name",
     "do",
+    "  if [ -f \"$release_tags_file\" ]; then",
+    "    expected_sha=$(awk -v ref=\"$ref_name\" '$1 == ref { print $2; exit }' \"$release_tags_file\")",
+    "    if [ -n \"$expected_sha\" ] && [ \"$new_sha\" != \"$expected_sha\" ]; then",
+    "      echo \"Kosh: published release tag $ref_name is immutable.\" >&2",
+    "      exit 1",
+    "    fi",
+    "  fi",
     "  if [ \"$old_sha\" = \"$zero\" ]; then",
     "    continue",
     "  fi",
@@ -1035,6 +1045,18 @@ export async function handleKoshRequest(
 
   if (
     await handleKoshPackageRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    await handleKoshReleaseRequest(
       request,
       response,
       url,

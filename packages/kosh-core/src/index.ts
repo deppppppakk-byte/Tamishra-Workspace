@@ -76,8 +76,8 @@ export const koshModules: KoshModule[] = [
   {
     id: "releases",
     name: "Releases",
-    description: "Release metadata, assets, promotion channels and artifact-to-release control plane.",
-    status: "foundation"
+    description: "Git-anchored release lifecycle with immutable package evidence, verified assets, protected tags and promotion channels.",
+    status: "active"
   },
   {
     id: "security",
