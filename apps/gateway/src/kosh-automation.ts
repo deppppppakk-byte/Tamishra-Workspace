@@ -210,15 +210,77 @@ async function handleRunner(
 
     if (
       request.method === "POST" &&
-      url.pathname === "/v1/kosh/automation/runner/claim"
+      url.pathname === "/v1/kosh/automation/runner/heartbeat"
     ) {
       const body = await readJson(request, 64 * 1024);
-      const runnerId = clean(body.runnerId, 160);
-      if (!runnerId) {
+      const heartbeat = runnerHeartbeatInput(body);
+      if (!heartbeat.id) {
         throw Object.assign(new Error("runner_id_required"), { status: 400 });
       }
 
-      const job = await store.claimNextJob(runnerId);
+      const runner = await runnerControlStore.heartbeatRunner(heartbeat);
+      const jobId = clean(body.jobId, 240);
+      let job = null;
+
+      if (jobId) {
+        const leaseToken = jobLeaseToken(request);
+        if (!leaseToken) {
+          throw Object.assign(new Error("job_lease_required"), { status: 401 });
+        }
+        job = await store.renewJobLease(
+          jobId,
+          heartbeat.id,
+          leaseToken,
+          90
+        );
+        if (!job) {
+          throw Object.assign(new Error("job_lease_expired"), { status: 409 });
+        }
+      }
+
+      sendJson(response, 200, { runner, job });
+      return true;
+    }
+
+    if (
+      request.method === "POST" &&
+      url.pathname === "/v1/kosh/automation/runner/claim"
+    ) {
+      const body = await readJson(request, 64 * 1024);
+      const heartbeat = runnerHeartbeatInput(body);
+      if (!heartbeat.id) {
+        throw Object.assign(new Error("runner_id_required"), { status: 400 });
+      }
+
+      if (
+        heartbeat.executor === "host" &&
+        process.env.NODE_ENV === "production" &&
+        process.env.KOSH_RUNNER_ALLOW_HOST_EXECUTION?.trim().toLowerCase() !== "true"
+      ) {
+        throw Object.assign(new Error("host_runner_execution_disabled"), {
+          status: 403
+        });
+      }
+
+      await runnerControlStore.heartbeatRunner(heartbeat);
+
+      const expired = await store.requeueExpiredJobs();
+      for (const stale of expired) {
+        await store.appendLog(
+          stale.id,
+          "system",
+          "Runner lease expired; job returned to the queue for a new attempt.\n"
+        ).catch(() => undefined);
+      }
+
+      if (heartbeat.activeJobs >= heartbeat.capacity) {
+        sendJson(response, 200, { job: null, reason: "runner_at_capacity" });
+        return true;
+      }
+
+      const leaseToken =
+        "kosh_lease_" + randomBytes(32).toString("base64url");
+      const job = await store.claimNextJob(heartbeat.id, leaseToken, 90);
       if (!job) {
         sendJson(response, 200, { job: null });
         return true;
@@ -232,6 +294,76 @@ async function handleRunner(
           status: 500
         });
       }
+
+      const definition = job.definition;
+      const image =
+        definition.image?.trim() || "node:22-bookworm-slim";
+      const allowedImages = (
+        process.env.KOSH_RUNNER_IMAGE_ALLOWLIST?.trim() ||
+        "node:22-bookworm-slim"
+      )
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+
+      if (
+        process.env.NODE_ENV === "production" &&
+        !allowedImages.includes(image)
+      ) {
+        await store.appendLog(
+          job.id,
+          "system",
+          "Runner policy rejected container image " + image + ".\n"
+        ).catch(() => undefined);
+        await store.updateJobStatus(job.id, "failure");
+        throw Object.assign(new Error("runner_image_not_allowed"), {
+          status: 409
+        });
+      }
+
+      const requestedNetwork =
+        definition.network === "egress" ? "egress" : "none";
+      if (
+        requestedNetwork === "egress" &&
+        process.env.KOSH_RUNNER_ALLOW_NETWORK?.trim().toLowerCase() !== "true"
+      ) {
+        await store.appendLog(
+          job.id,
+          "system",
+          "Runner policy rejected outbound network access.\n"
+        ).catch(() => undefined);
+        await store.updateJobStatus(job.id, "failure");
+        throw Object.assign(new Error("runner_network_not_allowed"), {
+          status: 409
+        });
+      }
+
+      const resolvedSecrets: Record<string, string> = {};
+      for (const name of definition.secrets ?? []) {
+        const value =
+          (await platformStore.resolveSecret(repository.id, null, name)) ??
+          (await platformStore.resolveSecret(null, null, name));
+        if (value == null) {
+          await store.appendLog(
+            job.id,
+            "system",
+            "Required runner secret " + name + " is not configured.\n"
+          ).catch(() => undefined);
+          await store.updateJobStatus(job.id, "failure");
+          throw Object.assign(new Error("runner_secret_missing"), {
+            status: 409
+          });
+        }
+        resolvedSecrets[name] = value;
+      }
+
+      const checkoutCredential =
+        await runnerControlStore.issueCredential({
+          jobId: job.id,
+          repositoryId: repository.id,
+          scope: "repository.read",
+          ttlSeconds: 600
+        });
 
       await syncRunCheck(run.id);
 
@@ -249,7 +381,21 @@ async function handleRunner(
           name: repository.name,
           cloneHttpUrl: repository.cloneHttpUrl
         },
-        workflowEnv: workflow?.definition.env ?? {}
+        workflowEnv: workflow?.definition.env ?? {},
+        secrets: resolvedSecrets,
+        lease: {
+          token: leaseToken,
+          expiresAt: job.leaseExpiresAt
+        },
+        checkoutCredential,
+        isolation: {
+          executor: heartbeat.executor,
+          image,
+          network: requestedNetwork,
+          cpu: Math.max(0.1, Math.min(8, definition.cpu ?? 1)),
+          memoryMb: Math.max(128, Math.min(16_384, definition.memoryMb ?? 1024)),
+          pidsLimit: Math.max(32, Math.min(2048, definition.pidsLimit ?? 256))
+        }
       });
       return true;
     }
