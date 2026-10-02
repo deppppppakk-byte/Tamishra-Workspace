@@ -384,3 +384,75 @@ Kosh Flow exists to answer:
 > What is this project trying to do, what changed, what proved it, what was delivered, and what is running now?
 
 This is Kosh's own lifecycle model: one connected view of intent, change, proof, delivery and operation.
+
+
+## Kosh Mesh
+
+Kosh Mesh is the workspace-wide system graph above repository-level Flow.
+
+- **Flow** answers how one repository moves from intent to operation.
+- **Mesh** answers how repositories, services, apps, APIs, data, engineering assets and runtime environments depend on each other.
+
+Workspace route:
+
+`/apps/kosh/mesh`
+
+### Mesh node types
+
+Mesh automatically creates live nodes for every Kosh repository. Additional Kosh-native component nodes can represent:
+
+- service
+- app
+- API
+- package
+- data
+- CAD asset/system
+- BIM asset/system
+- document
+- environment
+- deployment
+- workspace
+- generic component
+
+Repository health is derived from its current Kosh Flow state; it is not copied into Mesh storage.
+
+### Mesh relationships
+
+Kosh Mesh supports:
+
+- depends on
+- provides
+- consumes
+- publishes
+- deploys to
+- uses
+- syncs with
+- contains
+- relates to
+- replaces
+- extends
+
+Components may optionally declare a repository reference in metadata. Mesh derives a `uses` relationship to that repository when the repository exists.
+
+### Impact analysis
+
+For any Mesh node, Kosh computes:
+
+- upstream dependencies
+- downstream impact
+- relationship type
+- traversal depth
+
+Traversal is cycle-safe and bounded to eight relationship levels.
+
+This allows Kosh to answer questions such as:
+
+- Which systems depend on this repository?
+- Which API will be affected by this service?
+- Which deployments consume this package?
+- Which CAD/BIM component belongs to this engineering system?
+- What is upstream of a failed runtime component?
+
+### Mesh storage principle
+
+Kosh Mesh stores only cross-system component definitions and relationships. Repository lifecycle state stays in Flow and the original Kosh subsystems.
