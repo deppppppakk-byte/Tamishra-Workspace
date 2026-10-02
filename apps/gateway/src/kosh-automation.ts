@@ -404,6 +404,11 @@ async function handleRunner(
       /^\/v1\/kosh\/automation\/runner\/jobs\/([^/]+)\/logs$/
     );
     if (logsMatch && request.method === "POST") {
+      const jobId = decodeURIComponent(logsMatch[1]);
+      if (!(await requireJobLease(request, jobId))) {
+        throw Object.assign(new Error("job_lease_invalid"), { status: 403 });
+      }
+
       const body = await readJson(request, 256 * 1024);
       const stream =
         body.stream === "stderr" || body.stream === "system"
@@ -411,7 +416,7 @@ async function handleRunner(
           : "stdout";
       const text = String(body.text ?? "").slice(0, 64 * 1024);
       const log = await store.appendLog(
-        decodeURIComponent(logsMatch[1]),
+        jobId,
         stream,
         text
       );
@@ -423,6 +428,11 @@ async function handleRunner(
       /^\/v1\/kosh\/automation\/runner\/jobs\/([^/]+)\/complete$/
     );
     if (completeMatch && request.method === "POST") {
+      const jobId = decodeURIComponent(completeMatch[1]);
+      if (!(await requireJobLease(request, jobId))) {
+        throw Object.assign(new Error("job_lease_invalid"), { status: 403 });
+      }
+
       const body = await readJson(request, 64 * 1024);
       const status =
         body.status === "success" ||
@@ -438,12 +448,14 @@ async function handleRunner(
       }
 
       const job = await store.updateJobStatus(
-        decodeURIComponent(completeMatch[1]),
+        jobId,
         status
       );
       if (!job) {
         throw Object.assign(new Error("job_not_found"), { status: 404 });
       }
+
+      await runnerControlStore.revokeJobCredentials(job.id);
 
       const run = await syncRunCheck(job.runId);
 
@@ -472,8 +484,12 @@ async function handleRunner(
       /^\/v1\/kosh\/automation\/runner\/jobs\/([^/]+)\/artifacts$/
     );
     if (artifactMatch && request.method === "POST") {
-      const body = await readJson(request);
       const jobId = decodeURIComponent(artifactMatch[1]);
+      if (!(await requireJobLease(request, jobId))) {
+        throw Object.assign(new Error("job_lease_invalid"), { status: 403 });
+      }
+
+      const body = await readJson(request);
       const name = clean(body.name, 180);
       const encoded = String(body.base64 ?? "");
 
