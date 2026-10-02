@@ -1474,7 +1474,7 @@ class PostgresKoshWorkStore implements KoshWorkStore {
       VALUES (
         ${randomUUID()}, ${input.repositoryId}, ${input.name},
         ${input.titleTemplate}, ${input.bodyTemplate},
-        ${this.sql.json(input.labelNames)}
+        ${JSON.stringify(input.labelNames)}::jsonb
       )
       RETURNING *
     `;
@@ -1491,7 +1491,7 @@ class PostgresKoshWorkStore implements KoshWorkStore {
       VALUES (
         ${randomUUID()}, ${input.repositoryId}, ${input.entityType},
         ${input.entityId}, ${input.entityNumber}, ${input.eventType},
-        ${input.actorUserId}, ${input.actorName}, ${this.sql.json(input.payload)}
+        ${input.actorUserId}, ${input.actorName}, ${JSON.stringify(input.payload)}::jsonb
       )
       RETURNING *
     `;
