@@ -1094,6 +1094,12 @@ export async function handleKoshRequest(
         product: "Kosh",
         by: "Tamishra",
         gitProtocol: "smart-http",
+        gitProtocols: ["smart-http", "ssh"],
+        ssh: {
+          enabled: Boolean(process.env.KOSH_SSH_PUBLIC_HOST?.trim()),
+          host: process.env.KOSH_SSH_PUBLIC_HOST?.trim() || null,
+          port: Number(process.env.KOSH_SSH_PUBLIC_PORT ?? 22) || 22
+        },
         persistence: store.kind,
         gitStorage: process.env.KOSH_REPO_ROOT
           ? "configured-persistent-path"
