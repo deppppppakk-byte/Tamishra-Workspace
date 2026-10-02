@@ -222,12 +222,8 @@ function makeHref(
 }
 
 async function buildFlowGraph(
-  repository: Awaited<ReturnType<typeof repositoryStore.get>>
+  repository: NonNullable<Awaited<ReturnType<typeof repositoryStore.get>>>
 ) {
-  if (!repository) {
-    throw Object.assign(new Error("repository_not_found"), { status: 404 });
-  }
-
   await Promise.all([
     workStore.ready(),
     reviewStore.ready(),
