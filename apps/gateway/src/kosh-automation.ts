@@ -280,7 +280,12 @@ async function handleRunner(
 
       const leaseToken =
         "kosh_lease_" + randomBytes(32).toString("base64url");
-      const job = await store.claimNextJob(heartbeat.id, leaseToken, 90);
+      const job = await store.claimNextJob(
+        heartbeat.id,
+        heartbeat.labels,
+        leaseToken,
+        90
+      );
       if (!job) {
         sendJson(response, 200, { job: null });
         return true;
