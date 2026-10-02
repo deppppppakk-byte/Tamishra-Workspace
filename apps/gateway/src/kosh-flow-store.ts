@@ -6,6 +6,7 @@ export type KoshFlowEntityType =
   | "change_review"
   | "commit"
   | "workflow_run"
+  | "code_index"
   | "package"
   | "release"
   | "deployment"

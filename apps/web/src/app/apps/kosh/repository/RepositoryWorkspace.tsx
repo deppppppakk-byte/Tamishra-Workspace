@@ -639,6 +639,16 @@ export function RepositoryWorkspace() {
           >
             Releases
           </Link>
+          <Link
+            href={
+              "/apps/kosh/code-intelligence?namespace=" +
+              encodeURIComponent(namespace) +
+              "&slug=" +
+              encodeURIComponent(slug)
+            }
+          >
+            Intelligence
+          </Link>
         </nav>
       </header>
 

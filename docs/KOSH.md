@@ -1335,3 +1335,23 @@ The native Package Registry is authoritative for package versions, channels, art
 Do not place live package registry storage on ephemeral container filesystems.
 
 The current package artifact adapter is filesystem-backed and intentionally separate from repository metadata so a future object-storage adapter can replace the byte store without changing package identity or lifecycle rules.
+
+
+## Native Code Intelligence
+
+Kosh Code Intelligence builds commit-addressed source indexes directly from repository Git objects. It is not a wrapper around an external code-hosting service.
+
+Current capabilities:
+- persistent Code Index resources stored in the Kosh platform store
+- full first-pass indexing with push-triggered delta indexes on descendant commits
+- definition and reference navigation
+- CODEOWNERS-based path ownership mapping
+- TypeScript/JavaScript, Python, C/C++, Java, Go and Rust indexing architecture
+- repository symbol search by name, kind and language
+- index history tied to Git commit SHA and branch/ref
+- automatic refresh after successful Git pushes
+- repository access control and audit events
+- Flow nodes connecting indexed commits to the validation stage
+- dedicated Code Intelligence workspace at /apps/kosh/code-intelligence
+
+Production limits are controlled with KOSH_CODE_INDEX_MAX_FILES, KOSH_CODE_INDEX_MAX_FILE_KB and KOSH_CODE_INDEX_MAX_REFERENCES_PER_FILE. KOSH_CODE_INDEX_ON_PUSH can disable automatic push indexing when an external indexing scheduler owns that responsibility.
