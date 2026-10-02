@@ -32,6 +32,7 @@ type JobDefinition = {
   pidsLimit?: number;
   secrets?: string[];
   runsOn?: string[];
+  publishPackages?: boolean;
   steps: StepDefinition[];
 };
 
