@@ -76,6 +76,17 @@ type ReviewSummary = {
   changesRequested: number;
   requiredApprovals: number;
   readyToMerge: boolean;
+  checksPassing: boolean;
+  checksPending: number;
+  checksFailing: number;
+};
+
+type Check = {
+  id: string;
+  name: string;
+  status: "queued" | "running" | "success" | "failure" | "cancelled";
+  required: boolean;
+  details: string | null;
 };
 
 type DetailPayload = {
@@ -85,6 +96,7 @@ type DetailPayload = {
   comments: ReviewComment[];
   policy: BranchPolicy;
   reviewSummary: ReviewSummary;
+  checks: Check[];
 };
 
 function apiBase() {
@@ -457,7 +469,35 @@ export function ChangeReviewWorkspace() {
                   <dt>Direct push</dt>
                   <dd>{detail.policy.allowDirectPush ? "Allowed" : "Protected"}</dd>
                 </div>
+                <div>
+                  <dt>Required checks</dt>
+                  <dd>
+                    {detail.reviewSummary.checksFailing > 0
+                      ? detail.reviewSummary.checksFailing + " failing"
+                      : detail.reviewSummary.checksPending > 0
+                        ? detail.reviewSummary.checksPending + " pending"
+                        : detail.reviewSummary.checksPassing
+                          ? "Passing"
+                          : "Not configured"}
+                  </dd>
+                </div>
               </dl>
+
+              {detail.checks.length > 0 && (
+                <div className={styles.checkList}>
+                  {detail.checks.map((check) => (
+                    <div className={styles.checkRow} key={check.id}>
+                      <div>
+                        <strong>{check.name}</strong>
+                        <span>{check.details || (check.required ? "Required" : "Optional")}</span>
+                      </div>
+                      <em className={styles["check_" + check.status]}>
+                        {check.status}
+                      </em>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {change.status === "open" && (
                 <>
@@ -470,8 +510,8 @@ export function ChangeReviewWorkspace() {
                   </button>
                   {!detail.reviewSummary.readyToMerge && (
                     <p className={styles.gateHelp}>
-                      Required approvals, review status and Git mergeability must
-                      all pass before Kosh enables merge.
+                      Required approvals, review status, Git mergeability and
+                      required Automation checks must all pass before Kosh enables merge.
                     </p>
                   )}
                   <button
