@@ -676,6 +676,37 @@ export async function runKoshSecurityScan(
   return { scan, summary };
 }
 
+export function triggerKoshSecurityScanAfterPush(
+  repository: StoredKoshRepository,
+  actor: { id: string | null; name: string },
+  changedBranches: string[]
+) {
+  if (process.env.KOSH_SECURITY_SCAN_ON_PUSH?.trim().toLowerCase() === "false") {
+    return;
+  }
+
+  if (!changedBranches.includes(repository.defaultBranch)) {
+    return;
+  }
+
+  void runKoshSecurityScan(repository, {
+    id: actor.id ?? "kosh-system",
+    displayName: actor.name
+  }).catch(async (error) => {
+    await platformStore.appendAudit({
+      repositoryId: repository.id,
+      actorUserId: actor.id,
+      actorName: actor.name,
+      eventType: "security_scan_failed",
+      resourceType: "security_scan",
+      resourceId: null,
+      metadata: {
+        reason: error instanceof Error ? error.message : "unknown error"
+      }
+    }).catch(() => undefined);
+  });
+}
+
 function sendJson(
   response: ServerResponse,
   status: number,
