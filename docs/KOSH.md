@@ -938,7 +938,8 @@ Each workflow job may request:
   "cpu": 1,
   "memoryMb": 1024,
   "pidsLimit": 256,
-  "secrets": ["PACKAGE_TOKEN"]
+  "secrets": ["PACKAGE_TOKEN"],
+  "runsOn": ["executor:container", "pool:default"]
 }
 ```
 
@@ -1060,6 +1061,24 @@ Administrators can inspect the fleet from:
 The Automation workspace shows the live runner fleet when the current user has organization administrator authority.
 
 A runner is reported offline when its heartbeat becomes stale.
+
+### Runner pools
+
+Jobs may declare `runsOn` labels.
+
+A queued job is claimable only when **every** requested label exists on the runner.
+
+Examples:
+
+- `executor:container`
+- `os:linux`
+- `arch:x64`
+- `pool:default`
+- `pool:trusted-egress`
+
+Runner labels come from built-in platform labels plus `KOSH_RUNNER_LABELS`.
+
+This allows separate runner pools to enforce different image, network and capacity policies without relying on workflow authors to choose the correct machine indirectly.
 
 ### Concurrency
 
