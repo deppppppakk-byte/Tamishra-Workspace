@@ -1,5 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolveKoshIdentity } from "./kosh-auth.js";
+import {
+  evaluateKoshRepositoryAccess,
+  koshNamespaceAuthority
+} from "./kosh-access.js";
 import { getKoshStore } from "./kosh-store.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
 import { buildKoshFlowGraph } from "./kosh-flow.js";
@@ -14,6 +18,10 @@ const platformStore = getKoshPlatformStore();
 const meshStore = getKoshMeshStore();
 
 type JsonBody = Record<string, unknown>;
+
+type KoshMeshIdentity = NonNullable<
+  Awaited<ReturnType<typeof resolveKoshIdentity>>
+>;
 
 type MeshHealth = "good" | "attention" | "blocked" | "failed" | "neutral";
 
@@ -144,7 +152,7 @@ function healthFromState(state: string): MeshHealth {
   return "neutral";
 }
 
-export async function buildKoshMeshGraph() {
+export async function buildKoshMeshGraph(identity: KoshMeshIdentity) {
   await Promise.all([
     repositoryStore.ready(),
     meshStore.ready(),
