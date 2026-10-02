@@ -5,6 +5,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { resolveWorkspaceIdentity } from "./identity.js";
+import { handleKoshChangeReviewRequest } from "./kosh-reviews.js";
 import {
   createKoshStore,
   type KoshVisibility,
@@ -733,6 +734,18 @@ export async function handleKoshRequest(
 
   if (!url.pathname.startsWith("/v1/kosh")) {
     return false;
+  }
+
+  if (
+    await handleKoshChangeReviewRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return true;
   }
 
   if (request.method === "GET" && url.pathname === "/v1/kosh") {
