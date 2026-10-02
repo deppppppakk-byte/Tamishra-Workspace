@@ -1,6 +1,6 @@
 # Kosh by Tamishra
 
-Kosh is Tamishra's independent development and collaboration platform. Its goal is to replace the full GitHub workflow while keeping compatibility with standard Git clients.
+Kosh is Tamishra's independent development and collaboration platform. It defines its own workflows, architecture and product direction while remaining compatible with standard Git clients.
 
 ## Phase 1 implemented in this branch
 
@@ -103,7 +103,7 @@ Change Review metadata lives in PostgreSQL. Branches, commits, diffs, merge base
 
 ## Phase 4 — Work Management
 
-Kosh now includes a native work-management layer that replaces the core GitHub Issues, Projects and Discussions workflow.
+Kosh now includes its own native work-management layer for issues, planning, discussions and connected project activity.
 
 Implemented:
 
@@ -214,7 +214,7 @@ Build outputs placed under `.kosh-artifacts/` are uploaded by the runner after t
 
 ## Expansion 1–22
 
-This expansion starts all remaining GitHub-replacement domains while keeping maturity explicit.
+This expansion develops the broader Kosh platform domains while keeping maturity explicit.
 
 | # | Capability | Current Kosh implementation |
 |---|---|---|
