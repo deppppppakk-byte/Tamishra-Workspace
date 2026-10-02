@@ -528,8 +528,9 @@ export function RepositoryWorkspace() {
             <p>{repository.description || "No repository description yet."}</p>
           </div>
           <div className={styles.clonePanel}>
-            <span>Clone over HTTPS</span>
+            <span>Clone</span>
             <code>{repository.cloneHttpUrl}</code>
+            {repository.cloneSshUrl && <code>{repository.cloneSshUrl}</code>}
           </div>
         </div>
 
@@ -620,7 +621,7 @@ export function RepositoryWorkspace() {
             <p>Push the first commit using the standard Git client.</p>
             <pre>
               {[
-                "git clone " + repository.cloneHttpUrl,
+                "git clone " + (repository.cloneSshUrl || repository.cloneHttpUrl),
                 "cd " + repository.slug,
                 "echo \"# " + repository.name + "\" > README.md",
                 "git add README.md",
