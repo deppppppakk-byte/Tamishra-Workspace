@@ -480,6 +480,53 @@ export async function listKoshRepositoriesVisibleTo(
   return visible;
 }
 
+export async function ensureKoshNamespaceForCreation(
+  identity: KoshIdentity,
+  namespace: string
+) {
+  await accessStore.ready();
+
+  const current = await accessStore.getNamespaceBinding(namespace);
+  if (current) {
+    const membership = identity.memberships.find(
+      (item) => item.organization.id === current.organizationId
+    );
+    if (
+      !membership ||
+      !["owner", "admin"].includes(membership.membership.role)
+    ) {
+      throw Object.assign(new Error("namespace_admin_required"), {
+        status: 403
+      });
+    }
+    return current;
+  }
+
+  const direct = identity.memberships.find(
+    (item) =>
+      item.organization.slug === namespace &&
+      ["owner", "admin"].includes(item.membership.role)
+  );
+
+  const candidates = identity.memberships.filter(
+    (item) => ["owner", "admin"].includes(item.membership.role)
+  );
+  const selected = direct ?? (candidates.length === 1 ? candidates[0] : null);
+
+  if (!selected) {
+    throw Object.assign(new Error("namespace_binding_required"), {
+      status: 409
+    });
+  }
+
+  return accessStore.bindNamespace({
+    namespace,
+    organizationId: selected.organization.id,
+    createdByUserId: identity.user.id,
+    createdByName: identity.user.displayName
+  });
+}
+
 async function namespaceAuthority(
   identity: KoshIdentity,
   namespace: string
