@@ -281,6 +281,30 @@ async function listSupportedFiles(
     .slice(0, maxFiles());
 }
 
+async function isAncestor(
+  repository: StoredKoshRepository,
+  baseSha: string,
+  commitSha: string
+) {
+  try {
+    await execFileAsync(
+      "git",
+      [
+        "--git-dir",
+        repositoryPath(repository),
+        "merge-base",
+        "--is-ancestor",
+        baseSha,
+        commitSha
+      ],
+      { timeout: 10_000, encoding: "utf8" }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function changedCodePaths(
   repository: StoredKoshRepository,
   baseSha: string,
@@ -715,8 +739,11 @@ export async function indexKoshRepositoryCode(
   const allFileSet = new Set(allFiles);
   const chainDepth = previous ? (await indexChain(previous)).length : 0;
 
-  let mode: "full" | "delta" =
-    previous && chainDepth < 16 ? "delta" : "full";
+  const canDelta =
+    Boolean(previous) &&
+    chainDepth < 16 &&
+    Boolean(previous && await isAncestor(repository, previous.commitSha, commitSha));
+  let mode: "full" | "delta" = canDelta ? "delta" : "full";
   let changedPaths = allFiles;
 
   if (mode === "delta" && previous) {
