@@ -580,6 +580,16 @@ export function RepositoryWorkspace() {
           </Link>
           <Link
             href={
+              "/apps/kosh/flow?namespace=" +
+              encodeURIComponent(namespace) +
+              "&slug=" +
+              encodeURIComponent(slug)
+            }
+          >
+            Flow
+          </Link>
+          <Link
+            href={
               "/apps/kosh/platform?namespace=" +
               encodeURIComponent(namespace) +
               "&slug=" +

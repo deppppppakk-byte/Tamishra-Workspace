@@ -49,6 +49,12 @@ export const koshModules: KoshModule[] = [
     status: "active"
   },
   {
+    id: "flow",
+    name: "Flow",
+    description: "A live Kosh lifecycle graph connecting intent, change, proof, delivery and operation.",
+    status: "active"
+  },
+  {
     id: "packages",
     name: "Packages & Registries",
     description: "Package metadata, channels, provenance and registry control-plane resources.",

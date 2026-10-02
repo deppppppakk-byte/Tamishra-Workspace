@@ -298,3 +298,89 @@ Kosh exposes the standard basic LFS endpoint beneath the normal Git remote:
 `/git/<namespace>/<repository>.git/info/lfs/`
 
 The same Git credential protects LFS uploads; public repositories may serve LFS downloads without authentication.
+
+
+## Kosh Flow
+
+Kosh Flow is a native Kosh system for understanding a project's live movement from intent to operation.
+
+Flow is not a second project database. It derives state from existing Kosh systems and stores only relationships that Kosh cannot infer automatically.
+
+### Flow stages
+
+1. **Shape** — issues, milestones and discussions
+2. **Change** — Change Reviews and commits
+3. **Prove** — Automation runs and required checks
+4. **Deliver** — packages and releases
+5. **Run** — deployments, Pages and recovery assets
+
+Static-export-compatible workspace route:
+
+`/apps/kosh/flow?namespace=<namespace>&slug=<slug>`
+
+### Derived relationships
+
+Kosh Flow automatically connects:
+
+- milestones → issues
+- issue dependencies
+- issues → Change Reviews
+- issues → commits
+- Change Reviews → reviewed commits
+- Change Reviews → Automation runs
+- commits → push-triggered Automation runs
+- Automation runs → packages/releases when provenance is present
+- Automation runs → deployments
+- releases → deployments when commit provenance matches
+
+### Flow health
+
+Flow normalizes live state into:
+
+- `good`
+- `attention`
+- `blocked`
+- `failed`
+- `neutral`
+
+Examples:
+
+- an open issue with an unresolved issue dependency becomes blocked
+- a failed required review check marks its Change Review as failed in Flow
+- running or queued Automation becomes attention
+- successful releases/deployments become good
+- failed deployments become failed
+
+The repository Flow state is derived from the strongest current signal:
+
+`failed → blocked → moving → stable`
+
+### Manual Kosh relationships
+
+Users can add relationships that are meaningful to their project but cannot be inferred safely:
+
+- depends on
+- implements
+- references
+- validated by
+- produces
+- promotes to
+- delivers to
+- blocks
+- relates to
+- supersedes
+- contains
+
+Manual relationships are stored in `kosh_flow_links`; source-system state remains in the original Kosh system.
+
+### Unified timeline
+
+Flow combines Work activity, Change Review state, Automation runs, packages, releases, deployments and platform audit events into one repository timeline.
+
+### Product principle
+
+Kosh Flow exists to answer:
+
+> What is this project trying to do, what changed, what proved it, what was delivered, and what is running now?
+
+This is Kosh's own lifecycle model: one connected view of intent, change, proof, delivery and operation.
