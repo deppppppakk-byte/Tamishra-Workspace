@@ -9,6 +9,7 @@ import { handleKoshChangeReviewRequest } from "./kosh-reviews.js";
 import { handleKoshWorkRequest } from "./kosh-work.js";
 import { handleKoshAutomationRequest } from "./kosh-automation.js";
 import { handleKoshPlatformRequest } from "./kosh-platform.js";
+import { handleKoshLfsRequest } from "./kosh-lfs.js";
 import { scheduleAutomationEvent } from "./kosh-automation-service.js";
 import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
@@ -406,6 +407,25 @@ async function handleGitHttp(
   if (!repository || !(await pathExists(resolve(path, "HEAD")))) {
     response.statusCode = 404;
     response.end("Repository not found.");
+    return true;
+  }
+
+  if (
+    await handleKoshLfsRequest({
+      request,
+      response,
+      repository,
+      suffix,
+      baseUrl:
+        publicOrigin(request) +
+        "/git/" +
+        encodeURIComponent(namespace) +
+        "/" +
+        encodeURIComponent(slug) +
+        ".git",
+      authorized: gitTokenAuthorized(request)
+    })
+  ) {
     return true;
   }
 
