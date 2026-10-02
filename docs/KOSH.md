@@ -70,3 +70,33 @@ The Workspace repository screen is static-export compatible at:
 `/apps/kosh/repository?namespace=<namespace>&slug=<slug>`
 
 This keeps the same route usable in the hosted site, desktop shell and mobile shell while the repository data remains fully runtime-driven.
+
+## Phase 3 — Change Reviews
+
+Kosh now has a native review-and-merge workflow on top of Git.
+
+Implemented:
+
+- branch creation from an existing branch
+- policy-controlled branch deletion
+- protected-branch direct-push enforcement through a server-side Git pre-receive hook
+- branch policy settings for required approvals, requested-changes blocking, direct push and deletion
+- live base/head comparison
+- ahead/behind counts and changed-file statistics
+- bounded unified diff previews
+- Change Request creation and lifecycle metadata
+- approvals, requested changes and review comments
+- file/line comments scoped to changed files
+- approval invalidation when reviewed refs move
+- Git conflict detection through merge-tree
+- atomic fast-forward or merge-commit execution
+- atomic base-ref update to avoid racing branch movement
+- review close without merge
+
+Static-export-compatible UI routes:
+
+`/apps/kosh/repository?namespace=<namespace>&slug=<slug>`
+
+`/apps/kosh/review?namespace=<namespace>&slug=<slug>&number=<number>`
+
+Change Review metadata lives in PostgreSQL. Branches, commits, diffs, merge bases and merge commits remain Git-native.
