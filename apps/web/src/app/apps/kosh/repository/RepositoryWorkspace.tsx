@@ -641,6 +641,16 @@ export function RepositoryWorkspace() {
           </Link>
           <Link
             href={
+              "/apps/kosh/environments?namespace=" +
+              encodeURIComponent(namespace) +
+              "&slug=" +
+              encodeURIComponent(slug)
+            }
+          >
+            Environments
+          </Link>
+          <Link
+            href={
               "/apps/kosh/code-intelligence?namespace=" +
               encodeURIComponent(namespace) +
               "&slug=" +
