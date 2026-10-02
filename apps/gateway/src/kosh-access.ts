@@ -878,7 +878,12 @@ export async function handleKoshAccessRequest(
       request.method === "GET"
     ) {
       const visible = await listKoshRepositoriesVisibleTo(identity);
-      const bindings = await accessStore.listNamespaceBindings();
+      const organizationIds = new Set(
+        identity.memberships.map((item) => item.organization.id)
+      );
+      const bindings = (await accessStore.listNamespaceBindings()).filter(
+        (binding) => organizationIds.has(binding.organizationId)
+      );
       sendJson(
         response,
         200,
