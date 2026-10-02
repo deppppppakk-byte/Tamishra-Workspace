@@ -456,3 +456,98 @@ This allows Kosh to answer questions such as:
 ### Mesh storage principle
 
 Kosh Mesh stores only cross-system component definitions and relationships. Repository lifecycle state stays in Flow and the original Kosh subsystems.
+
+
+## Kosh Pulse
+
+Kosh Pulse is the live command layer above Flow and Mesh.
+
+- **Flow** describes movement inside one repository.
+- **Mesh** describes dependency and impact across systems.
+- **Pulse** decides what needs attention now.
+
+Workspace route:
+
+`/apps/kosh/pulse`
+
+### Live signals
+
+Pulse does not persist system health. It derives signals from the current Mesh graph.
+
+A signal is created when a Mesh node is:
+
+- attention
+- blocked
+- failed
+
+Signal urgency is calculated from:
+
+1. current node health
+2. total downstream blast radius
+3. downstream failed systems
+4. downstream blocked systems
+
+Pulse assigns a 0–100 score and maps it to:
+
+- low
+- medium
+- high
+- critical
+
+Because the signal key includes the current node health, an acknowledgement does not hide a later state change.
+
+### Pulse state
+
+The workspace Pulse state is derived as:
+
+- `clear` — no active attention signals
+- `watch` — medium signals exist
+- `degraded` — high signals or open incidents exist
+- `critical` — critical signals or critical open incidents exist
+
+### Acknowledgements
+
+Acknowledgement means a person has seen and temporarily owns a signal.
+
+It does not:
+
+- change Mesh health
+- change Flow state
+- resolve an incident
+- permanently suppress a signal
+
+Acknowledgements expire automatically. The supported UI windows are one hour, four hours, one day and seven days.
+
+### Incidents
+
+Incidents are explicit human decisions and are never automatically opened by Pulse.
+
+Incident lifecycle:
+
+`open → investigating → mitigating → resolved`
+
+Each incident has:
+
+- target Mesh node
+- severity
+- summary
+- owner
+- creator
+- timestamps
+- resolution time
+
+Pulse stores incidents and acknowledgements only. The system truth remains in Flow, Mesh and the original Kosh subsystems.
+
+### Native Kosh stack
+
+```text
+Repository systems
+        ↓
+      Flow
+        ↓
+      Mesh
+        ↓
+      Pulse
+        ↓
+Human attention / incident action
+```

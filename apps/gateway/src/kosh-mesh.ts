@@ -144,7 +144,7 @@ function healthFromState(state: string): MeshHealth {
   return "neutral";
 }
 
-async function buildMeshGraph() {
+export async function buildKoshMeshGraph() {
   await Promise.all([
     repositoryStore.ready(),
     meshStore.ready(),
@@ -277,8 +277,8 @@ async function buildMeshGraph() {
   };
 }
 
-function impactFromGraph(
-  graph: Awaited<ReturnType<typeof buildMeshGraph>>,
+export function calculateKoshMeshImpact(
+  graph: Awaited<ReturnType<typeof buildKoshMeshGraph>>,
   ref: string
 ) {
   const nodeMap = new Map(graph.nodes.map((node) => [node.ref, node]));
@@ -389,7 +389,7 @@ export async function handleKoshMeshRequest(
       sendJson(
         response,
         200,
-        await buildMeshGraph(),
+        await buildKoshMeshGraph(),
         origin,
         allowedOrigins
       );
@@ -404,11 +404,11 @@ export async function handleKoshMeshRequest(
       if (!ref) {
         throw Object.assign(new Error("mesh_ref_required"), { status: 400 });
       }
-      const graph = await buildMeshGraph();
+      const graph = await buildKoshMeshGraph();
       sendJson(
         response,
         200,
-        impactFromGraph(graph, ref),
+        calculateKoshMeshImpact(graph, ref),
         origin,
         allowedOrigins
       );
@@ -488,7 +488,7 @@ export async function handleKoshMeshRequest(
         throw Object.assign(new Error("invalid_mesh_link"), { status: 400 });
       }
 
-      const graph = await buildMeshGraph();
+      const graph = await buildKoshMeshGraph();
       const refs = new Set(graph.nodes.map((node) => node.ref));
       if (!refs.has(sourceRef) || !refs.has(targetRef)) {
         throw Object.assign(new Error("mesh_link_node_not_found"), { status: 404 });

@@ -61,6 +61,12 @@ export const koshModules: KoshModule[] = [
     status: "active"
   },
   {
+    id: "pulse",
+    name: "Pulse",
+    description: "A live command layer for signals, blast radius, acknowledgements and incidents across Kosh.",
+    status: "active"
+  },
+  {
     id: "packages",
     name: "Packages & Registries",
     description: "Package metadata, channels, provenance and registry control-plane resources.",
