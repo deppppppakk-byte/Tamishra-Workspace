@@ -131,6 +131,16 @@ export function validateWorkflowDefinition(
         )].slice(0, 100)
       : undefined;
 
+    const runsOn = Array.isArray(job.runsOn)
+      ? [...new Set(
+          job.runsOn
+            .map((value) => String(value).trim())
+            .filter((value) =>
+              /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,79}$/.test(value)
+            )
+        )].slice(0, 32)
+      : undefined;
+
     return {
       id,
       name: jobName || id,
@@ -150,6 +160,7 @@ export function validateWorkflowDefinition(
         Math.min(2048, Math.floor(Number(job.pidsLimit) || 256))
       ),
       secrets,
+      runsOn,
       env:
         job.env && typeof job.env === "object"
           ? Object.fromEntries(
