@@ -598,6 +598,16 @@ export function RepositoryWorkspace() {
           >
             Platform
           </Link>
+          <Link
+            href={
+              "/apps/kosh/access?namespace=" +
+              encodeURIComponent(namespace) +
+              "&slug=" +
+              encodeURIComponent(slug)
+            }
+          >
+            Access
+          </Link>
         </nav>
       </header>
 
