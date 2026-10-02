@@ -40,7 +40,7 @@ export const koshModules: KoshModule[] = [
     id: "work",
     name: "Work",
     description: "Issues, discussions, milestones, boards and linked project planning.",
-    status: "foundation"
+    status: "active"
   },
   {
     id: "automation",
