@@ -414,7 +414,7 @@ export async function handleKoshMeshRequest(
       sendJson(
         response,
         200,
-        await buildKoshMeshGraph(),
+        await buildKoshMeshGraph(identity),
         origin,
         allowedOrigins
       );
@@ -429,7 +429,7 @@ export async function handleKoshMeshRequest(
       if (!ref) {
         throw Object.assign(new Error("mesh_ref_required"), { status: 400 });
       }
-      const graph = await buildKoshMeshGraph();
+      const graph = await buildKoshMeshGraph(identity);
       sendJson(
         response,
         200,
@@ -513,7 +513,7 @@ export async function handleKoshMeshRequest(
         throw Object.assign(new Error("invalid_mesh_link"), { status: 400 });
       }
 
-      const graph = await buildKoshMeshGraph();
+      const graph = await buildKoshMeshGraph(identity);
       const refs = new Set(graph.nodes.map((node) => node.ref));
       if (!refs.has(sourceRef) || !refs.has(targetRef)) {
         throw Object.assign(new Error("mesh_link_node_not_found"), { status: 404 });
