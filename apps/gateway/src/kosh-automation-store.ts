@@ -640,6 +640,8 @@ function jobFromRow(row: Record<string, unknown>): StoredKoshJob {
     attempt: Number(row.attempt),
     timeoutMinutes: Number(row.timeout_minutes),
     definition: parseDefinition({ version: 1, name: "job", triggers: {}, jobs: [row.definition] }).jobs[0],
+    leaseExpiresAt: iso(row.lease_expires_at),
+    lastHeartbeatAt: iso(row.last_heartbeat_at),
     startedAt: iso(row.started_at),
     completedAt: iso(row.completed_at),
     createdAt: iso(row.created_at) ?? now(),
@@ -704,6 +706,9 @@ class PostgresKoshAutomationStore implements KoshAutomationStore {
       attempt INTEGER NOT NULL DEFAULT 1,
       timeout_minutes INTEGER NOT NULL DEFAULT 30,
       definition JSONB NOT NULL,
+      lease_hash TEXT,
+      lease_expires_at TIMESTAMPTZ,
+      last_heartbeat_at TIMESTAMPTZ,
       started_at TIMESTAMPTZ,
       completed_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -713,6 +718,19 @@ class PostgresKoshAutomationStore implements KoshAutomationStore {
 
     await this.sql`CREATE INDEX IF NOT EXISTS kosh_workflow_jobs_queue_idx
       ON kosh_workflow_jobs(status, created_at ASC)`;
+
+    await this.sql`
+      ALTER TABLE kosh_workflow_jobs
+      ADD COLUMN IF NOT EXISTS lease_hash TEXT
+    `;
+    await this.sql`
+      ALTER TABLE kosh_workflow_jobs
+      ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ
+    `;
+    await this.sql`
+      ALTER TABLE kosh_workflow_jobs
+      ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ
+    `;
 
     await this.sql`CREATE TABLE IF NOT EXISTS kosh_workflow_logs (
       id TEXT PRIMARY KEY,
@@ -899,8 +917,16 @@ class PostgresKoshAutomationStore implements KoshAutomationStore {
     return rows.map((row) => jobFromRow(row as Record<string, unknown>));
   }
 
-  async claimNextJob(runnerId: string) {
+  async claimNextJob(
+    runnerId: string,
+    leaseToken: string,
+    leaseSeconds: number
+  ) {
     await this.ready();
+    await this.requeueExpiredJobs();
+
+    const ttl = Math.max(30, Math.min(600, leaseSeconds));
+    const hashedLease = leaseHash(leaseToken);
     const rows = await this.sql.begin(async (tx) => tx`
       WITH candidate AS (
         SELECT id
@@ -911,7 +937,13 @@ class PostgresKoshAutomationStore implements KoshAutomationStore {
         LIMIT 1
       )
       UPDATE kosh_workflow_jobs j
-      SET status = 'running', runner_id = ${runnerId}, started_at = NOW(), updated_at = NOW()
+      SET status = 'running',
+          runner_id = ${runnerId},
+          lease_hash = ${hashedLease},
+          lease_expires_at = NOW() + (${ttl} * INTERVAL '1 second'),
+          last_heartbeat_at = NOW(),
+          started_at = NOW(),
+          updated_at = NOW()
       FROM candidate
       WHERE j.id = candidate.id
       RETURNING j.*
@@ -923,12 +955,81 @@ class PostgresKoshAutomationStore implements KoshAutomationStore {
     return job;
   }
 
+  async renewJobLease(
+    jobId: string,
+    runnerId: string,
+    leaseToken: string,
+    leaseSeconds: number
+  ) {
+    await this.ready();
+    const ttl = Math.max(30, Math.min(600, leaseSeconds));
+    const rows = await this.sql`
+      UPDATE kosh_workflow_jobs
+      SET lease_expires_at = NOW() + (${ttl} * INTERVAL '1 second'),
+          last_heartbeat_at = NOW(),
+          updated_at = NOW()
+      WHERE id = ${jobId}
+        AND status = 'running'
+        AND runner_id = ${runnerId}
+        AND lease_hash = ${leaseHash(leaseToken)}
+        AND lease_expires_at > NOW()
+      RETURNING *
+    `;
+    return rows[0]
+      ? jobFromRow(rows[0] as Record<string, unknown>)
+      : null;
+  }
+
+  async verifyJobLease(
+    jobId: string,
+    runnerId: string,
+    leaseToken: string
+  ) {
+    await this.ready();
+    const rows = await this.sql`
+      SELECT id
+      FROM kosh_workflow_jobs
+      WHERE id = ${jobId}
+        AND status = 'running'
+        AND runner_id = ${runnerId}
+        AND lease_hash = ${leaseHash(leaseToken)}
+        AND lease_expires_at > NOW()
+      LIMIT 1
+    `;
+    return rows.length > 0;
+  }
+
+  async requeueExpiredJobs() {
+    await this.ready();
+    const rows = await this.sql`
+      UPDATE kosh_workflow_jobs
+      SET status = 'queued',
+          runner_id = NULL,
+          attempt = attempt + 1,
+          lease_hash = NULL,
+          lease_expires_at = NULL,
+          last_heartbeat_at = NULL,
+          started_at = NULL,
+          updated_at = NOW()
+      WHERE status = 'running'
+        AND lease_expires_at IS NOT NULL
+        AND lease_expires_at <= NOW()
+      RETURNING *
+    `;
+    return rows.map((row) =>
+      jobFromRow(row as Record<string, unknown>)
+    );
+  }
+
   async updateJobStatus(jobId: string, status: KoshJobStatus) {
     await this.ready();
     const rows = await this.sql`
       UPDATE kosh_workflow_jobs
       SET status = ${status},
           completed_at = CASE WHEN ${status} IN ('success','failure','cancelled') THEN NOW() ELSE completed_at END,
+          lease_hash = CASE WHEN ${status} IN ('success','failure','cancelled') THEN NULL ELSE lease_hash END,
+          lease_expires_at = CASE WHEN ${status} IN ('success','failure','cancelled') THEN NULL ELSE lease_expires_at END,
+          last_heartbeat_at = CASE WHEN ${status} IN ('success','failure','cancelled') THEN NULL ELSE last_heartbeat_at END,
           updated_at = NOW()
       WHERE id = ${jobId}
       RETURNING *
