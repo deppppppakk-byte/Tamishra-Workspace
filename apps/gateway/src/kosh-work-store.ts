@@ -116,6 +116,16 @@ export type StoredKoshBoardCard = {
   updatedAt: string;
 };
 
+export type StoredKoshIssueLink = {
+  id: string;
+  issueId: string;
+  linkType: "change_request" | "commit";
+  refValue: string;
+  title: string | null;
+  createdByUserId: string;
+  createdAt: string;
+};
+
 export type StoredKoshIssueTemplate = {
   id: string;
   repositoryId: string;
@@ -182,6 +192,8 @@ export interface KoshWorkStore {
   listDependencies(issueId: string): Promise<StoredKoshDependency[]>;
   createDependency(input: { issueId: string; dependsOnIssueId: string; createdByUserId: string }): Promise<StoredKoshDependency>;
   deleteDependency(issueId: string, dependsOnIssueId: string): Promise<boolean>;
+  listIssueLinks(issueId: string): Promise<StoredKoshIssueLink[]>;
+  createIssueLink(input: Omit<StoredKoshIssueLink, "id" | "createdAt">): Promise<StoredKoshIssueLink>;
 
   listDiscussions(repositoryId: string): Promise<StoredKoshDiscussion[]>;
   getDiscussion(repositoryId: string, number: number): Promise<StoredKoshDiscussion | null>;
@@ -223,6 +235,7 @@ class MemoryKoshWorkStore implements KoshWorkStore {
   private milestones = new Map<string, StoredKoshMilestone>();
   private comments = new Map<string, StoredKoshIssueComment>();
   private dependencies = new Map<string, { createdByUserId: string; createdAt: string }>();
+  private issueLinks = new Map<string, StoredKoshIssueLink>();
   private discussions = new Map<string, StoredKoshDiscussion>();
   private discussionReplies = new Map<string, StoredKoshDiscussionReply>();
   private boards = new Map<string, StoredKoshBoard>();
@@ -435,6 +448,31 @@ class MemoryKoshWorkStore implements KoshWorkStore {
 
   async deleteDependency(issueId: string, dependsOnIssueId: string) {
     return this.dependencies.delete(issueId + ":" + dependsOnIssueId);
+  }
+
+  async listIssueLinks(issueId: string) {
+    return [...this.issueLinks.values()]
+      .filter((item) => item.issueId === issueId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map(clone);
+  }
+
+  async createIssueLink(input: Omit<StoredKoshIssueLink, "id" | "createdAt">) {
+    const duplicate = [...this.issueLinks.values()].find(
+      (item) =>
+        item.issueId === input.issueId &&
+        item.linkType === input.linkType &&
+        item.refValue === input.refValue
+    );
+    if (duplicate) return clone(duplicate);
+
+    const link: StoredKoshIssueLink = {
+      ...input,
+      id: randomUUID(),
+      createdAt: now()
+    };
+    this.issueLinks.set(link.id, link);
+    return clone(link);
   }
 
   async listDiscussions(repositoryId: string) {
@@ -868,6 +906,18 @@ class PostgresKoshWorkStore implements KoshWorkStore {
       CHECK (issue_id <> depends_on_issue_id)
     )`;
 
+    await this.sql`CREATE TABLE IF NOT EXISTS kosh_issue_links (
+      id TEXT PRIMARY KEY,
+      issue_id TEXT NOT NULL,
+      link_type TEXT NOT NULL,
+      ref_value TEXT NOT NULL,
+      title TEXT,
+      created_by_user_id TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(issue_id, link_type, ref_value),
+      CHECK (link_type IN ('change_request','commit'))
+    )`;
+
     await this.sql`CREATE TABLE IF NOT EXISTS kosh_discussion_counters (
       repository_id TEXT PRIMARY KEY,
       next_number INTEGER NOT NULL CHECK (next_number > 0)
@@ -1214,6 +1264,50 @@ class PostgresKoshWorkStore implements KoshWorkStore {
       RETURNING issue_id
     `;
     return rows.length > 0;
+  }
+
+  async listIssueLinks(issueId: string) {
+    await this.ready();
+    const rows = await this.sql`
+      SELECT * FROM kosh_issue_links
+      WHERE issue_id = ${issueId}
+      ORDER BY created_at ASC
+    `;
+    return rows.map((row) => ({
+      id: String(row.id),
+      issueId: String(row.issue_id),
+      linkType: String(row.link_type) as "change_request" | "commit",
+      refValue: String(row.ref_value),
+      title: row.title ? String(row.title) : null,
+      createdByUserId: String(row.created_by_user_id),
+      createdAt: iso(row.created_at) ?? now()
+    }));
+  }
+
+  async createIssueLink(input: Omit<StoredKoshIssueLink, "id" | "createdAt">) {
+    await this.ready();
+    const rows = await this.sql`
+      INSERT INTO kosh_issue_links(
+        id, issue_id, link_type, ref_value, title, created_by_user_id
+      )
+      VALUES (
+        ${randomUUID()}, ${input.issueId}, ${input.linkType},
+        ${input.refValue}, ${input.title}, ${input.createdByUserId}
+      )
+      ON CONFLICT(issue_id, link_type, ref_value)
+      DO UPDATE SET title = COALESCE(EXCLUDED.title, kosh_issue_links.title)
+      RETURNING *
+    `;
+    const row = rows[0] as Record<string, unknown>;
+    return {
+      id: String(row.id),
+      issueId: String(row.issue_id),
+      linkType: String(row.link_type) as "change_request" | "commit",
+      refValue: String(row.ref_value),
+      title: row.title ? String(row.title) : null,
+      createdByUserId: String(row.created_by_user_id),
+      createdAt: iso(row.created_at) ?? now()
+    };
   }
 
   async listDiscussions(repositoryId: string) {
