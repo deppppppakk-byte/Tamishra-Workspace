@@ -1,9 +1,14 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, sep } from "node:path";
 import { resolveKoshIdentity } from "./kosh-auth.js";
 import { getKoshStore } from "./kosh-store.js";
+import { getKoshPlatformStore } from "./kosh-platform-store.js";
+import {
+  getKoshRunnerControlStore,
+  type KoshRunnerExecutor
+} from "./kosh-runner-control-store.js";
 import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
   automationStore,
@@ -17,6 +22,8 @@ import type {
 } from "./kosh-automation-store.js";
 
 const repositoryStore = getKoshStore();
+const platformStore = getKoshPlatformStore();
+const runnerControlStore = getKoshRunnerControlStore();
 const store = automationStore();
 const artifactRoot = resolve(
   process.env.KOSH_ARTIFACT_ROOT?.trim() || ".kosh/artifacts"
@@ -86,6 +93,57 @@ function runnerAuthorized(request: IncomingMessage) {
     ? authorization.slice(7).trim()
     : "";
   return tokenMatches(token, expected);
+}
+
+function runnerHeader(request: IncomingMessage, name: string) {
+  const value = request.headers[name.toLowerCase()];
+  return Array.isArray(value) ? value[0]?.trim() ?? "" : String(value ?? "").trim();
+}
+
+function jobLeaseToken(request: IncomingMessage) {
+  return runnerHeader(request, "x-kosh-job-lease");
+}
+
+function jobRunnerId(request: IncomingMessage) {
+  return runnerHeader(request, "x-kosh-runner-id");
+}
+
+async function requireJobLease(
+  request: IncomingMessage,
+  jobId: string
+) {
+  const runnerId = jobRunnerId(request);
+  const leaseToken = jobLeaseToken(request);
+  if (!runnerId || !leaseToken) return false;
+  return store.verifyJobLease(jobId, runnerId, leaseToken);
+}
+
+function runnerHeartbeatInput(body: JsonBody) {
+  const id = clean(body.runnerId, 160);
+  const executor: KoshRunnerExecutor =
+    body.executor === "host" ? "host" : "container";
+  const labels = Array.isArray(body.labels)
+    ? [...new Set(
+        body.labels
+          .map((value) => clean(value, 80))
+          .filter((value) => /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,79}$/.test(value))
+      )].slice(0, 64)
+    : [];
+
+  return {
+    id,
+    executor,
+    labels,
+    capacity: Math.max(1, Math.min(64, Number(body.capacity) || 1)),
+    activeJobs: Math.max(0, Math.min(64, Number(body.activeJobs) || 0)),
+    version: clean(body.version, 80),
+    os: clean(body.os, 80),
+    arch: clean(body.arch, 80),
+    status:
+      body.status === "draining"
+        ? "draining" as const
+        : "online" as const
+  };
 }
 
 async function requireIdentity(
