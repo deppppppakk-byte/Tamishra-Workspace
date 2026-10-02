@@ -273,6 +273,8 @@ async function buildFlowGraph(
     return node;
   }
 
+  const flowRepository = repository;
+
   function addCommitNode(sha: string, title = "Commit") {
     if (!/^[0-9a-f]{40}$/i.test(sha)) return null;
     return addNode({
@@ -284,8 +286,13 @@ async function buildFlowGraph(
       stage: "change",
       state: "committed",
       health: "neutral",
-      href: makeHref(repository.namespace, repository.slug, "commit", sha),
-      updatedAt: repository.updatedAt,
+      href: makeHref(
+        flowRepository.namespace,
+        flowRepository.slug,
+        "commit",
+        sha
+      ),
+      updatedAt: flowRepository.updatedAt,
       metadata: { sha }
     });
   }
