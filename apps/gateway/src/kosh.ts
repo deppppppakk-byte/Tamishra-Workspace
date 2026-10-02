@@ -520,13 +520,12 @@ async function resolveCommit(
 
   for (const candidate of candidates) {
     try {
-      const sha = (
-        await execFileAsync(
-          "git",
-          ["--git-dir", gitDir, "rev-parse", "--verify", candidate + "^{commit}"],
-          { timeout: 10_000, encoding: "utf8" }
-        )
-      ).stdout.trim();
+      const result = await execFileAsync(
+        "git",
+        ["--git-dir", gitDir, "rev-parse", "--verify", candidate + "^{commit}"],
+        { timeout: 10_000, encoding: "utf8" }
+      );
+      const sha = String(result.stdout).trim();
       if (/^[0-9a-f]{40}$/i.test(sha)) {
         return sha;
       }
