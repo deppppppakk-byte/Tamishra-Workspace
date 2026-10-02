@@ -12,6 +12,7 @@ import { handleKoshPlatformRequest } from "./kosh-platform.js";
 import { handleKoshLfsRequest } from "./kosh-lfs.js";
 import { handleKoshPagesRequest } from "./kosh-pages.js";
 import { handleKoshFlowRequest } from "./kosh-flow.js";
+import { handleKoshMeshRequest } from "./kosh-mesh.js";
 import { scheduleAutomationEvent } from "./kosh-automation-service.js";
 import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
@@ -908,6 +909,18 @@ export async function handleKoshRequest(
 
   if (
     await handleKoshFlowRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    await handleKoshMeshRequest(
       request,
       response,
       url,

@@ -221,7 +221,7 @@ function makeHref(
   return "/apps/kosh/repository?" + base;
 }
 
-async function buildFlowGraph(
+export async function buildKoshFlowGraph(
   repository: NonNullable<Awaited<ReturnType<typeof repositoryStore.get>>>
 ) {
   await Promise.all([
@@ -998,7 +998,7 @@ export async function handleKoshFlowRequest(
       sendJson(
         response,
         200,
-        await buildFlowGraph(repository),
+        await buildKoshFlowGraph(repository),
         origin,
         allowedOrigins
       );
@@ -1035,7 +1035,7 @@ export async function handleKoshFlowRequest(
         throw Object.assign(new Error("invalid_flow_link"), { status: 400 });
       }
 
-      const graph = await buildFlowGraph(repository);
+      const graph = await buildKoshFlowGraph(repository);
       const validNodes = new Set(
         graph.nodes.map((node: FlowNode) => node.id)
       );
