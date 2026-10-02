@@ -131,6 +131,7 @@ export function BrowserIdeWorkspace() {
   const [path, setPath] = useState("");
   const [entries, setEntries] = useState<TreeEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState("");
+  const [selectedExists, setSelectedExists] = useState(false);
   const [editorContent, setEditorContent] = useState("");
   const [loadedContent, setLoadedContent] = useState("");
   const [operations, setOperations] = useState<PendingOperation[]>([]);
@@ -372,6 +373,7 @@ export function BrowserIdeWorkspace() {
         );
       if (staged?.type === "write") {
         setSelectedPath(entry.path);
+        setSelectedExists(true);
         setEditorContent(staged.content);
         setLoadedContent(staged.content);
         setRenamePath(entry.path);
@@ -389,6 +391,7 @@ export function BrowserIdeWorkspace() {
         throw new Error("This file cannot be edited as UTF-8 text.");
       }
       setSelectedPath(entry.path);
+      setSelectedExists(true);
       setEditorContent(payload.preview);
       setLoadedContent(payload.preview);
       setRenamePath(entry.path);
@@ -420,6 +423,7 @@ export function BrowserIdeWorkspace() {
     const value = newPath.trim().replace(/^\/+/, "");
     if (!value) return;
     setSelectedPath(value);
+    setSelectedExists(false);
     setEditorContent("");
     setLoadedContent("");
     setRenamePath(value);
@@ -449,16 +453,25 @@ export function BrowserIdeWorkspace() {
     if (!selectedPath || !target || target === selectedPath) return;
     const source = selectedPath;
     setOperations((current) => {
-      const rewritten = current.map((operation) => {
-        if (operation.type === "write" && operation.path === source) {
-          return { ...operation, path: target };
-        }
-        return operation;
-      });
-      return [
-        ...rewritten,
+      const sourceWrite = current.find(
+        (operation) =>
+          operation.type === "write" && operation.path === source
+      );
+      const unrelated = current.filter(
+        (operation) =>
+          !(
+            (operation.type === "write" && operation.path === source) ||
+            (operation.type === "rename" && operation.path === source)
+          )
+      );
+      const next: PendingOperation[] = [
+        ...unrelated,
         { type: "rename", path: source, toPath: target }
       ];
+      if (sourceWrite?.type === "write") {
+        next.push({ ...sourceWrite, path: target });
+      }
+      return next;
     });
     setSelectedPath(target);
     setRenamePath(target);
@@ -535,6 +548,10 @@ export function BrowserIdeWorkspace() {
       setOperations([]);
       setDiffPreview(null);
       setCommitMessage("");
+      setSelectedPath("");
+      setSelectedExists(false);
+      setEditorContent("");
+      setLoadedContent("");
       setSuccess(
         "Committed " +
           payload.commitSha.slice(0, 12) +
@@ -773,11 +790,13 @@ export function BrowserIdeWorkspace() {
               <div className={styles.editorActions}>
                 <button
                   onClick={stageWrite}
-                  disabled={!editorDirty && loadedContent === editorContent}
+                  disabled={!editorDirty && selectedExists}
                 >
                   Stage file
                 </button>
-                <button onClick={stageDelete}>Stage delete</button>
+                <button onClick={stageDelete} disabled={!selectedExists}>
+                  Stage delete
+                </button>
               </div>
             )}
           </div>
@@ -799,7 +818,9 @@ export function BrowserIdeWorkspace() {
                 <button
                   onClick={stageRename}
                   disabled={
-                    !renamePath.trim() || renamePath.trim() === selectedPath
+                    !selectedExists ||
+                    !renamePath.trim() ||
+                    renamePath.trim() === selectedPath
                   }
                 >
                   Stage rename
