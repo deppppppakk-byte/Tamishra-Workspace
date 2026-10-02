@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { resolveKoshIdentity } from "./kosh-auth.js";
@@ -50,7 +50,7 @@ function validTag(value: string) {
   return (
     value.length > 0 &&
     value.length <= 180 &&
-    !/[s~^:?*\[]/.test(value) &&
+    !/[\s~^:?*\[]/.test(value) &&
     !value.includes("..") &&
     !value.includes("@{") &&
     !value.startsWith("/") &&
@@ -195,6 +195,51 @@ async function deleteGitTag(
     ["update-ref", "-d", "refs/tags/" + tag, commitSha],
     true
   );
+}
+
+async function lockPublishedReleaseTag(
+  repository: StoredKoshRepository,
+  tag: string,
+  commitSha: string
+) {
+  const gitDir = repositoryPath(repository);
+  const path = safeStoragePath(gitDir, "kosh-release-tags");
+  const temporary = safeStoragePath(
+    gitDir,
+    "kosh-release-tags.tmp-" + process.pid + "-" + randomUUID()
+  );
+  const ref = "refs/tags/" + tag;
+
+  let lines: string[] = [];
+  try {
+    lines = (await readFile(path, "utf8"))
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch {
+    lines = [];
+  }
+
+  const existing = lines.find((line) => line.split(/\s+/)[0] === ref);
+  if (existing) {
+    const expected = existing.split(/\s+/)[1] ?? "";
+    if (expected !== commitSha) {
+      throw Object.assign(new Error("release_tag_lock_conflict"), {
+        status: 409
+      });
+    }
+    return;
+  }
+
+  lines.push(ref + " " + commitSha);
+  lines.sort();
+
+  await writeFile(
+    temporary,
+    lines.join("\n") + "\n",
+    { encoding: "utf8", flag: "wx" }
+  );
+  await rename(temporary, path);
 }
 
 async function readBuffer(
@@ -492,6 +537,12 @@ async function publishRelease(input: {
       status: 400
     });
   }
+
+  await lockPublishedReleaseTag(
+    input.repository,
+    input.release.tag,
+    input.release.commitSha
+  );
 
   const published = await releaseStore.setReleaseState(
     input.repository.id,
