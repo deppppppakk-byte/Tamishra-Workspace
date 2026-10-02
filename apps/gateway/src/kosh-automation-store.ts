@@ -244,6 +244,7 @@ class MemoryKoshAutomationStore implements KoshAutomationStore {
   private workflows = new Map<string, StoredKoshWorkflow>();
   private runs = new Map<string, StoredKoshWorkflowRun>();
   private jobs = new Map<string, StoredKoshJob>();
+  private jobLeases = new Map<string, string>();
   private logs = new Map<string, StoredKoshJobLog>();
   private artifacts = new Map<string, StoredKoshArtifact>();
   private environments = new Map<string, StoredKoshEnvironment>();
@@ -334,6 +335,8 @@ class MemoryKoshAutomationStore implements KoshAutomationStore {
         attempt: 1,
         timeoutMinutes: Math.max(1, Math.min(180, definition.timeoutMinutes ?? 30)),
         definition,
+        leaseExpiresAt: null,
+        lastHeartbeatAt: null,
         startedAt: null,
         completedAt: null,
         createdAt: timestamp,
@@ -352,21 +355,102 @@ class MemoryKoshAutomationStore implements KoshAutomationStore {
       .map(clone);
   }
 
-  async claimNextJob(runnerId: string) {
+  async claimNextJob(
+    runnerId: string,
+    leaseToken: string,
+    leaseSeconds: number
+  ) {
+    await this.requeueExpiredJobs();
     const job = [...this.jobs.values()]
       .filter((item) => item.status === "queued")
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
     if (!job) return null;
+
+    const timestamp = now();
     job.status = "running";
     job.runnerId = runnerId;
-    job.startedAt = now();
-    job.updatedAt = job.startedAt;
+    job.startedAt = timestamp;
+    job.lastHeartbeatAt = timestamp;
+    job.leaseExpiresAt = new Date(
+      Date.now() + Math.max(30, Math.min(600, leaseSeconds)) * 1000
+    ).toISOString();
+    job.updatedAt = timestamp;
+    this.jobLeases.set(job.id, leaseHash(leaseToken));
+
     const run = this.runs.get(job.runId);
     if (run && run.status === "queued") {
       run.status = "running";
-      run.startedAt = now();
+      run.startedAt = timestamp;
     }
     return clone(job);
+  }
+
+  async renewJobLease(
+    jobId: string,
+    runnerId: string,
+    leaseToken: string,
+    leaseSeconds: number
+  ) {
+    const job = this.jobs.get(jobId);
+    if (
+      !job ||
+      job.status !== "running" ||
+      job.runnerId !== runnerId ||
+      this.jobLeases.get(jobId) !== leaseHash(leaseToken)
+    ) {
+      return null;
+    }
+
+    const timestamp = now();
+    job.lastHeartbeatAt = timestamp;
+    job.leaseExpiresAt = new Date(
+      Date.now() + Math.max(30, Math.min(600, leaseSeconds)) * 1000
+    ).toISOString();
+    job.updatedAt = timestamp;
+    return clone(job);
+  }
+
+  async verifyJobLease(
+    jobId: string,
+    runnerId: string,
+    leaseToken: string
+  ) {
+    const job = this.jobs.get(jobId);
+    if (
+      !job ||
+      job.status !== "running" ||
+      job.runnerId !== runnerId ||
+      !job.leaseExpiresAt ||
+      new Date(job.leaseExpiresAt).getTime() <= Date.now()
+    ) {
+      return false;
+    }
+    return this.jobLeases.get(jobId) === leaseHash(leaseToken);
+  }
+
+  async requeueExpiredJobs() {
+    const expired: StoredKoshJob[] = [];
+    const timestamp = Date.now();
+
+    for (const job of this.jobs.values()) {
+      if (
+        job.status === "running" &&
+        job.leaseExpiresAt &&
+        new Date(job.leaseExpiresAt).getTime() <= timestamp
+      ) {
+        job.status = "queued";
+        job.runnerId = null;
+        job.attempt += 1;
+        job.leaseExpiresAt = null;
+        job.lastHeartbeatAt = null;
+        job.startedAt = null;
+        job.updatedAt = now();
+        this.jobLeases.delete(job.id);
+        expired.push(clone(job));
+      }
+    }
+
+    return expired;
   }
 
   async updateJobStatus(jobId: string, status: KoshJobStatus) {
@@ -374,7 +458,12 @@ class MemoryKoshAutomationStore implements KoshAutomationStore {
     if (!job) return null;
     job.status = status;
     job.updatedAt = now();
-    if (["success", "failure", "cancelled"].includes(status)) job.completedAt = job.updatedAt;
+    if (["success", "failure", "cancelled"].includes(status)) {
+      job.completedAt = job.updatedAt;
+      job.leaseExpiresAt = null;
+      job.lastHeartbeatAt = null;
+      this.jobLeases.delete(job.id);
+    }
 
     const siblingJobs = [...this.jobs.values()].filter((item) => item.runId === job.runId);
     const runStatus = aggregateRunStatus(siblingJobs);
