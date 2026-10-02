@@ -7,6 +7,7 @@ import { resolveKoshIdentity } from "./kosh-auth.js";
 import { getKoshStore, type StoredKoshRepository } from "./kosh-store.js";
 import { getKoshWorkStore } from "./kosh-work-store.js";
 import { requiredChecksForCommit, scheduleAutomationEvent } from "./kosh-automation-service.js";
+import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
   getKoshReviewStore,
   type KoshReviewState,
@@ -1076,6 +1077,19 @@ export async function handleKoshChangeReviewRequest(
         created.number
       );
 
+      void dispatchKoshWebhooks(
+        repository.id,
+        "change_review.opened",
+        {
+          number: created.number,
+          title: created.title,
+          baseBranch: created.baseBranch,
+          headBranch: created.headBranch,
+          headSha: created.headSha,
+          author: created.authorName
+        }
+      ).catch(() => undefined);
+
       sendJson(response, 201, created, origin, allowedOrigins);
       return true;
     }
@@ -1336,6 +1350,22 @@ export async function handleKoshChangeReviewRequest(
               }
             )
           : [];
+
+        if (merged) {
+          void dispatchKoshWebhooks(
+            repository.id,
+            "change_review.merged",
+            {
+              number: merged.number,
+              title: merged.title,
+              baseBranch: merged.baseBranch,
+              headBranch: merged.headBranch,
+              mergeCommitSha,
+              closedIssues,
+              mergedBy: identity.user.displayName
+            }
+          ).catch(() => undefined);
+        }
 
         sendJson(
           response,
