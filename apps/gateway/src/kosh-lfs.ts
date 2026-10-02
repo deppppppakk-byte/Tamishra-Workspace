@@ -145,9 +145,18 @@ export async function handleKoshLfsRequest(input: {
   repository: StoredKoshRepository;
   suffix: string;
   baseUrl: string;
-  authorized: boolean;
+  canRead: boolean;
+  canWrite: boolean;
 }) {
-  const { request, response, repository, suffix, baseUrl, authorized } = input;
+  const {
+    request,
+    response,
+    repository,
+    suffix,
+    baseUrl,
+    canRead,
+    canWrite
+  } = input;
 
   if (!suffix.startsWith("/info/lfs/")) return false;
 
@@ -164,7 +173,7 @@ export async function handleKoshLfsRequest(input: {
 
       if (
         operation === "upload" &&
-        !authorized
+        !canWrite
       ) {
         response.statusCode = 401;
         response.setHeader("www-authenticate", 'Basic realm="Kosh Git LFS"');
@@ -175,7 +184,7 @@ export async function handleKoshLfsRequest(input: {
       if (
         operation === "download" &&
         repository.visibility !== "public" &&
-        !authorized
+        !canRead
       ) {
         response.statusCode = 401;
         response.setHeader("www-authenticate", 'Basic realm="Kosh Git LFS"');
@@ -275,7 +284,7 @@ export async function handleKoshLfsRequest(input: {
     const verify = Boolean(objectMatch[2]);
 
     if (verify && request.method === "POST") {
-      if (!authorized) {
+      if (!canWrite) {
         response.statusCode = 401;
         response.end();
         return true;
@@ -299,7 +308,7 @@ export async function handleKoshLfsRequest(input: {
     }
 
     if (request.method === "PUT") {
-      if (!authorized) {
+      if (!canWrite) {
         response.statusCode = 401;
         response.end();
         return true;
@@ -312,7 +321,7 @@ export async function handleKoshLfsRequest(input: {
     }
 
     if (request.method === "GET") {
-      if (repository.visibility !== "public" && !authorized) {
+      if (repository.visibility !== "public" && !canRead) {
         response.statusCode = 401;
         response.end();
         return true;
