@@ -35,6 +35,7 @@ import {
   type KoshVisibility,
   type StoredKoshRepository
 } from "./kosh-store.js";
+import { getKoshRunnerControlStore } from "./kosh-runner-control-store.js";
 
 const execFileAsync = promisify(execFile);
 const store = createKoshStore();
