@@ -6,6 +6,7 @@ import { getKoshReviewStore } from "./kosh-review-store.js";
 import { getKoshAutomationStore } from "./kosh-automation-store.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
 import { getKoshPackageStore } from "./kosh-package-store.js";
+import { getKoshReleaseStore } from "./kosh-release-store.js";
 import {
   getKoshFlowStore,
   type KoshFlowEntityType,
@@ -18,6 +19,7 @@ const reviewStore = getKoshReviewStore();
 const automationStore = getKoshAutomationStore();
 const platformStore = getKoshPlatformStore();
 const packageStore = getKoshPackageStore();
+const releaseStore = getKoshReleaseStore();
 const flowStore = getKoshFlowStore();
 
 type JsonBody = Record<string, unknown>;
@@ -212,8 +214,10 @@ function makeHref(
   if (kind === "package") {
     return "/apps/kosh/packages?" + base;
   }
+  if (kind === "release") {
+    return "/apps/kosh/releases?" + base + "&tag=" + encodeURIComponent(ref);
+  }
   if (
-    kind === "release" ||
     kind === "backup" ||
     kind === "page_site"
   ) {
@@ -234,6 +238,7 @@ export async function buildKoshFlowGraph(
     automationStore.ready(),
     platformStore.ready(),
     packageStore.ready(),
+    releaseStore.ready(),
     flowStore.ready()
   ]);
 
@@ -260,7 +265,7 @@ export async function buildKoshFlowGraph(
     automationStore.listRuns(repository.id, 300),
     automationStore.listDeployments(repository.id, 300),
     packageStore.listVersions(repository.id),
-    platformStore.listResources("release", repository.id),
+    releaseStore.listReleases(repository.id),
     platformStore.listResources("backup", repository.id),
     platformStore.listResources("page_site", repository.id),
     flowStore.listLinks(repository.id),
@@ -621,49 +626,59 @@ export async function buildKoshFlowGraph(
     }
   }
 
-  for (const resource of releases) {
-    const tag = String(resource.payload.tag ?? resource.key);
+  for (const release of releases) {
+    const linkedPackages = await releaseStore.listPackages(release.id);
+
     addNode({
-      id: nodeId("release", resource.id),
+      id: nodeId("release", release.id),
       type: "release",
-      ref: resource.id,
-      title: resource.name,
-      subtitle: tag || "Release",
+      ref: release.id,
+      title: release.name,
+      subtitle:
+        release.tag +
+        (release.prerelease ? " · prerelease" : ""),
       stage: "deliver",
-      state: resource.state,
-      health: healthForResource(resource.state),
-      href: makeHref(repository.namespace, repository.slug, "release", resource.id),
-      updatedAt: resource.updatedAt,
-      metadata: resource.payload
+      state: release.state,
+      health:
+        release.state === "published"
+          ? "good"
+          : release.state === "archived"
+            ? "neutral"
+            : "attention",
+      href:
+        "/apps/kosh/releases?namespace=" +
+        encodeURIComponent(repository.namespace) +
+        "&slug=" +
+        encodeURIComponent(repository.slug) +
+        "&tag=" +
+        encodeURIComponent(release.tag),
+      updatedAt: release.updatedAt,
+      metadata: {
+        tag: release.tag,
+        commitSha: release.commitSha,
+        prerelease: release.prerelease,
+        publishedAt: release.publishedAt,
+        provenance: release.provenance,
+        packageVersionIds: linkedPackages.map(
+          (item) => item.packageVersionId
+        )
+      }
     });
 
-    const runId = String(resource.payload.runId ?? "");
-    const commitSha = String(resource.payload.commitSha ?? "");
-    const packageId = String(resource.payload.packageId ?? "");
-    if (runId) {
+    addCommitNode(release.commitSha);
+    uniqueEdge(
+      edges,
+      nodeId("commit", release.commitSha),
+      nodeId("release", release.id),
+      "promotes_to",
+      "derived"
+    );
+
+    for (const linkedPackage of linkedPackages) {
       uniqueEdge(
         edges,
-        nodeId("workflow_run", runId),
-        nodeId("release", resource.id),
-        "produces",
-        "derived"
-      );
-    }
-    if (packageId) {
-      uniqueEdge(
-        edges,
-        nodeId("package", packageId),
-        nodeId("release", resource.id),
-        "promotes_to",
-        "derived"
-      );
-    }
-    if (/^[0-9a-f]{40}$/i.test(commitSha)) {
-      addCommitNode(commitSha);
-      uniqueEdge(
-        edges,
-        nodeId("commit", commitSha),
-        nodeId("release", resource.id),
+        nodeId("package", linkedPackage.packageVersionId),
+        nodeId("release", release.id),
         "promotes_to",
         "derived"
       );
@@ -711,9 +726,7 @@ export async function buildKoshFlowGraph(
     }
 
     for (const release of releases) {
-      if (
-        String(release.payload.commitSha ?? "") === deployment.commitSha
-      ) {
+      if (release.commitSha === deployment.commitSha) {
         uniqueEdge(
           edges,
           nodeId("release", release.id),
@@ -869,7 +882,28 @@ export async function buildKoshFlowGraph(
     });
   }
 
-  for (const resource of [...releases, ...backups, ...pageSites]) {
+  for (const release of releases) {
+    timeline.push({
+      id: "release:" + release.id,
+      at: release.updatedAt,
+      kind: "release_" + release.state,
+      title: release.tag + " · " + release.name,
+      detail:
+        release.state +
+        " · " +
+        release.commitSha.slice(0, 8),
+      href:
+        "/apps/kosh/releases?namespace=" +
+        encodeURIComponent(repository.namespace) +
+        "&slug=" +
+        encodeURIComponent(repository.slug) +
+        "&tag=" +
+        encodeURIComponent(release.tag),
+      actor: release.createdByName
+    });
+  }
+
+  for (const resource of [...backups, ...pageSites]) {
     timeline.push({
       id: "resource:" + resource.id,
       at: resource.updatedAt,
