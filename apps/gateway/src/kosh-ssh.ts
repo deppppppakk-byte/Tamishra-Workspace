@@ -6,6 +6,7 @@ import { getKoshPlatformStore } from "./kosh-platform-store.js";
 import { getKoshStore } from "./kosh-store.js";
 import { scheduleAutomationEvent } from "./kosh-automation-service.js";
 import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
+import { triggerKoshSecurityScanAfterPush } from "./kosh-security.js";
 
 const platformStore = getKoshPlatformStore();
 const repositoryStore = getKoshStore();
@@ -231,6 +232,15 @@ export async function handleKoshSshBridgeRequest(
           }
         ).catch(() => undefined);
       }
+
+      triggerKoshSecurityScanAfterPush(
+        repository,
+        {
+          id: identity.user.id,
+          name: identity.user.displayName
+        },
+        branches.map((branch) => branch.name)
+      );
 
       await platformStore.appendAudit({
         repositoryId: repository.id,

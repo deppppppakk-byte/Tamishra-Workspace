@@ -609,6 +609,16 @@ export function RepositoryWorkspace() {
           >
             Access
           </Link>
+          <Link
+            href={
+              "/apps/kosh/security?namespace=" +
+              encodeURIComponent(namespace) +
+              "&slug=" +
+              encodeURIComponent(slug)
+            }
+          >
+            Security
+          </Link>
         </nav>
       </header>
 
