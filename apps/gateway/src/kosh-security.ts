@@ -201,6 +201,18 @@ function ignoredSecretEvidence(path: string, text: string) {
     return true;
   }
 
+  if (
+    lower.includes("process.env") ||
+    lower.includes("os.environ") ||
+    lower.includes("getenv(") ||
+    lower.includes("resolveSecret(".toLowerCase()) ||
+    lower.includes("secretref") ||
+    lower.includes("secret_ref") ||
+    lower.includes("vault:")
+  ) {
+    return true;
+  }
+
   return [
     "change-me",
     "changeme",
