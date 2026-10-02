@@ -42,7 +42,7 @@
     "check:provider-independence": "node scripts/assert-provider-independence.mjs"
   },
   "engines": {
-    "node": ">=22"
+    "node": "22.x"
   },
   "overrides": {
     "pptxgenjs": {
