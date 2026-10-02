@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { KoshRepository } from "@tamishra/kosh-core";
 import styles from "./repository.module.css";
@@ -118,6 +119,7 @@ function sizeLabel(size: number | null) {
 }
 
 export function RepositoryWorkspace() {
+  const router = useRouter();
   const base = useMemo(apiBase, []);
   const [namespace, setNamespace] = useState("");
   const [slug, setSlug] = useState("");
@@ -469,13 +471,14 @@ export function RepositoryWorkspace() {
       setReviewTitle("");
       setReviewDescription("");
       await refreshReviews();
-      window.location.href =
+      router.push(
         "/apps/kosh/review?namespace=" +
-        encodeURIComponent(namespace) +
-        "&slug=" +
-        encodeURIComponent(slug) +
-        "&number=" +
-        created.number;
+          encodeURIComponent(namespace) +
+          "&slug=" +
+          encodeURIComponent(slug) +
+          "&number=" +
+          created.number
+      );
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : "Change Request creation failed."
