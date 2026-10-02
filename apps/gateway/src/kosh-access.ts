@@ -454,7 +454,10 @@ export function permissionForKoshRepositoryRequest(
     return "releases.manage";
   }
 
-  if (/\/platform\/secrets(?:\/|$)/.test(path)) {
+  if (
+    /\/platform\/secrets(?:\/|$)/.test(path) ||
+    /\/security(?:\/|$)/.test(path)
+  ) {
     return "security.manage";
   }
 
