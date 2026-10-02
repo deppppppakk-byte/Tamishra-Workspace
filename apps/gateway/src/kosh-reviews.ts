@@ -514,6 +514,15 @@ async function mergeChangeRequest(
     changeRequest.headBranch
   );
 
+  if (
+    comparison.baseSha !== changeRequest.baseSha ||
+    comparison.headSha !== changeRequest.headSha
+  ) {
+    throw Object.assign(new Error("change_request_updated_reload_required"), {
+      status: 409
+    });
+  }
+
   if (!comparison.mergeable) {
     throw Object.assign(new Error("merge_conflict"), { status: 409 });
   }
@@ -999,6 +1008,7 @@ export async function handleKoshChangeReviewRequest(
           throw Object.assign(new Error("comment_body_required"), { status: 400 });
         }
 
+        const commentPath = cleanText(body.path, 2048) || null;
         const side =
           body.side === "base" || body.side === "head"
             ? body.side
@@ -1011,13 +1021,26 @@ export async function handleKoshChangeReviewRequest(
             ? lineValue
             : null;
 
+        if (commentPath) {
+          const comparison = await compareBranches(
+            gitDir,
+            changeRequest.baseBranch,
+            changeRequest.headBranch
+          );
+          if (!comparison.files.some((file) => file.path === commentPath)) {
+            throw Object.assign(new Error("comment_file_not_in_change_request"), {
+              status: 400
+            });
+          }
+        }
+
         const comment = await reviewStore.createComment({
           changeRequestId: changeRequest.id,
           authorUserId: identity.user.id,
           authorName: identity.user.displayName,
-          path: cleanText(body.path, 2048) || null,
+          path: commentPath,
           line,
-          side,
+          side: commentPath ? side : null,
           body: commentBody
         });
 
