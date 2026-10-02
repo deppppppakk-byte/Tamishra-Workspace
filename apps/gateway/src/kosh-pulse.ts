@@ -5,6 +5,7 @@ import {
   calculateKoshMeshImpact
 } from "./kosh-mesh.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
+import { getKoshSecuritySummary } from "./kosh-security.js";
 import {
   getKoshPulseStore,
   type KoshPulseIncidentStatus,
@@ -244,6 +245,101 @@ export async function buildKoshPulse(identity: KoshPulseIdentity) {
       downstreamFailed,
       downstreamBlocked,
       href: node.href,
+      acknowledged: Boolean(acknowledgement),
+      acknowledgementId: acknowledgement?.id ?? null,
+      acknowledgementExpiresAt: acknowledgement?.expiresAt ?? null,
+      incidentIds: openIncidents
+        .filter((incident) => incident.targetRef === node.ref)
+        .map((incident) => incident.id)
+    });
+  }
+
+  for (const node of mesh.nodes) {
+    if (node.kind !== "repository") continue;
+
+    const repositoryId =
+      typeof node.metadata.repositoryId === "string"
+        ? node.metadata.repositoryId
+        : "";
+    if (!repositoryId) continue;
+
+    const security = await getKoshSecuritySummary(repositoryId);
+    if (security.state === "clear") continue;
+
+    const impact = calculateKoshMeshImpact(mesh, node.ref);
+    const downstreamCount = impact.downstream.length;
+    const downstreamFailed = impact.downstream.filter(
+      (item) => item.node.health === "failed"
+    ).length;
+    const downstreamBlocked = impact.downstream.filter(
+      (item) => item.node.health === "blocked"
+    ).length;
+    const upstreamCount = impact.upstream.length;
+    const base =
+      security.state === "critical"
+        ? 92
+        : security.state === "degraded"
+          ? 70
+          : 42;
+    const score = Math.min(100, base + Math.min(8, downstreamCount * 2));
+    const severity: KoshPulseSeverity =
+      security.state === "critical"
+        ? "critical"
+        : security.state === "degraded"
+          ? "high"
+          : "medium";
+    const health =
+      security.state === "critical"
+        ? "failed"
+        : security.state === "degraded"
+          ? "blocked"
+          : "attention";
+    const key =
+      node.ref +
+      ":security:" +
+      security.state +
+      ":" +
+      String(security.counts.critical ?? 0) +
+      ":" +
+      String(security.counts.high ?? 0) +
+      ":" +
+      String(security.counts.medium ?? 0);
+    const acknowledgement = ackBySignal.get(key) ?? null;
+    const activeCount = security.counts.active ?? 0;
+
+    signals.push({
+      key,
+      nodeRef: node.ref,
+      title: node.name + " security",
+      type: "security",
+      health,
+      severity,
+      score,
+      reason:
+        String(activeCount) +
+        " active security finding" +
+        (activeCount === 1 ? "" : "s") +
+        " detected. Critical: " +
+        String(security.counts.critical ?? 0) +
+        ", high: " +
+        String(security.counts.high ?? 0) +
+        ", medium: " +
+        String(security.counts.medium ?? 0) +
+        (downstreamCount
+          ? ". " +
+            String(downstreamCount) +
+            " downstream system" +
+            (downstreamCount === 1 ? " may be affected." : "s may be affected.")
+          : "."),
+      downstreamCount,
+      upstreamCount,
+      downstreamFailed,
+      downstreamBlocked,
+      href:
+        "/apps/kosh/security?namespace=" +
+        encodeURIComponent(node.namespace) +
+        "&slug=" +
+        encodeURIComponent(node.key),
       acknowledged: Boolean(acknowledgement),
       acknowledgementId: acknowledgement?.id ?? null,
       acknowledgementExpiresAt: acknowledgement?.expiresAt ?? null,
