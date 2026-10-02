@@ -56,7 +56,7 @@ export interface KoshPackageStore {
     id: string
   ): Promise<StoredKoshPackageVersion | null>;
   createVersion(
-    input: Omit<StoredKoshPackageVersion, "id" | "createdAt" | "updatedAt">
+    input: Omit<StoredKoshPackageVersion, "createdAt" | "updatedAt">
   ): Promise<StoredKoshPackageVersion>;
   deleteVersionForRollback(repositoryId: string, id: string): Promise<boolean>;
   setVersionState(
@@ -131,7 +131,7 @@ class MemoryKoshPackageStore implements KoshPackageStore {
   }
 
   async createVersion(
-    input: Omit<StoredKoshPackageVersion, "id" | "createdAt" | "updatedAt">
+    input: Omit<StoredKoshPackageVersion, "createdAt" | "updatedAt">
   ) {
     const duplicate = [...this.versions.values()].find(
       (item) =>
@@ -148,7 +148,6 @@ class MemoryKoshPackageStore implements KoshPackageStore {
     const timestamp = now();
     const value: StoredKoshPackageVersion = {
       ...input,
-      id: randomUUID(),
       createdAt: timestamp,
       updatedAt: timestamp
     };
@@ -383,7 +382,7 @@ class PostgresKoshPackageStore implements KoshPackageStore {
   }
 
   async createVersion(
-    input: Omit<StoredKoshPackageVersion, "id" | "createdAt" | "updatedAt">
+    input: Omit<StoredKoshPackageVersion, "createdAt" | "updatedAt">
   ) {
     await this.ready();
 
@@ -395,7 +394,7 @@ class PostgresKoshPackageStore implements KoshPackageStore {
           run_id, provenance, metadata, created_by_user_id, created_by_name
         )
         VALUES(
-          ${randomUUID()}, ${input.repositoryId}, ${input.packageKey},
+          ${input.id}, ${input.repositoryId}, ${input.packageKey},
           ${input.name}, ${input.version}, ${input.filename},
           ${input.format}, ${input.mediaType}, ${input.sizeBytes},
           ${input.sha256}, ${input.state}, ${input.commitSha},
