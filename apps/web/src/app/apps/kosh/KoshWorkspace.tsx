@@ -146,7 +146,7 @@ export function KoshWorkspace() {
         <section id="overview" className={styles.hero}>
           <div>
             <span className={styles.badge}>Git-compatible foundation</span>
-            <h2>Your own development platform, not a GitHub skin.</h2>
+            <h2>A development platform built the Kosh way.</h2>
             <p>
               Kosh starts with real Git repository hosting and grows into reviews, issues,
               automation, packages, releases, security, deployments and generic engineering assets.
@@ -261,7 +261,7 @@ export function KoshWorkspace() {
 
         <section id="platform" className={styles.section}>
           <div className={styles.sectionHeading}>
-            <div><p className={styles.eyebrow}>PLATFORM</p><h2>GitHub-replacement surface</h2></div>
+            <div><p className={styles.eyebrow}>PLATFORM</p><h2>Kosh platform systems</h2></div>
           </div>
           <div className={styles.moduleGrid}>
             {koshModules.map((module) => (
