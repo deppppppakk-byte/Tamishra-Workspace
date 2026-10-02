@@ -5,6 +5,7 @@ import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { resolveWorkspaceIdentity } from "./identity.js";
 import { getKoshStore } from "./kosh-store.js";
+import { getKoshWorkStore } from "./kosh-work-store.js";
 import {
   getKoshReviewStore,
   type KoshReviewState,
@@ -15,6 +16,7 @@ import {
 const execFileAsync = promisify(execFile);
 const repositoryStore = getKoshStore();
 const reviewStore = getKoshReviewStore();
+const workStore = getKoshWorkStore();
 const repositoryRoot = resolve(process.env.KOSH_REPO_ROOT?.trim() || ".kosh/repos");
 
 type JsonBody = Record<string, unknown>;
@@ -329,6 +331,151 @@ async function resolveBranch(gitDir: string, branch: string) {
     throw Object.assign(new Error("branch_not_found"), { status: 404 });
   }
   return { name, sha };
+}
+
+function issueReferences(text: string) {
+  const values = new Set<number>();
+  const regex = /#(\d+)/g;
+  for (const match of text.matchAll(regex)) {
+    const number = Number(match[1]);
+    if (Number.isInteger(number) && number > 0) values.add(number);
+    if (values.size >= 100) break;
+  }
+  return [...values];
+}
+
+function closingIssueReferences(text: string) {
+  const values = new Set<number>();
+  const regex = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi;
+  for (const match of text.matchAll(regex)) {
+    const number = Number(match[1]);
+    if (Number.isInteger(number) && number > 0) values.add(number);
+    if (values.size >= 100) break;
+  }
+  return [...values];
+}
+
+async function linkReferencedIssues(
+  repositoryId: string,
+  changeRequest: StoredKoshChangeRequest,
+  actorUserId: string
+) {
+  await workStore.ready();
+  for (const number of issueReferences(
+    changeRequest.title + "\n" + changeRequest.description
+  )) {
+    const issue = await workStore.getIssue(repositoryId, number);
+    if (!issue) continue;
+
+    await workStore.createIssueLink({
+      issueId: issue.id,
+      linkType: "change_request",
+      refValue: String(changeRequest.number),
+      title: changeRequest.title,
+      createdByUserId: actorUserId
+    });
+
+    await workStore.createActivity({
+      repositoryId,
+      entityType: "issue",
+      entityId: issue.id,
+      entityNumber: issue.number,
+      eventType: "change_request_linked",
+      actorUserId,
+      actorName: changeRequest.authorName,
+      payload: {
+        changeRequestNumber: changeRequest.number,
+        title: changeRequest.title
+      }
+    });
+  }
+}
+
+async function linkCommitReferences(
+  repositoryId: string,
+  gitDir: string,
+  comparison: CompareResult,
+  actorUserId: string
+) {
+  await workStore.ready();
+
+  const log = await git(
+    gitDir,
+    [
+      "log",
+      comparison.mergeBaseSha + ".." + comparison.headSha,
+      "--format=%H%x00%s%x00%b%x00"
+    ]
+  );
+
+  const fields = log.split("\0");
+  for (let index = 0; index + 2 < fields.length; index += 3) {
+    const sha = fields[index]?.trim();
+    const subject = fields[index + 1] ?? "";
+    const body = fields[index + 2] ?? "";
+    if (!/^[0-9a-f]{40}$/i.test(sha)) continue;
+
+    for (const number of issueReferences(subject + "\n" + body)) {
+      const issue = await workStore.getIssue(repositoryId, number);
+      if (!issue) continue;
+
+      await workStore.createIssueLink({
+        issueId: issue.id,
+        linkType: "commit",
+        refValue: sha,
+        title: subject || null,
+        createdByUserId: actorUserId
+      });
+    }
+  }
+}
+
+async function closeIssuesFromChangeRequest(
+  repositoryId: string,
+  changeRequest: StoredKoshChangeRequest,
+  actor: { id: string; displayName: string }
+) {
+  await workStore.ready();
+
+  const closed: number[] = [];
+  for (const number of closingIssueReferences(
+    changeRequest.title + "\n" + changeRequest.description
+  )) {
+    const issue = await workStore.getIssue(repositoryId, number);
+    if (!issue) continue;
+
+    await workStore.createIssueLink({
+      issueId: issue.id,
+      linkType: "change_request",
+      refValue: String(changeRequest.number),
+      title: changeRequest.title,
+      createdByUserId: actor.id
+    });
+
+    if (issue.state !== "closed") {
+      const updated = await workStore.updateIssue(repositoryId, number, {
+        state: "closed",
+        actorUserId: actor.id,
+        actorName: actor.displayName
+      });
+
+      if (updated) {
+        closed.push(number);
+        await workStore.createActivity({
+          repositoryId,
+          entityType: "issue",
+          entityId: issue.id,
+          entityNumber: issue.number,
+          eventType: "issue_closed_by_change_request",
+          actorUserId: actor.id,
+          actorName: actor.displayName,
+          payload: { changeRequestNumber: changeRequest.number }
+        });
+      }
+    }
+  }
+
+  return closed;
 }
 
 function parseNameStatus(output: string) {
@@ -889,6 +1036,16 @@ export async function handleKoshChangeReviewRequest(
         authorName: identity.user.displayName
       });
 
+      await Promise.all([
+        linkReferencedIssues(repository.id, created, identity.user.id),
+        linkCommitReferences(
+          repository.id,
+          gitDir,
+          comparison,
+          identity.user.id
+        )
+      ]);
+
       sendJson(response, 201, created, origin, allowedOrigins);
       return true;
     }
@@ -1099,10 +1256,26 @@ export async function handleKoshChangeReviewRequest(
           mergeCommitSha
         );
 
+        const closedIssues = merged
+          ? await closeIssuesFromChangeRequest(
+              repository.id,
+              merged,
+              {
+                id: identity.user.id,
+                displayName: identity.user.displayName
+              }
+            )
+          : [];
+
         sendJson(
           response,
           200,
-          { merged: true, mergeCommitSha, changeRequest: merged },
+          {
+            merged: true,
+            mergeCommitSha,
+            changeRequest: merged,
+            closedIssues
+          },
           origin,
           allowedOrigins
         );
