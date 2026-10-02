@@ -652,6 +652,10 @@ export async function handleKoshAccessRequest(
         const canManage = access.role
           ? koshHasPermission(access.role, "access.manage")
           : false;
+        const namespaceAccess = await koshNamespaceAuthority(
+          identity,
+          namespace
+        );
         const [grants, teams, binding] = canManage
           ? await Promise.all([
               accessStore.listRepositoryGrants(repository.id),
@@ -674,6 +678,7 @@ export async function handleKoshAccessRequest(
             source: access.source,
             legacy: access.legacy,
             permissions,
+            namespaceAdmin: namespaceAccess.canManage,
             binding,
             grants,
             teams
@@ -763,9 +768,36 @@ export async function handleKoshAccessRequest(
           });
         }
 
+        const grantId = decodeURIComponent(grantMatch[1]);
+        const currentGrants = await accessStore.listRepositoryGrants(
+          repository.id
+        );
+        const targetGrant = currentGrants.find(
+          (grant) => grant.id === grantId
+        );
+        if (!targetGrant) {
+          throw Object.assign(new Error("repository_grant_not_found"), {
+            status: 404
+          });
+        }
+
+        const binding = await accessStore.getNamespaceBinding(namespace);
+        const explicitOwners = currentGrants.filter(
+          (grant) => grant.role === "owner"
+        );
+        if (
+          !binding &&
+          targetGrant.role === "owner" &&
+          explicitOwners.length <= 1
+        ) {
+          throw Object.assign(new Error("last_repository_owner_required"), {
+            status: 409
+          });
+        }
+
         const deleted = await accessStore.deleteRepositoryGrant(
           repository.id,
-          decodeURIComponent(grantMatch[1])
+          grantId
         );
         if (!deleted) {
           throw Object.assign(new Error("repository_grant_not_found"), {
