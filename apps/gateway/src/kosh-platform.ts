@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, resolve, sep } from "node:path";
@@ -16,6 +17,9 @@ const execFileAsync = promisify(execFile);
 const repositoryStore = getKoshStore();
 const platformStore = getKoshPlatformStore();
 const repositoryRoot = resolve(process.env.KOSH_REPO_ROOT?.trim() || ".kosh/repos");
+const packageRoot = resolve(process.env.KOSH_PACKAGE_ROOT?.trim() || ".kosh/packages");
+const releaseRoot = resolve(process.env.KOSH_RELEASE_ROOT?.trim() || ".kosh/releases");
+const backupRoot = resolve(process.env.KOSH_BACKUP_ROOT?.trim() || ".kosh/backups");
 
 const resourceTypes = new Set<KoshPlatformResourceType>([
   "package",
@@ -98,6 +102,53 @@ function resourceType(value: unknown) {
     });
   }
   return type;
+}
+
+function safeStoragePath(root: string, ...segments: string[]) {
+  const cleaned = segments.map((value) => {
+    const segment = value.trim();
+    if (
+      !segment ||
+      segment.length > 220 ||
+      segment === "." ||
+      segment === ".." ||
+      segment.includes("/") ||
+      segment.includes("\\") ||
+      segment.includes("\0")
+    ) {
+      throw Object.assign(new Error("invalid_storage_segment"), { status: 400 });
+    }
+    return segment.replace(/[^a-zA-Z0-9._@+-]+/g, "-");
+  });
+  const path = resolve(root, ...cleaned);
+  const prefix = root.endsWith(sep) ? root : root + sep;
+  if (!path.startsWith(prefix)) {
+    throw Object.assign(new Error("invalid_storage_path"), { status: 400 });
+  }
+  return path;
+}
+
+function sha256(buffer: Buffer) {
+  return createHash("sha256").update(buffer).digest("hex");
+}
+
+async function sendFile(
+  response: ServerResponse,
+  path: string,
+  filename: string,
+  contentType = "application/octet-stream"
+) {
+  const buffer = await readFile(path);
+  response.statusCode = 200;
+  response.setHeader("content-type", contentType);
+  response.setHeader("content-length", String(buffer.length));
+  response.setHeader(
+    "content-disposition",
+    'attachment; filename="' + filename.replace(/["\\]/g, "-") + '"'
+  );
+  response.setHeader("cache-control", "private, no-store");
+  response.setHeader("x-content-type-options", "nosniff");
+  response.end(buffer);
 }
 
 function repositoryPath(namespace: string, slug: string) {
@@ -684,6 +735,317 @@ export async function handleKoshPlatformRequest(
           { name: secret.name }
         );
         sendJson(response, 200, { deleted }, origin, allowedOrigins);
+        return true;
+      }
+
+      if (tail === "/packages" && request.method === "POST") {
+        const body = await readJson(request, 24 * 1024 * 1024);
+        const key = clean(body.key, 120);
+        const name = clean(body.name, 180) || key;
+        const version = clean(body.version, 80);
+        const filename = clean(body.filename, 180);
+        const format = clean(body.format, 60) || "generic";
+        const encoded = String(body.base64 ?? "");
+
+        if (!key || !version || !filename || !encoded) {
+          throw Object.assign(
+            new Error("package_key_version_file_and_data_required"),
+            { status: 400 }
+          );
+        }
+
+        const buffer = Buffer.from(encoded, "base64");
+        if (!buffer.length || buffer.length > 16 * 1024 * 1024) {
+          throw Object.assign(new Error("package_size_invalid"), { status: 413 });
+        }
+
+        const directory = safeStoragePath(
+          packageRoot,
+          repository.id,
+          key,
+          version
+        );
+        await mkdir(directory, { recursive: true });
+        const path = safeStoragePath(directory, filename);
+        await writeFile(path, buffer);
+
+        const resource = await platformStore.createResource({
+          repositoryId: repository.id,
+          namespace,
+          type: "package",
+          key: key + "@" + version,
+          name,
+          state: "published",
+          payload: {
+            packageKey: key,
+            version,
+            filename,
+            format,
+            sizeBytes: buffer.length,
+            sha256: sha256(buffer),
+            immutable: true
+          },
+          createdByUserId: identity.user.id,
+          createdByName: identity.user.displayName
+        });
+
+        await audit(
+          repository.id,
+          identity.user,
+          "package_published",
+          "package",
+          resource.id,
+          { key, version, filename, sha256: resource.payload.sha256 }
+        );
+
+        sendJson(response, 201, resource, origin, allowedOrigins);
+        return true;
+      }
+
+      const packageDownload = tail.match(
+        /^\/packages\/([^/]+)\/download$/
+      );
+      if (packageDownload && request.method === "GET") {
+        const resource = await platformStore.getResource(
+          decodeURIComponent(packageDownload[1])
+        );
+        if (
+          !resource ||
+          resource.repositoryId !== repository.id ||
+          resource.type !== "package"
+        ) {
+          throw Object.assign(new Error("package_not_found"), { status: 404 });
+        }
+        const packageKey = String(resource.payload.packageKey ?? "");
+        const version = String(resource.payload.version ?? "");
+        const filename = String(resource.payload.filename ?? "");
+        const path = safeStoragePath(
+          packageRoot,
+          repository.id,
+          packageKey,
+          version,
+          filename
+        );
+        await sendFile(response, path, filename);
+        return true;
+      }
+
+      const releaseAssetMatch = tail.match(
+        /^\/releases\/([^/]+)\/assets(?:\/([^/]+))?$/
+      );
+      if (releaseAssetMatch && request.method === "POST") {
+        const releaseId = decodeURIComponent(releaseAssetMatch[1]);
+        const release = await platformStore.getResource(releaseId);
+        if (
+          !release ||
+          release.repositoryId !== repository.id ||
+          release.type !== "release"
+        ) {
+          throw Object.assign(new Error("release_not_found"), { status: 404 });
+        }
+        const body = await readJson(request, 24 * 1024 * 1024);
+        const filename = clean(body.filename, 180);
+        const encoded = String(body.base64 ?? "");
+        const buffer = Buffer.from(encoded, "base64");
+        if (!filename || !buffer.length || buffer.length > 16 * 1024 * 1024) {
+          throw Object.assign(new Error("release_asset_invalid"), { status: 413 });
+        }
+
+        const directory = safeStoragePath(releaseRoot, repository.id, release.id);
+        await mkdir(directory, { recursive: true });
+        const path = safeStoragePath(directory, filename);
+        await writeFile(path, buffer);
+
+        const assets = Array.isArray(release.payload.assets)
+          ? [...release.payload.assets] as Array<Record<string, unknown>>
+          : [];
+        const nextAsset = {
+          filename,
+          sizeBytes: buffer.length,
+          sha256: sha256(buffer)
+        };
+        const filtered = assets.filter(
+          (item) => String(item.filename ?? "") !== filename
+        );
+        filtered.push(nextAsset);
+
+        const updated = await platformStore.updateResource(release.id, {
+          payload: {
+            ...release.payload,
+            assets: filtered
+          }
+        });
+
+        await audit(
+          repository.id,
+          identity.user,
+          "release_asset_uploaded",
+          "release",
+          release.id,
+          nextAsset
+        );
+
+        sendJson(response, 201, updated, origin, allowedOrigins);
+        return true;
+      }
+
+      if (
+        releaseAssetMatch &&
+        releaseAssetMatch[2] &&
+        request.method === "GET"
+      ) {
+        const releaseId = decodeURIComponent(releaseAssetMatch[1]);
+        const filename = decodeURIComponent(releaseAssetMatch[2]);
+        const release = await platformStore.getResource(releaseId);
+        if (
+          !release ||
+          release.repositoryId !== repository.id ||
+          release.type !== "release"
+        ) {
+          throw Object.assign(new Error("release_not_found"), { status: 404 });
+        }
+        const assets = Array.isArray(release.payload.assets)
+          ? release.payload.assets as Array<Record<string, unknown>>
+          : [];
+        if (!assets.some((item) => String(item.filename ?? "") === filename)) {
+          throw Object.assign(new Error("release_asset_not_found"), {
+            status: 404
+          });
+        }
+        const path = safeStoragePath(
+          releaseRoot,
+          repository.id,
+          release.id,
+          filename
+        );
+        await sendFile(response, path, filename);
+        return true;
+      }
+
+      if (tail === "/backups" && request.method === "POST") {
+        const directory = safeStoragePath(backupRoot, repository.id);
+        await mkdir(directory, { recursive: true });
+        const backupKey =
+          "repo-" +
+          new Date().toISOString().replace(/[:.]/g, "-") +
+          "-" +
+          Math.random().toString(36).slice(2, 8);
+        const filename = backupKey + ".bundle";
+        const path = safeStoragePath(directory, filename);
+        const gitDir = repositoryPath(namespace, slug);
+
+        await execFileAsync(
+          "git",
+          ["--git-dir", gitDir, "bundle", "create", path, "--all"],
+          {
+            timeout: 120_000,
+            maxBuffer: 8 * 1024 * 1024,
+            encoding: "utf8"
+          }
+        );
+
+        const buffer = await readFile(path);
+        const resource = await platformStore.createResource({
+          repositoryId: repository.id,
+          namespace,
+          type: "backup",
+          key: backupKey,
+          name: "Repository backup " + new Date().toISOString(),
+          state: "ready",
+          payload: {
+            kind: "git-bundle",
+            filename,
+            sizeBytes: buffer.length,
+            sha256: sha256(buffer)
+          },
+          createdByUserId: identity.user.id,
+          createdByName: identity.user.displayName
+        });
+
+        await audit(
+          repository.id,
+          identity.user,
+          "backup_created",
+          "backup",
+          resource.id,
+          {
+            filename,
+            sizeBytes: buffer.length,
+            sha256: resource.payload.sha256
+          }
+        );
+
+        sendJson(response, 201, resource, origin, allowedOrigins);
+        return true;
+      }
+
+      const backupMatch = tail.match(/^\/backups\/([^/]+)(?:\/(verify|download))?$/);
+      if (backupMatch && request.method === "GET") {
+        const resource = await platformStore.getResource(
+          decodeURIComponent(backupMatch[1])
+        );
+        if (
+          !resource ||
+          resource.repositoryId !== repository.id ||
+          resource.type !== "backup"
+        ) {
+          throw Object.assign(new Error("backup_not_found"), { status: 404 });
+        }
+        const filename = String(resource.payload.filename ?? "");
+        const path = safeStoragePath(
+          backupRoot,
+          repository.id,
+          filename
+        );
+
+        if (backupMatch[2] === "download") {
+          await sendFile(response, path, filename);
+          return true;
+        }
+
+        if (backupMatch[2] === "verify") {
+          const info = await stat(path);
+          const buffer = await readFile(path);
+          const actualSha = sha256(buffer);
+          const expectedSha = String(resource.payload.sha256 ?? "");
+          const gitDir = repositoryPath(namespace, slug);
+          let bundleValid = true;
+          let verification = "";
+          try {
+            const result = await execFileAsync(
+              "git",
+              ["--git-dir", gitDir, "bundle", "verify", path],
+              {
+                timeout: 60_000,
+                maxBuffer: 4 * 1024 * 1024,
+                encoding: "utf8"
+              }
+            );
+            verification = String(result.stdout || result.stderr || "");
+          } catch (error) {
+            bundleValid = false;
+            verification =
+              error instanceof Error ? error.message : "bundle_verify_failed";
+          }
+
+          sendJson(
+            response,
+            200,
+            {
+              valid: bundleValid && actualSha === expectedSha,
+              bundleValid,
+              checksumValid: actualSha === expectedSha,
+              sizeBytes: info.size,
+              sha256: actualSha,
+              verification
+            },
+            origin,
+            allowedOrigins
+          );
+          return true;
+        }
+
+        sendJson(response, 200, resource, origin, allowedOrigins);
         return true;
       }
 
