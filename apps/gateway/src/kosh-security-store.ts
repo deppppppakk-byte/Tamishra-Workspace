@@ -453,16 +453,26 @@ class PostgresKoshSecurityStore implements KoshSecurityStore {
     }
 
     if (input.scanners.length) {
-      await this.sql`
-        UPDATE kosh_security_findings
-        SET state = 'resolved',
-            resolved_at = NOW(),
-            updated_at = NOW()
-        WHERE repository_id = ${input.repositoryId}
-          AND scanner = ANY(${input.scanners})
-          AND state IN ('open', 'acknowledged')
-          AND NOT (fingerprint = ANY(${fingerprints.length ? fingerprints : ["__none__"]}))
-      `;
+      const currentBeforeResolve = await this.listFindings(input.repositoryId);
+      const scannerSet = new Set(input.scanners);
+      const fingerprintSet = new Set(fingerprints);
+
+      for (const finding of currentBeforeResolve) {
+        if (
+          scannerSet.has(finding.scanner) &&
+          !fingerprintSet.has(finding.fingerprint) &&
+          (finding.state === "open" || finding.state === "acknowledged")
+        ) {
+          await this.sql`
+            UPDATE kosh_security_findings
+            SET state = 'resolved',
+                resolved_at = NOW(),
+                updated_at = NOW()
+            WHERE repository_id = ${input.repositoryId}
+              AND id = ${finding.id}
+          `;
+        }
+      }
     }
 
     const current = await this.listFindings(input.repositoryId);
