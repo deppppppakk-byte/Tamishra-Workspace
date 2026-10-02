@@ -527,7 +527,7 @@ export async function ensureKoshNamespaceForCreation(
   });
 }
 
-async function namespaceAuthority(
+export async function koshNamespaceAuthority(
   identity: KoshIdentity,
   namespace: string
 ) {
@@ -874,7 +874,7 @@ export async function handleKoshAccessRequest(
       if (!namespace) {
         throw Object.assign(new Error("namespace_required"), { status: 400 });
       }
-      const authority = await namespaceAuthority(identity, namespace);
+      const authority = await koshNamespaceAuthority(identity, namespace);
       if (!authority.canManage) {
         throw Object.assign(new Error("namespace_admin_required"), {
           status: 403
@@ -912,7 +912,7 @@ export async function handleKoshAccessRequest(
         throw Object.assign(new Error("invalid_team"), { status: 400 });
       }
 
-      const authority = await namespaceAuthority(identity, namespace);
+      const authority = await koshNamespaceAuthority(identity, namespace);
       if (!authority.canManage) {
         throw Object.assign(new Error("namespace_admin_required"), {
           status: 403
@@ -951,7 +951,7 @@ export async function handleKoshAccessRequest(
         throw Object.assign(new Error("team_not_found"), { status: 404 });
       }
 
-      const authority = await namespaceAuthority(identity, team.namespace);
+      const authority = await koshNamespaceAuthority(identity, team.namespace);
       if (!authority.canManage) {
         throw Object.assign(new Error("namespace_admin_required"), {
           status: 403
@@ -974,7 +974,7 @@ export async function handleKoshAccessRequest(
         throw Object.assign(new Error("team_not_found"), { status: 404 });
       }
 
-      const authority = await namespaceAuthority(identity, team.namespace);
+      const authority = await koshNamespaceAuthority(identity, team.namespace);
       if (!authority.canManage) {
         throw Object.assign(new Error("namespace_admin_required"), {
           status: 403
