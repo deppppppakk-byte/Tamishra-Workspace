@@ -202,18 +202,43 @@ function decryptSecret(value: string) {
 }
 
 function sshFingerprint(publicKey: string) {
-  const parts = publicKey.trim().split(/\s+/);
+  const value = publicKey.trim();
+  if (!value || value.length > 32 * 1024 || value.includes("\n") || value.includes("\r")) {
+    throw Object.assign(new Error("invalid_ssh_public_key"), { status: 400 });
+  }
+
+  const parts = value.split(/\s+/);
+  const algorithm = parts[0] ?? "";
   const encoded = parts[1] ?? "";
-  let bytes: Buffer;
-  try {
-    bytes = Buffer.from(encoded, "base64");
-  } catch {
+  const allowedAlgorithms = new Set([
+    "ssh-ed25519",
+    "sk-ssh-ed25519@openssh.com",
+    "ecdsa-sha2-nistp256",
+    "ecdsa-sha2-nistp384",
+    "ecdsa-sha2-nistp521",
+    "sk-ecdsa-sha2-nistp256@openssh.com",
+    "ssh-rsa"
+  ]);
+
+  if (
+    !allowedAlgorithms.has(algorithm) ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)
+  ) {
+    throw Object.assign(new Error("unsupported_ssh_public_key"), { status: 400 });
+  }
+
+  const bytes = Buffer.from(encoded, "base64");
+  if (bytes.length < 32 || bytes.length > 16 * 1024) {
     throw Object.assign(new Error("invalid_ssh_public_key"), { status: 400 });
   }
-  if (!bytes.length) {
-    throw Object.assign(new Error("invalid_ssh_public_key"), { status: 400 });
-  }
-  return "SHA256:" + createHash("sha256").update(bytes).digest("base64").replace(/=+$/g, "");
+
+  return (
+    "SHA256:" +
+    createHash("sha256")
+      .update(bytes)
+      .digest("base64")
+      .replace(/=+$/g, "")
+  );
 }
 
 function newApiToken() {
