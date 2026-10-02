@@ -1109,24 +1109,24 @@ export async function handleKoshRequest(
   }
 
   if (request.method === "GET" && url.pathname === "/v1/kosh/repos") {
-    if (
-      !(await requireWorkspaceIdentity(
-        request,
-        response,
-        origin,
-        allowedOrigins
-      ))
-    ) {
-      return true;
-    }
+    const identity = await requireWorkspaceIdentity(
+      request,
+      response,
+      origin,
+      allowedOrigins
+    );
+    if (!identity) return true;
 
-    const repositories = await store.list();
+    const visible = await listKoshRepositoriesVisibleTo(identity);
 
     json(
       response,
       200,
       {
-        repositories,
+        repositories: visible.map((item) => ({
+          ...item.repository,
+          access: item.access
+        })),
         persistence: store.kind,
         gitStorage: process.env.KOSH_REPO_ROOT
           ? "configured-persistent-path"
