@@ -30,6 +30,10 @@ import {
 } from "./kosh-security.js";
 import { handleKoshPackageRequest } from "./kosh-packages.js";
 import { handleKoshReleaseRequest } from "./kosh-releases.js";
+import {
+  handleKoshCodeIntelligenceRequest,
+  triggerKoshCodeIndexAfterPush
+} from "./kosh-code-intelligence.js";
 import { scheduleAutomationEvent } from "./kosh-automation-service.js";
 import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
 import {
@@ -668,6 +672,11 @@ async function handleGitHttp(
           gitAccess.actor,
           changedBranches
         );
+        triggerKoshCodeIndexAfterPush(
+          repository,
+          gitAccess.actor,
+          changedBranches
+        );
       } catch (automationError) {
         stderr =
           (stderr +
@@ -1057,6 +1066,18 @@ export async function handleKoshRequest(
 
   if (
     await handleKoshReleaseRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    await handleKoshCodeIntelligenceRequest(
       request,
       response,
       url,
