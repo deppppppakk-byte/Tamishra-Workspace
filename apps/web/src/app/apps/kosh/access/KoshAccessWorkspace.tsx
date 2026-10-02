@@ -75,6 +75,7 @@ type RepositoryAccess = {
   source: string;
   legacy: boolean;
   permissions: string[];
+  namespaceAdmin: boolean;
   binding: Binding | null;
   grants: Grant[];
   teams: Team[];
@@ -586,7 +587,7 @@ export function KoshAccessWorkspace() {
               </div>
             </div>
 
-            {access && access.permissions.includes("access.manage") ? (
+            {access && access.namespaceAdmin ? (
               <>
                 <form className={styles.form} onSubmit={createTeam}>
                   <label className={styles.wide}>
