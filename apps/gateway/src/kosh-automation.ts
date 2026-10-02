@@ -10,6 +10,7 @@ import {
   type KoshRunnerExecutor
 } from "./kosh-runner-control-store.js";
 import { dispatchKoshWebhooks } from "./kosh-webhooks.js";
+import { publishKoshPackage } from "./kosh-packages.js";
 import {
   automationStore,
   scheduleWorkflow,
