@@ -237,9 +237,9 @@ export function KoshWorkspace() {
                     <Link
                       className={styles.back}
                       href={
-                        "/apps/kosh/" +
+                        "/apps/kosh/repository?namespace=" +
                         encodeURIComponent(repository.namespace) +
-                        "/" +
+                        "&slug=" +
                         encodeURIComponent(repository.slug)
                       }
                     >
