@@ -1,8 +1,6 @@
 import { deleteKoshObject } from "./kosh-object-storage.js";
-import {
-  enqueueKoshOpsJob,
-  type KoshOpsJob
-} from "./kosh-ops-store.js";
+import { enqueueKoshOpsJobWithPoolAdmission } from "./kosh-ops-pool-policy.js";
+import { type KoshOpsJob } from "./kosh-ops-store.js";
 import { processKoshOpsJob } from "./kosh-ops-processor.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
 import { getKoshObjectIndex } from "./kosh-storage-object-index.js";
@@ -25,7 +23,7 @@ async function enqueueNotification(
   data: Record<string, unknown>
 ) {
   if (!process.env.KOSH_NOTIFICATION_DELIVERY_ENDPOINT?.trim()) return null;
-  return enqueueKoshOpsJob({
+  return enqueueKoshOpsJobWithPoolAdmission({
     repositoryId: job.repositoryId,
     type: "notification.deliver",
     payload: { event, message, data },
