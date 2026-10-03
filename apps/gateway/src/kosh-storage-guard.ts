@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
 import { automationStore } from "./kosh-automation-service.js";
+import { handleKoshDriveChannelRoute } from "./kosh-drive-channel-routes.js";
 import { handleKoshDriveStorageRoute } from "./kosh-drive-storage-routes.js";
 import type { KoshStorageClass } from "./kosh-storage-policy.js";
 import {
@@ -217,19 +218,27 @@ function registerReservationFinalizer(
   });
 }
 
+async function handleDriveNonReservedRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL
+) {
+  if (await handleKoshDriveChannelRoute(request, response, url)) {
+    return true;
+  }
+  return handleKoshDriveStorageRoute(request, response, url);
+}
+
 export async function handleKoshStoragePreflight(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL
 ) {
-  if (request.method === "GET") {
-    if (await handleKoshDriveStorageRoute(request, response, url)) {
-      return true;
-    }
-  }
-
   const target = await targetFor(request, url);
-  if (!target) return false;
+
+  if (!target) {
+    return handleDriveNonReservedRoute(request, response, url);
+  }
 
   if (!(await authorizeReservationTarget(request, response, target))) {
     return true;
