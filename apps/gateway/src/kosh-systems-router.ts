@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { handleKoshBackupDownloadRequest } from "./kosh-backup-download-route.js";
 import { handleKoshBackupStorageRequest } from "./kosh-backup-storage-routes.js";
+import { handleKoshPagesDomainsRequest } from "./kosh-pages-domains.js";
 import { handleKoshProductionObservabilityRequest } from "./kosh-production-observability.js";
 import { handleKoshProductionRequest } from "./kosh-production-routes.js";
 import { handleKoshStorageOrphanCleanupRequest } from "./kosh-storage-orphan-cleanup.js";
@@ -14,6 +15,18 @@ export async function handleKoshSystemsRequest(
   origin: string | undefined,
   allowedOrigins: ReadonlySet<string>
 ) {
+  if (
+    await handleKoshPagesDomainsRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return true;
+  }
+
   if (
     await handleKoshProductionObservabilityRequest(
       request,
