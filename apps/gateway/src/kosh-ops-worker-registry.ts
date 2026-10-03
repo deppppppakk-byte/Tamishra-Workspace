@@ -1,12 +1,23 @@
 import postgres from "postgres";
+import type { KoshOpsWorkerPool } from "./kosh-ops-pool-claim.js";
 
 export type KoshOpsWorkerRequestedState = "active" | "draining" | "disabled";
+
+const workerPools: readonly KoshOpsWorkerPool[] = [
+  "all",
+  "general",
+  "storage",
+  "recovery",
+  "database",
+  "isolated"
+];
 
 export type KoshOpsWorkerRecord = {
   workerId: string;
   hostname: string;
   processId: number;
   releaseVersion: string;
+  pool: KoshOpsWorkerPool;
   concurrency: number;
   activeJobs: number;
   scheduler: boolean;
@@ -25,6 +36,7 @@ type HeartbeatInput = {
   hostname: string;
   processId: number;
   releaseVersion?: string;
+  pool?: KoshOpsWorkerPool;
   concurrency: number;
   activeJobs: number;
   scheduler: boolean;
@@ -75,6 +87,13 @@ function requestedState(value: unknown): KoshOpsWorkerRequestedState {
   return value === "draining" || value === "disabled" ? value : "active";
 }
 
+function workerPool(value: unknown): KoshOpsWorkerPool {
+  const normalized = String(value ?? "all").trim().toLowerCase();
+  return workerPools.includes(normalized as KoshOpsWorkerPool)
+    ? normalized as KoshOpsWorkerPool
+    : "all";
+}
+
 function withStatus(input: MemoryWorker): KoshOpsWorkerRecord {
   return {
     ...input,
@@ -88,6 +107,7 @@ function fromRow(row: Record<string, unknown>): KoshOpsWorkerRecord {
     hostname: String(row.hostname ?? "unknown"),
     processId: Math.max(0, Number(row.process_id) || 0),
     releaseVersion: String(row.release_version ?? "unknown"),
+    pool: workerPool(row.pool),
     concurrency: Math.max(1, Number(row.concurrency) || 1),
     activeJobs: Math.max(0, Number(row.active_jobs) || 0),
     scheduler: Boolean(row.scheduler),
@@ -109,6 +129,7 @@ export async function readyKoshOpsWorkerRegistry() {
     hostname TEXT NOT NULL,
     process_id INTEGER NOT NULL,
     release_version TEXT NOT NULL DEFAULT 'unknown',
+    pool TEXT NOT NULL DEFAULT 'all',
     concurrency INTEGER NOT NULL,
     active_jobs INTEGER NOT NULL DEFAULT 0,
     scheduler BOOLEAN NOT NULL DEFAULT FALSE,
@@ -122,13 +143,23 @@ export async function readyKoshOpsWorkerRegistry() {
     CHECK(concurrency >= 1 AND concurrency <= 64),
     CHECK(active_jobs >= 0 AND active_jobs <= 64)
   )`;
+  await db`ALTER TABLE kosh_ops_workers ADD COLUMN IF NOT EXISTS pool TEXT NOT NULL DEFAULT 'all'`;
   await db`ALTER TABLE kosh_ops_workers ADD COLUMN IF NOT EXISTS requested_state TEXT NOT NULL DEFAULT 'active'`;
   await db`ALTER TABLE kosh_ops_workers ADD COLUMN IF NOT EXISTS desired_concurrency INTEGER NULL`;
   await db`ALTER TABLE kosh_ops_workers ADD COLUMN IF NOT EXISTS control_reason TEXT NULL`;
   await db`ALTER TABLE kosh_ops_workers ADD COLUMN IF NOT EXISTS control_updated_at TIMESTAMPTZ NULL`;
   await db`ALTER TABLE kosh_ops_workers ADD COLUMN IF NOT EXISTS control_updated_by TEXT NULL`;
+  await db`UPDATE kosh_ops_workers SET pool = CASE
+    WHEN release_version LIKE '%;pool=general%' OR worker_id LIKE 'general:%' THEN 'general'
+    WHEN release_version LIKE '%;pool=storage%' OR worker_id LIKE 'storage:%' THEN 'storage'
+    WHEN release_version LIKE '%;pool=recovery%' OR worker_id LIKE 'recovery:%' THEN 'recovery'
+    WHEN release_version LIKE '%;pool=database%' OR worker_id LIKE 'database:%' THEN 'database'
+    WHEN release_version LIKE '%;pool=isolated%' OR worker_id LIKE 'isolated:%' THEN 'isolated'
+    ELSE 'all'
+  END WHERE pool = 'all'`;
   await db`CREATE INDEX IF NOT EXISTS kosh_ops_workers_seen_idx ON kosh_ops_workers(last_seen_at DESC)`;
   await db`CREATE INDEX IF NOT EXISTS kosh_ops_workers_control_idx ON kosh_ops_workers(requested_state, last_seen_at DESC)`;
+  await db`CREATE INDEX IF NOT EXISTS kosh_ops_workers_pool_idx ON kosh_ops_workers(pool, requested_state, last_seen_at DESC)`;
   initialized = true;
 }
 
@@ -141,6 +172,7 @@ export async function heartbeatKoshOpsWorker(input: HeartbeatInput) {
     hostname: clean(input.hostname, 200) || "unknown",
     processId: boundedInteger(input.processId, 0, 0, 2_147_483_647),
     releaseVersion: clean(input.releaseVersion, 120) || "unknown",
+    pool: workerPool(input.pool),
     concurrency: boundedInteger(input.concurrency, 1, 1, 64),
     activeJobs: boundedInteger(input.activeJobs, 0, 0, 64),
     scheduler: Boolean(input.scheduler),
@@ -164,12 +196,13 @@ export async function heartbeatKoshOpsWorker(input: HeartbeatInput) {
   }
   await readyKoshOpsWorkerRegistry();
   const rows = await db`
-    INSERT INTO kosh_ops_workers(worker_id, hostname, process_id, release_version, concurrency, active_jobs, scheduler, started_at, last_seen_at)
-    VALUES(${heartbeat.workerId}, ${heartbeat.hostname}, ${heartbeat.processId}, ${heartbeat.releaseVersion}, ${heartbeat.concurrency}, ${heartbeat.activeJobs}, ${heartbeat.scheduler}, ${heartbeat.startedAt}, NOW())
+    INSERT INTO kosh_ops_workers(worker_id, hostname, process_id, release_version, pool, concurrency, active_jobs, scheduler, started_at, last_seen_at)
+    VALUES(${heartbeat.workerId}, ${heartbeat.hostname}, ${heartbeat.processId}, ${heartbeat.releaseVersion}, ${heartbeat.pool}, ${heartbeat.concurrency}, ${heartbeat.activeJobs}, ${heartbeat.scheduler}, ${heartbeat.startedAt}, NOW())
     ON CONFLICT(worker_id) DO UPDATE SET
       hostname = EXCLUDED.hostname,
       process_id = EXCLUDED.process_id,
       release_version = EXCLUDED.release_version,
+      pool = EXCLUDED.pool,
       concurrency = EXCLUDED.concurrency,
       active_jobs = EXCLUDED.active_jobs,
       scheduler = EXCLUDED.scheduler,
@@ -262,6 +295,22 @@ export async function getKoshOpsWorkerFleetSummary() {
   const disabled = online.filter((worker) => worker.requestedState === "disabled");
   const schedulers = active.filter((worker) => worker.scheduler);
   const effectiveConcurrency = (worker: KoshOpsWorkerRecord) => Math.min(worker.concurrency, worker.desiredConcurrency ?? worker.concurrency);
+  const pools = Object.fromEntries(workerPools.map((pool) => {
+    const scoped = workers.filter((worker) => worker.pool === pool);
+    const scopedOnline = scoped.filter((worker) => worker.status === "online");
+    const scopedActive = scopedOnline.filter((worker) => worker.requestedState === "active");
+    return [pool, {
+      online: scopedOnline.length,
+      stale: scoped.filter((worker) => worker.status === "stale").length,
+      active: scopedActive.length,
+      draining: scopedOnline.filter((worker) => worker.requestedState === "draining").length,
+      disabled: scopedOnline.filter((worker) => worker.requestedState === "disabled").length,
+      schedulerLeaders: scopedActive.filter((worker) => worker.scheduler).length,
+      totalConcurrency: scopedActive.reduce((total, worker) => total + effectiveConcurrency(worker), 0),
+      activeJobs: scopedOnline.reduce((total, worker) => total + worker.activeJobs, 0),
+      availableSlots: scopedActive.reduce((total, worker) => total + Math.max(0, effectiveConcurrency(worker) - worker.activeJobs), 0)
+    }];
+  }));
   return {
     persistence: database() ? "postgres" as const : "ephemeral-memory" as const,
     checkedAt: new Date().toISOString(),
@@ -275,6 +324,7 @@ export async function getKoshOpsWorkerFleetSummary() {
     activeJobs: online.reduce((total, worker) => total + worker.activeJobs, 0),
     availableSlots: active.reduce((total, worker) => total + Math.max(0, effectiveConcurrency(worker) - worker.activeJobs), 0),
     healthy: active.length > 0 && schedulers.length === 1,
-    schedulerState: schedulers.length === 1 ? "healthy" as const : schedulers.length === 0 ? "missing" as const : "multiple" as const
+    schedulerState: schedulers.length === 1 ? "healthy" as const : schedulers.length === 0 ? "missing" as const : "multiple" as const,
+    pools
   };
 }
