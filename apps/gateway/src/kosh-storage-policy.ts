@@ -77,7 +77,10 @@ export async function koshStorageLimits(repositoryId: string) {
   };
 }
 
-function objectLimit(storageClass: KoshStorageClass, limits: Awaited<ReturnType<typeof koshStorageLimits>>) {
+export function koshStorageObjectLimit(
+  storageClass: KoshStorageClass,
+  limits: Awaited<ReturnType<typeof koshStorageLimits>>
+) {
   if (storageClass === "artifact") return limits.maxArtifactBytes;
   if (storageClass === "package") return limits.maxPackageBytes;
   if (storageClass === "release") return limits.maxReleaseBytes;
@@ -94,7 +97,7 @@ export async function assertKoshStorageCapacity(
     koshKnownStorageUsage(repositoryId),
     koshStorageLimits(repositoryId)
   ]);
-  const perObjectLimit = objectLimit(storageClass, limits);
+  const perObjectLimit = koshStorageObjectLimit(storageClass, limits);
 
   if (bytes > perObjectLimit) {
     throw Object.assign(new Error("storage_object_limit_exceeded"), {
