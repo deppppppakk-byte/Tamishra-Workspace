@@ -142,8 +142,8 @@ export const koshModules: KoshModule[] = [
   {
     id: "webhooks",
     name: "Webhooks & Integrations",
-    description: "Webhook and integration registrations with auditable configuration.",
-    status: "foundation"
+    description: "Signed outbound events with encrypted endpoint secrets, public-network validation, retries, durable delivery history and redelivery controls.",
+    status: "active"
   },
   {
     id: "api-cli",

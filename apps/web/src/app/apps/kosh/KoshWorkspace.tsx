@@ -276,6 +276,17 @@ export function KoshWorkspace() {
                     >
                       Pages →
                     </Link>
+                    <Link
+                      className={styles.back}
+                      href={
+                        "/apps/kosh/webhooks?namespace=" +
+                        encodeURIComponent(repository.namespace) +
+                        "&slug=" +
+                        encodeURIComponent(repository.slug)
+                      }
+                    >
+                      Integrations →
+                    </Link>
                   </div>
                   <small>
                     git clone {repository.cloneSshUrl || repository.cloneHttpUrl}

@@ -10,6 +10,7 @@ import { handleChatRequest } from "./chat.js";
 import { handleKoshRequest } from "./kosh.js";
 import { handleKoshWikiRequest } from "./kosh-wiki.js";
 import { handleKoshPagesAdminRequest } from "./kosh-pages.js";
+import { handleKoshWebhookRequest } from "./kosh-webhooks.js";
 
 const port = Number(process.env.WORKSPACE_GATEWAY_PORT ?? process.env.PORT ?? 4100);
 const isProduction = process.env.NODE_ENV === "production";
@@ -205,6 +206,18 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       },
       origin
     );
+    return;
+  }
+
+  if (
+    await handleKoshWebhookRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
     return;
   }
 
