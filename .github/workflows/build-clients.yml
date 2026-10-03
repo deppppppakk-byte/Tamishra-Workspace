@@ -163,3 +163,51 @@ jobs:
           name: tamishra-workspace-android-debug
           path: apps/mobile/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+  kosh-android:
+    name: Kosh Android APK
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Kosh web frontend
+        env:
+          NODE_ENV: production
+        run: npm run build:web:native
+
+      - name: Create Kosh Android native project
+        working-directory: apps/kosh-mobile
+        run: npx cap add android
+
+      - name: Sync Kosh Android project
+        working-directory: apps/kosh-mobile
+        env:
+          KOSH_APP_URL: https://kosh.tamishra.in/kosh
+        run: npx cap sync android
+
+      - name: Build Kosh debug APK
+        working-directory: apps/kosh-mobile/android
+        run: ./gradlew assembleDebug
+
+      - name: Upload Kosh Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: kosh-android-debug
+          path: apps/kosh-mobile/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
