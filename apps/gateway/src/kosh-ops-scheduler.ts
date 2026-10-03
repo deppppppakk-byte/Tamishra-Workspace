@@ -22,6 +22,11 @@ function record(value: unknown) {
     : {};
 }
 
+function priority(value: unknown) {
+  const parsed = Number(value);
+  return Math.max(0, Math.min(100, Number.isFinite(parsed) ? Math.floor(parsed) : 50));
+}
+
 export async function enqueueDueKoshOpsSchedules() {
   await platformStore.ready();
   const resources = await platformStore.listResources("admin_setting");
@@ -42,35 +47,45 @@ export async function enqueueDueKoshOpsSchedules() {
       5,
       Math.min(30 * 24 * 60, Math.floor(Number(resource.payload.intervalMinutes) || 60))
     );
+    const scheduledFor = new Date(nextRunAt).toISOString();
     const next = new Date(now + intervalMinutes * 60_000).toISOString();
-    const payload = {
-      ...resource.payload,
-      nextRunAt: next,
-      lastEnqueuedAt: new Date(now).toISOString(),
-      lastError: null
-    };
-    await platformStore.updateResource(resource.id, { payload });
+
     try {
       const job = await enqueueKoshOpsJob({
         repositoryId: resource.repositoryId,
         type,
         payload: record(resource.payload.jobPayload),
         maxAttempts: 3,
+        priority: priority(resource.payload.priority),
+        idempotencyKey: `schedule:${resource.id}:${scheduledFor}`,
         createdByUserId: resource.createdByUserId,
         createdByName: `Kosh schedule: ${resource.name}`
       });
-      outcomes.push({ scheduleId: resource.id, jobId: job.id, type });
-    } catch (error) {
       await platformStore.updateResource(resource.id, {
         payload: {
-          ...payload,
-          nextRunAt: new Date(now + Math.min(15, intervalMinutes) * 60_000).toISOString(),
-          lastError: error instanceof Error ? error.message : "schedule_enqueue_failed"
+          ...resource.payload,
+          nextRunAt: next,
+          lastEnqueuedAt: new Date(now).toISOString(),
+          lastJobId: job.id,
+          lastError: null
         }
       });
+      outcomes.push({ scheduleId: resource.id, jobId: job.id, type, scheduledFor });
+    } catch (error) {
+      try {
+        await platformStore.updateResource(resource.id, {
+          payload: {
+            ...resource.payload,
+            lastError: error instanceof Error ? error.message : "schedule_enqueue_failed"
+          }
+        });
+      } catch {
+        // Preserve the original nextRunAt so the same occurrence is retried with the same idempotency key.
+      }
       outcomes.push({
         scheduleId: resource.id,
         type,
+        scheduledFor,
         error: error instanceof Error ? error.message : "schedule_enqueue_failed"
       });
     }
