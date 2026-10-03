@@ -1,0 +1,20 @@
+{
+  "name": "tamishra-local",
+  "interface": {
+    "displayName": "Tamishra Plugins"
+  },
+  "plugins": [
+    {
+      "name": "kosh",
+      "source": {
+        "source": "local",
+        "path": "./plugins/kosh"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
