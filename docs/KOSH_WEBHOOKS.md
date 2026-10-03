@@ -4,11 +4,12 @@ Kosh Webhooks is the native outbound event integration layer for repository acti
 
 ## Security model
 
-- Webhook configuration and delivery history require `repository.manage` through the Kosh administration gate.
-- The same management gate protects the generic repository Platform control plane so weaker `repository.write` access cannot bypass the integration boundary by creating raw webhook resources or manipulating secrets.
+- Reading endpoint metadata and delivery history requires `repository.read`.
+- Endpoint creation, updates, testing, redelivery, secret rotation and deletion require `repository.manage`.
 - Browser mutations enforce the Workspace allowed-origin boundary.
 - Every endpoint receives an independent random 256-bit signing secret.
 - Signing secrets are stored through the encrypted Kosh secret store and are only returned to the user when created or rotated.
+- Delivery fails closed when the configured signing secret cannot be resolved; Kosh does not silently downgrade to unsigned delivery.
 - Production endpoints require HTTPS.
 - URL credentials are rejected.
 - Localhost, `.local`, `.internal`, loopback, link-local, RFC1918/private, carrier-grade NAT, documentation, multicast and other non-public IP ranges are rejected while private-network blocking is enabled.
@@ -49,7 +50,7 @@ Kosh sends JSON similar to:
 
 Headers:
 
-- `User-Agent: Kosh-Webhooks/2.0`
+- `User-Agent: Kosh-Webhooks/2.1`
 - `X-Kosh-Event`
 - `X-Kosh-Delivery`
 - `X-Kosh-Hook-Id`
@@ -104,7 +105,7 @@ Repository root:
 /v1/kosh/repos/<namespace>/<repository>/webhooks
 ```
 
-All operations below require repository management permission.
+Read operations require `repository.read`; all mutating operations require `repository.manage`.
 
 ```text
 GET    /webhooks
