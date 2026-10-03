@@ -140,24 +140,38 @@ export async function getKoshOpsPoolSloEvidence(pool: KoshOpsDedicatedPool) {
   };
 }
 
+function admissionError(evidence: Awaited<ReturnType<typeof getKoshOpsPoolSloEvidence>>) {
+  return Object.assign(new Error("kosh_ops_pool_queue_backpressure"), {
+    status: 429,
+    retryAfterSeconds: 30,
+    pool: evidence.pool,
+    queued: evidence.queued,
+    limit: evidence.policy.maxQueued
+  });
+}
+
 export async function assertKoshOpsPoolAdmission(type: KoshOpsJobType) {
   const pool = poolForKoshOpsJobType(type);
   const evidence = await getKoshOpsPoolSloEvidence(pool);
-  if (evidence.admissionBlocked) {
-    throw Object.assign(new Error("kosh_ops_pool_queue_backpressure"), {
-      status: 429,
-      retryAfterSeconds: 30,
-      pool,
-      queued: evidence.queued,
-      limit: evidence.policy.maxQueued
-    });
-  }
+  if (evidence.admissionBlocked) throw admissionError(evidence);
   return evidence;
 }
 
 export async function enqueueKoshOpsJobWithPoolAdmission(
   input: Parameters<typeof enqueueKoshOpsJob>[0]
 ) {
-  await assertKoshOpsPoolAdmission(input.type);
-  return enqueueKoshOpsJob(input);
+  const pool = poolForKoshOpsJobType(input.type);
+  const db = database();
+  if (!db) {
+    await assertKoshOpsPoolAdmission(input.type);
+    return enqueueKoshOpsJob(input);
+  }
+
+  return db.begin(async (tx) => {
+    const lockKey = `kosh_ops_pool_admission:${pool}`;
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+    const evidence = await getKoshOpsPoolSloEvidence(pool);
+    if (evidence.admissionBlocked) throw admissionError(evidence);
+    return enqueueKoshOpsJob(input);
+  });
 }
