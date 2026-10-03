@@ -1,5 +1,16 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { createReadStream, createWriteStream } from "node:fs";
+import {
+  copyFile,
+  mkdir,
+  open,
+  readFile,
+  rm,
+  stat,
+  writeFile
+} from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import type { KoshStorageClass } from "./kosh-storage-policy.js";
 
 export type KoshObjectStorageBackend = "local" | "google-drive";
@@ -21,6 +32,11 @@ type PutKoshObjectInput = {
   bytes: Buffer;
   sha256: string;
   localPath: string;
+};
+
+type PutKoshObjectFileInput = Omit<PutKoshObjectInput, "bytes"> & {
+  sourcePath: string;
+  sizeBytes: number;
 };
 
 type CachedToken = {
@@ -75,6 +91,14 @@ function requestTimeoutMs() {
   return Number.isFinite(configured)
     ? Math.max(10_000, Math.min(15 * 60_000, Math.floor(configured)))
     : 120_000;
+}
+
+function resumableChunkBytes() {
+  const configured = Number(process.env.KOSH_GOOGLE_DRIVE_CHUNK_MB ?? 8);
+  const mb = Number.isFinite(configured)
+    ? Math.max(1, Math.min(64, Math.floor(configured)))
+    : 8;
+  return mb * 1024 * 1024;
 }
 
 async function googleAccessToken() {
@@ -136,15 +160,25 @@ async function googleRequest(url: string, init: RequestInit = {}) {
   });
 }
 
-function driveStorageName(input: PutKoshObjectInput) {
+function driveStorageName(input: {
+  repositoryId: string;
+  logicalId: string;
+  filename: string;
+}) {
   const filename = clean(input.filename, 160) || "object.bin";
   const repositoryId = clean(input.repositoryId, 80) || "repository";
   const logicalId = clean(input.logicalId, 80) || "object";
   return `${repositoryId}__${logicalId}__${filename}`;
 }
 
-async function putGoogleDriveObject(input: PutKoshObjectInput): Promise<KoshObjectLocator> {
-  const metadata = {
+function driveMetadata(input: {
+  storageClass: KoshStorageClass;
+  repositoryId: string;
+  logicalId: string;
+  filename: string;
+  sha256: string;
+}) {
+  return {
     name: driveStorageName(input),
     parents: [driveFolderId(input.storageClass)],
     properties: {
@@ -154,6 +188,10 @@ async function putGoogleDriveObject(input: PutKoshObjectInput): Promise<KoshObje
       koshSha256: input.sha256
     }
   };
+}
+
+async function putGoogleDriveObject(input: PutKoshObjectInput): Promise<KoshObjectLocator> {
+  const metadata = driveMetadata(input);
   const form = new FormData();
   form.append(
     "metadata",
@@ -194,6 +232,92 @@ async function putGoogleDriveObject(input: PutKoshObjectInput): Promise<KoshObje
   };
 }
 
+async function putGoogleDriveFile(
+  input: PutKoshObjectFileInput
+): Promise<KoshObjectLocator> {
+  const metadata = driveMetadata(input);
+  const session = await googleRequest(
+    "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,size",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-upload-content-type": input.mediaType || "application/octet-stream",
+        "x-upload-content-length": String(input.sizeBytes)
+      },
+      body: JSON.stringify(metadata)
+    }
+  );
+  if (!session.ok) {
+    throw Object.assign(new Error("kosh_google_drive_resumable_start_failed"), {
+      status: session.status >= 400 && session.status < 500 ? 502 : 503
+    });
+  }
+  const uploadUrl = session.headers.get("location");
+  if (!uploadUrl) {
+    throw Object.assign(new Error("kosh_google_drive_resumable_location_missing"), {
+      status: 503
+    });
+  }
+
+  const handle = await open(input.sourcePath, "r");
+  const chunkSize = resumableChunkBytes();
+  let offset = 0;
+  let finalPayload: { id?: string; size?: string } | null = null;
+  try {
+    while (offset < input.sizeBytes) {
+      const length = Math.min(chunkSize, input.sizeBytes - offset);
+      const buffer = Buffer.allocUnsafe(length);
+      const result = await handle.read(buffer, 0, length, offset);
+      if (result.bytesRead <= 0) {
+        throw Object.assign(new Error("kosh_object_source_truncated"), {
+          status: 500
+        });
+      }
+      const chunk = result.bytesRead === buffer.length
+        ? buffer
+        : buffer.subarray(0, result.bytesRead);
+      const end = offset + result.bytesRead - 1;
+      const response = await googleRequest(uploadUrl, {
+        method: "PUT",
+        headers: {
+          "content-type": input.mediaType || "application/octet-stream",
+          "content-length": String(result.bytesRead),
+          "content-range": `bytes ${offset}-${end}/${input.sizeBytes}`
+        },
+        body: new Uint8Array(chunk)
+      });
+      if (response.status === 308) {
+        offset += result.bytesRead;
+        continue;
+      }
+      if (!response.ok) {
+        throw Object.assign(new Error("kosh_google_drive_resumable_upload_failed"), {
+          status: response.status >= 400 && response.status < 500 ? 502 : 503
+        });
+      }
+      finalPayload = await response.json() as { id?: string; size?: string };
+      offset += result.bytesRead;
+    }
+  } finally {
+    await handle.close();
+  }
+
+  if (!finalPayload?.id || offset !== input.sizeBytes) {
+    throw Object.assign(new Error("kosh_google_drive_resumable_upload_incomplete"), {
+      status: 503
+    });
+  }
+
+  return {
+    backend: "google-drive",
+    objectId: finalPayload.id,
+    storageClass: input.storageClass,
+    sizeBytes: input.sizeBytes,
+    sha256: input.sha256
+  };
+}
+
 async function readGoogleDriveObject(locator: KoshObjectLocator) {
   const response = await googleRequest(
     `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(locator.objectId)}?alt=media`,
@@ -205,6 +329,26 @@ async function readGoogleDriveObject(locator: KoshObjectLocator) {
     });
   }
   return Buffer.from(await response.arrayBuffer());
+}
+
+async function materializeGoogleDriveObject(
+  locator: KoshObjectLocator,
+  destinationPath: string
+) {
+  const response = await googleRequest(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(locator.objectId)}?alt=media`,
+    { method: "GET" }
+  );
+  if (!response.ok || !response.body) {
+    throw Object.assign(new Error("kosh_google_drive_object_missing"), {
+      status: response.status === 404 ? 404 : 503
+    });
+  }
+  await mkdir(dirname(destinationPath), { recursive: true });
+  await pipeline(
+    Readable.fromWeb(response.body as never),
+    createWriteStream(destinationPath, { flags: "wx" })
+  );
 }
 
 async function deleteGoogleDriveObject(locator: KoshObjectLocator) {
@@ -256,6 +400,30 @@ export async function putKoshObject(input: PutKoshObjectInput) {
   };
 }
 
+export async function putKoshObjectFromFile(input: PutKoshObjectFileInput) {
+  if (configuredBackend() === "google-drive") {
+    return putGoogleDriveFile(input);
+  }
+
+  const source = resolve(input.sourcePath);
+  const target = resolve(input.localPath);
+  if (source !== target) {
+    await mkdir(dirname(target), { recursive: true });
+    await copyFile(source, target);
+  }
+  const info = await stat(target);
+  if (info.size !== input.sizeBytes) {
+    throw Object.assign(new Error("kosh_object_size_changed"), { status: 500 });
+  }
+  return {
+    backend: "local" as const,
+    objectId: target,
+    storageClass: input.storageClass,
+    sizeBytes: input.sizeBytes,
+    sha256: input.sha256
+  };
+}
+
 export async function readKoshObject(
   locator: KoshObjectLocator | null,
   localFallbackPath: string
@@ -264,6 +432,25 @@ export async function readKoshObject(
     return readFile(localFallbackPath);
   }
   return readGoogleDriveObject(locator);
+}
+
+export async function materializeKoshObject(
+  locator: KoshObjectLocator | null,
+  localFallbackPath: string,
+  destinationPath: string
+) {
+  await rm(destinationPath, { force: true }).catch(() => undefined);
+  if (!locator || locator.backend === "local") {
+    const source = resolve(localFallbackPath);
+    const destination = resolve(destinationPath);
+    await mkdir(dirname(destination), { recursive: true });
+    if (source !== destination) {
+      await copyFile(source, destination);
+    }
+    return destination;
+  }
+  await materializeGoogleDriveObject(locator, destinationPath);
+  return destinationPath;
 }
 
 export async function deleteKoshObject(
