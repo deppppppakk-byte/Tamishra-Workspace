@@ -13,6 +13,7 @@ import { handleKoshPagesAdminRequest } from "./kosh-pages.js";
 import { handleKoshWebhookRequest } from "./kosh-webhooks.js";
 import { handleKoshPublicApiRequest } from "./kosh-api.js";
 import { handleKoshSystemsRequest } from "./kosh-systems.js";
+import { handleKoshStoragePreflight } from "./kosh-storage-guard.js";
 import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
 import { getKoshStore } from "./kosh-store.js";
 
@@ -245,6 +246,10 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       },
       origin
     );
+    return;
+  }
+
+  if (await handleKoshStoragePreflight(request, response, url)) {
     return;
   }
 
