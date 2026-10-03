@@ -5,11 +5,24 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import styles from "./workers.module.css";
 
 type WorkerState = "active" | "draining" | "disabled";
+type WorkerPool = "all" | "general" | "storage" | "recovery" | "database" | "isolated";
+type PoolFleet = {
+  online: number;
+  stale: number;
+  active: number;
+  draining: number;
+  disabled: number;
+  schedulerLeaders: number;
+  totalConcurrency: number;
+  activeJobs: number;
+  availableSlots: number;
+};
 type Worker = {
   workerId: string;
   hostname: string;
   processId: number;
   releaseVersion: string;
+  pool: WorkerPool;
   concurrency: number;
   activeJobs: number;
   scheduler: boolean;
@@ -32,8 +45,11 @@ type Fleet = {
   availableSlots: number;
   healthy: boolean;
   schedulerState: "healthy" | "missing" | "multiple";
+  pools: Record<WorkerPool, PoolFleet>;
 };
 type FleetResponse = { summary: Fleet; workers: Worker[]; staleAfterMs: number };
+
+const dedicatedPools: WorkerPool[] = ["general", "storage", "recovery", "database", "isolated", "all"];
 
 function apiBase() {
   return (
@@ -146,6 +162,25 @@ export default function KoshWorkersPage() {
 
       <section className={styles.panel}>
         <div className={styles.panelHeading}>
+          <div><p className={styles.eyebrow}>WORKLOAD ISOLATION</p><h2>Pool capacity</h2></div>
+          <span>first-class registry evidence</span>
+        </div>
+        <div className={styles.summary}>
+          {dedicatedPools.map((pool) => {
+            const evidence = fleet?.pools?.[pool];
+            return (
+              <article key={pool}>
+                <span>{pool}</span>
+                <strong>{evidence?.online ?? "—"}</strong>
+                <small>{evidence?.availableSlots ?? 0} free · {evidence?.activeJobs ?? 0} jobs</small>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className={styles.panel}>
+        <div className={styles.panelHeading}>
           <div><p className={styles.eyebrow}>REGISTERED WORKERS</p><h2>Fleet nodes</h2></div>
           <span>{payload?.workers.length ?? 0} records</span>
         </div>
@@ -160,11 +195,13 @@ export default function KoshWorkersPage() {
                   <div className={styles.cardTop}>
                     <div><strong>{worker.hostname}</strong><code>{worker.workerId}</code></div>
                     <div className={styles.badges}>
+                      <span>{worker.pool}</span>
                       <span className={styles[worker.status]}>{worker.status}</span>
                       <span className={styles[worker.requestedState]}>{worker.requestedState}</span>
                     </div>
                   </div>
                   <div className={styles.meta}>
+                    <span>Pool <b>{worker.pool}</b></span>
                     <span>Release <b>{worker.releaseVersion}</b></span>
                     <span>PID <b>{worker.processId}</b></span>
                     <span>Jobs <b>{worker.activeJobs}</b></span>
