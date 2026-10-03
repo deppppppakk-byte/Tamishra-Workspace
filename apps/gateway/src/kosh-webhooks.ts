@@ -105,15 +105,21 @@ function clamp(value: unknown, fallback: number, min: number, max: number) {
 }
 
 function webhookTimeoutMs() {
-  return Math.floor(clamp(process.env.KOSH_WEBHOOK_TIMEOUT_MS, 8_000, 1_000, 15_000));
+  return Math.floor(
+    clamp(process.env.KOSH_WEBHOOK_TIMEOUT_MS, 8_000, 1_000, 15_000)
+  );
 }
 
 function webhookMaxAttempts() {
-  return Math.floor(clamp(process.env.KOSH_WEBHOOK_MAX_ATTEMPTS, 3, 1, 5));
+  return Math.floor(
+    clamp(process.env.KOSH_WEBHOOK_MAX_ATTEMPTS, 3, 1, 5)
+  );
 }
 
 function deliveryRetention() {
-  return Math.floor(clamp(process.env.KOSH_WEBHOOK_DELIVERY_RETENTION, 500, 50, 5_000));
+  return Math.floor(
+    clamp(process.env.KOSH_WEBHOOK_DELIVERY_RETENTION, 500, 50, 5_000)
+  );
 }
 
 function sleep(ms: number) {
@@ -122,7 +128,10 @@ function sleep(ms: number) {
 
 function isPublicIpv4(address: string) {
   const parts = address.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+  if (
+    parts.length !== 4 ||
+    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  ) {
     return false;
   }
   const [a, b] = parts;
@@ -153,6 +162,7 @@ function isPublicIp(address: string) {
     normalized.startsWith("fd") ||
     /^fe[89ab]/.test(normalized) ||
     normalized.startsWith("ff") ||
+    normalized === "2001:db8::" ||
     normalized.startsWith("2001:db8:")
   ) {
     return false;
@@ -172,18 +182,29 @@ async function validateWebhookUrl(value: string) {
   }
 
   const production = process.env.NODE_ENV === "production";
-  if (production ? url.protocol !== "https:" : !["https:", "http:"].includes(url.protocol)) {
+  if (
+    production
+      ? url.protocol !== "https:"
+      : !["https:", "http:"].includes(url.protocol)
+  ) {
     throw new WebhookError("webhook_https_required");
   }
-  if (url.username || url.password) throw new WebhookError("webhook_url_credentials_not_allowed");
-  if (!url.hostname || url.hostname.length > 253) throw new WebhookError("invalid_webhook_url");
+  if (url.username || url.password) {
+    throw new WebhookError("webhook_url_credentials_not_allowed");
+  }
+  if (url.hash) throw new WebhookError("webhook_url_fragment_not_allowed");
+  if (!url.hostname || url.hostname.length > 253) {
+    throw new WebhookError("invalid_webhook_url");
+  }
 
   const hostname = url.hostname.toLowerCase();
   if (
     hostname === "localhost" ||
     hostname.endsWith(".localhost") ||
     hostname.endsWith(".local") ||
-    hostname.endsWith(".internal")
+    hostname.endsWith(".internal") ||
+    hostname.endsWith(".home") ||
+    hostname.endsWith(".lan")
   ) {
     throw new WebhookError("webhook_private_network_not_allowed");
   }
@@ -200,7 +221,10 @@ async function validateWebhookUrl(value: string) {
       } catch {
         throw new WebhookError("webhook_dns_lookup_failed", 422);
       }
-      if (!addresses.length || addresses.some((entry) => !isPublicIp(entry.address))) {
+      if (
+        !addresses.length ||
+        addresses.some((entry) => !isPublicIp(entry.address))
+      ) {
         throw new WebhookError("webhook_private_network_not_allowed");
       }
     }
@@ -218,15 +242,18 @@ function isDelivery(resource: StoredKoshPlatformResource) {
 }
 
 function isWebhookEvent(value: string): value is KoshWebhookEvent {
-  return value === "webhook.test" || koshWebhookEvents.includes(value as KoshWebhookEvent);
+  return (
+    value === "webhook.test" ||
+    koshWebhookEvents.includes(value as KoshWebhookEvent)
+  );
 }
 
 function normalizedEvents(value: unknown) {
   if (!Array.isArray(value)) return [] as KoshWebhookEvent[];
-  return [...new Set(value.map(String))]
-    .filter((event): event is KoshWebhookEvent =>
+  return [...new Set(value.map(String))].filter(
+    (event): event is KoshWebhookEvent =>
       koshWebhookEvents.includes(event as KoshWebhookEvent)
-    );
+  );
 }
 
 function endpointView(resource: StoredKoshPlatformResource) {
@@ -255,7 +282,9 @@ function deliveryView(resource: StoredKoshPlatformResource) {
   return {
     id: resource.id,
     webhookId: String(resource.payload.webhookId ?? ""),
-    deliveryId: String(resource.payload.deliveryId ?? resource.key.replace(/^delivery:/, "")),
+    deliveryId: String(
+      resource.payload.deliveryId ?? resource.key.replace(/^delivery:/, "")
+    ),
     event: String(resource.payload.event ?? ""),
     state: resource.state,
     ok: resource.state === "succeeded",
@@ -264,7 +293,8 @@ function deliveryView(resource: StoredKoshPlatformResource) {
     attempts,
     attemptCount: attempts.length,
     url: String(resource.payload.url ?? ""),
-    completedAt: resource.payload.completedAt ?? resource.updatedAt,
+    startedAt: resource.payload.startedAt ?? resource.createdAt,
+    completedAt: resource.payload.completedAt ?? null,
     createdAt: resource.createdAt
   };
 }
@@ -283,7 +313,7 @@ async function deliveryById(repositoryId: string, deliveryId: string) {
     : null;
 }
 
-async function persistDelivery(input: {
+async function createDeliveryRecord(input: {
   repositoryId: string;
   namespace: string;
   endpoint: StoredKoshPlatformResource;
@@ -291,22 +321,14 @@ async function persistDelivery(input: {
   event: KoshWebhookEvent;
   payload: Record<string, unknown>;
   url: string;
-  attempts: DeliveryAttempt[];
-  status: number | null;
-  error: string | null;
 }) {
-  const succeeded =
-    input.error === null &&
-    input.status !== null &&
-    input.status >= 200 &&
-    input.status < 300;
-  const resource = await platformStore.createResource({
+  return platformStore.createResource({
     repositoryId: input.repositoryId,
     namespace: input.namespace,
     type: "webhook",
     key: "delivery:" + input.deliveryId,
     name: input.event + " · " + input.deliveryId.slice(0, 8),
-    state: succeeded ? "succeeded" : "failed",
+    state: "delivering",
     payload: {
       kind: "delivery",
       webhookId: input.endpoint.id,
@@ -314,20 +336,48 @@ async function persistDelivery(input: {
       event: input.event,
       payload: input.payload,
       url: input.url,
-      status: input.status,
-      error: input.error,
-      attempts: input.attempts,
-      completedAt: new Date().toISOString()
+      status: null,
+      error: null,
+      attempts: [],
+      startedAt: new Date().toISOString(),
+      completedAt: null
     },
     createdByUserId: "kosh-system",
     createdByName: "Kosh Webhooks"
   });
+}
+
+async function finishDelivery(
+  resource: StoredKoshPlatformResource,
+  input: {
+    endpoint: StoredKoshPlatformResource;
+    attempts: DeliveryAttempt[];
+    status: number | null;
+    error: string | null;
+  }
+) {
+  const succeeded =
+    input.status !== null && input.status >= 200 && input.status < 300;
+  const completedAt = new Date().toISOString();
+  const updated = await platformStore.updateResource(resource.id, {
+    state: succeeded ? "succeeded" : "failed",
+    payload: {
+      ...resource.payload,
+      status: input.status,
+      error: input.error,
+      attempts: input.attempts,
+      completedAt
+    }
+  });
+  if (!updated) {
+    throw new WebhookError("webhook_delivery_record_missing", 500);
+  }
 
   const previousFailures = Number(input.endpoint.payload.consecutiveFailures ?? 0);
   await platformStore.updateResource(input.endpoint.id, {
     payload: {
       ...input.endpoint.payload,
-      lastDeliveryAt: resource.createdAt,
+      lastDeliveryAt: completedAt,
       lastStatus: succeeded ? "succeeded" : "failed",
       lastHttpStatus: input.status,
       consecutiveFailures: succeeded ? 0 : previousFailures + 1
@@ -335,7 +385,7 @@ async function persistDelivery(input: {
   });
 
   await platformStore.appendAudit({
-    repositoryId: input.repositoryId,
+    repositoryId: resource.repositoryId,
     actorUserId: null,
     actorName: "Kosh Webhooks",
     eventType: succeeded
@@ -344,8 +394,8 @@ async function persistDelivery(input: {
     resourceType: "webhook",
     resourceId: input.endpoint.id,
     metadata: {
-      event: input.event,
-      deliveryId: input.deliveryId,
+      event: resource.payload.event,
+      deliveryId: resource.payload.deliveryId,
       deliveryResourceId: resource.id,
       status: input.status,
       error: input.error,
@@ -353,13 +403,13 @@ async function persistDelivery(input: {
     }
   });
 
-  return resource;
+  return updated;
 }
 
 async function pruneDeliveries(repositoryId: string) {
   const keep = deliveryRetention();
   const deliveries = (await platformStore.listResources("webhook", repositoryId))
-    .filter(isDelivery)
+    .filter((resource) => isDelivery(resource) && resource.state !== "delivering")
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   await Promise.all(
     deliveries.slice(keep).map((resource) => platformStore.deleteResource(resource.id))
@@ -379,91 +429,107 @@ async function deliverToEndpoint(input: {
   event: KoshWebhookEvent;
   payload: Record<string, unknown>;
 }) {
+  if (input.endpoint.state === "archived") {
+    throw new WebhookError("webhook_archived", 409);
+  }
+
   const deliveryId = randomUUID();
   const attempts: DeliveryAttempt[] = [];
   const maxAttempts = webhookMaxAttempts();
   const urlText = String(input.endpoint.payload.url ?? "");
-  let finalStatus: number | null = null;
-  let finalError: string | null = null;
-
-  const envelope = {
-    deliveryId,
-    event: input.event,
-    repositoryId: input.repositoryId,
-    sentAt: new Date().toISOString(),
-    version: String(input.endpoint.payload.payloadVersion ?? "2026-10-03"),
-    payload: input.payload
-  };
-  const body = JSON.stringify(envelope);
-  if (Buffer.byteLength(body, "utf8") > MAX_PAYLOAD_BYTES) {
-    finalError = "webhook_payload_too_large";
-  } else {
-    const secretName = String(input.endpoint.payload.secretName ?? "");
-    const secret = secretName
-      ? await platformStore.resolveSecret(input.repositoryId, null, secretName)
-      : null;
-    const signature = secret
-      ? "sha256=" + createHmac("sha256", secret).update(body).digest("hex")
-      : "";
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      const started = Date.now();
-      let status: number | null = null;
-      let errorText: string | null = null;
-      try {
-        const verifiedUrl = await validateWebhookUrl(urlText);
-        const response = await fetch(verifiedUrl, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "user-agent": "Kosh-Webhooks/2.0",
-            "x-kosh-event": input.event,
-            "x-kosh-delivery": deliveryId,
-            "x-kosh-hook-id": input.endpoint.id,
-            "x-kosh-attempt": String(attempt),
-            ...(signature ? { "x-kosh-signature-256": signature } : {})
-          },
-          body,
-          signal: AbortSignal.timeout(webhookTimeoutMs()),
-          redirect: "error"
-        });
-        status = response.status;
-        void response.body?.cancel();
-        if (!response.ok) errorText = "http_" + response.status;
-      } catch (error) {
-        errorText = error instanceof Error ? error.message : "delivery_failed";
-      }
-
-      attempts.push({
-        attempt,
-        status,
-        ok: errorText === null && status !== null && status >= 200 && status < 300,
-        error: errorText,
-        durationMs: Date.now() - started
-      });
-      finalStatus = status;
-      finalError = errorText;
-
-      if (!shouldRetry(status, attempt, maxAttempts)) break;
-      await sleep(Math.min(1_500, 250 * Math.pow(3, attempt - 1)));
-    }
-  }
-
-  const resource = await persistDelivery({
+  const record = await createDeliveryRecord({
     repositoryId: input.repositoryId,
     namespace: input.namespace,
     endpoint: input.endpoint,
     deliveryId,
     event: input.event,
     payload: input.payload,
-    url: urlText,
+    url: urlText
+  });
+
+  let finalStatus: number | null = null;
+  let finalError: string | null = null;
+
+  try {
+    const envelope = {
+      deliveryId,
+      event: input.event,
+      repositoryId: input.repositoryId,
+      sentAt: new Date().toISOString(),
+      version: String(input.endpoint.payload.payloadVersion ?? "2026-10-03"),
+      payload: input.payload
+    };
+    const body = JSON.stringify(envelope);
+
+    if (Buffer.byteLength(body, "utf8") > MAX_PAYLOAD_BYTES) {
+      finalError = "webhook_payload_too_large";
+    } else {
+      const secretName = String(input.endpoint.payload.secretName ?? "");
+      const secret = secretName
+        ? await platformStore.resolveSecret(input.repositoryId, null, secretName)
+        : null;
+
+      if (!secret) {
+        finalError = "webhook_signing_secret_missing";
+      } else {
+        const signature =
+          "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+          const started = Date.now();
+          let status: number | null = null;
+          let errorText: string | null = null;
+          try {
+            const verifiedUrl = await validateWebhookUrl(urlText);
+            const response = await fetch(verifiedUrl, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "user-agent": "Kosh-Webhooks/2.1",
+                "x-kosh-event": input.event,
+                "x-kosh-delivery": deliveryId,
+                "x-kosh-hook-id": input.endpoint.id,
+                "x-kosh-attempt": String(attempt),
+                "x-kosh-signature-256": signature
+              },
+              body,
+              signal: AbortSignal.timeout(webhookTimeoutMs()),
+              redirect: "error"
+            });
+            status = response.status;
+            await response.body?.cancel();
+            if (!response.ok) errorText = "http_" + response.status;
+          } catch (error) {
+            errorText = error instanceof Error ? error.message : "delivery_failed";
+          }
+
+          attempts.push({
+            attempt,
+            status,
+            ok: status !== null && status >= 200 && status < 300,
+            error: errorText,
+            durationMs: Date.now() - started
+          });
+          finalStatus = status;
+          finalError = errorText;
+
+          if (!shouldRetry(status, attempt, maxAttempts)) break;
+          await sleep(Math.min(1_500, 250 * Math.pow(3, attempt - 1)));
+        }
+      }
+    }
+  } catch (error) {
+    finalError = error instanceof Error ? error.message : "delivery_failed";
+  }
+
+  const finished = await finishDelivery(record, {
+    endpoint: input.endpoint,
     attempts,
     status: finalStatus,
     error: finalError
   });
-
   void pruneDeliveries(input.repositoryId).catch(() => undefined);
-  return resource;
+  return finished;
 }
 
 export async function dispatchKoshWebhooks(
@@ -551,7 +617,7 @@ export async function handleKoshWebhookRequest(
     const authorization = await authorizeKoshRepositoryRequest(
       request,
       repository,
-      write ? "repository.write" : "repository.read"
+      write ? "repository.manage" : "repository.read"
     );
     if (!authorization.decision.allowed || (write && !authorization.identity)) {
       sendJson(
@@ -570,8 +636,12 @@ export async function handleKoshWebhookRequest(
     const resources = await platformStore.listResources("webhook", repository.id);
 
     if (!endpointId && request.method === "GET") {
-      const endpoints = resources.filter(isEndpoint).sort((a, b) => a.name.localeCompare(b.name));
-      const deliveries = resources.filter(isDelivery).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      const endpoints = resources
+        .filter((resource) => isEndpoint(resource) && resource.state !== "archived")
+        .sort((a, b) => a.name.localeCompare(b.name));
+      const deliveries = resources
+        .filter(isDelivery)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
       sendJson(
         response,
         200,
@@ -579,7 +649,9 @@ export async function handleKoshWebhookRequest(
           endpoints: endpoints.map(endpointView),
           recentDeliveries: deliveries.slice(0, 50).map(deliveryView),
           events: koshWebhookEvents,
-          deliveryRetention: deliveryRetention()
+          deliveryRetention: deliveryRetention(),
+          signing: "HMAC-SHA256",
+          signatureHeader: "x-kosh-signature-256"
         },
         origin,
         allowedOrigins
@@ -651,7 +723,9 @@ export async function handleKoshWebhookRequest(
 
     if (!endpointId) return false;
     const endpoint = await endpointById(repository.id, endpointId);
-    if (!endpoint) throw new WebhookError("webhook_not_found", 404);
+    if (!endpoint || endpoint.state === "archived") {
+      throw new WebhookError("webhook_not_found", 404);
+    }
 
     if (!action && request.method === "GET") {
       sendJson(response, 200, { endpoint: endpointView(endpoint) }, origin, allowedOrigins);
@@ -701,14 +775,20 @@ export async function handleKoshWebhookRequest(
       const secret = (await platformStore.listSecrets(repository.id)).find(
         (item) => item.environmentName === null && item.name === secretName
       );
-      const deliveries = resources.filter(
-        (item) => isDelivery(item) && item.payload.webhookId === endpoint.id
-      );
-      await Promise.all(deliveries.map((item) => platformStore.deleteResource(item.id)));
-      const deleted = await platformStore.deleteResource(endpoint.id);
-      if (!deleted) throw new WebhookError("webhook_not_found", 404);
+      const archived = await platformStore.updateResource(endpoint.id, {
+        state: "archived",
+        payload: {
+          ...endpoint.payload,
+          active: false,
+          secretName: "",
+          archivedAt: new Date().toISOString(),
+          archivedByUserId: actor.id,
+          archivedByName: actor.displayName
+        }
+      });
+      if (!archived) throw new WebhookError("webhook_not_found", 404);
       if (secret) await platformStore.deleteSecret(secret.id);
-      await auditEndpoint(repository.id, actor, "webhook_endpoint_deleted", endpoint.id);
+      await auditEndpoint(repository.id, actor, "webhook_endpoint_archived", endpoint.id);
       sendJson(response, 200, { deleted: true }, origin, allowedOrigins);
       return true;
     }
@@ -774,10 +854,18 @@ export async function handleKoshWebhookRequest(
       return true;
     }
 
-    if (action === "deliveries" && deliveryId && subaction === "redeliver" && request.method === "POST") {
+    if (
+      action === "deliveries" &&
+      deliveryId &&
+      subaction === "redeliver" &&
+      request.method === "POST"
+    ) {
       const previous = await deliveryById(repository.id, deliveryId);
       if (!previous || previous.payload.webhookId !== endpoint.id) {
         throw new WebhookError("webhook_delivery_not_found", 404);
+      }
+      if (previous.state === "delivering") {
+        throw new WebhookError("webhook_delivery_in_progress", 409);
       }
       const event = String(previous.payload.event ?? "");
       if (!isWebhookEvent(event)) throw new WebhookError("invalid_webhook_event", 409);
