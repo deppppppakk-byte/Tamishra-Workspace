@@ -261,21 +261,21 @@
   overflow-x: auto;
 }
 
-table {
+.tableWrap table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
 }
 
-th,
-td {
+.tableWrap th,
+.tableWrap td {
   padding: 11px 10px;
   border-bottom: 1px solid #e5e7eb;
   text-align: left;
   white-space: nowrap;
 }
 
-th {
+.tableWrap th {
   color: #6b7280;
   font-size: 11px;
   text-transform: uppercase;
@@ -331,7 +331,7 @@ th {
   text-align: center;
 }
 
-button:disabled {
+.page button:disabled {
   opacity: .55;
   cursor: not-allowed;
 }
