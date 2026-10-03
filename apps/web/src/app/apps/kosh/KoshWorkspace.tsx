@@ -124,6 +124,7 @@ export function KoshWorkspace() {
           <a href="#repositories">Repositories</a>
           <Link href="/apps/kosh/mesh">Mesh</Link>
           <Link href="/apps/kosh/pulse">Pulse</Link>
+          <Link href="/apps/kosh/readiness">Readiness</Link>
           <Link href="/apps/kosh/access">Access</Link>
           <Link href="/apps/kosh/api">API & CLI</Link>
           <a href="#platform">Platform</a>
@@ -298,6 +299,17 @@ export function KoshWorkspace() {
                       }
                     >
                       Systems →
+                    </Link>
+                    <Link
+                      className={styles.back}
+                      href={
+                        "/apps/kosh/readiness?namespace=" +
+                        encodeURIComponent(repository.namespace) +
+                        "&slug=" +
+                        encodeURIComponent(repository.slug)
+                      }
+                    >
+                      Readiness →
                     </Link>
                   </div>
                   <small>
