@@ -21,6 +21,10 @@ import {
   releaseKoshOpsSchedulerLeadership
 } from "./kosh-ops-scheduler-leader.js";
 import { reconcileKoshOpsFleet } from "./kosh-ops-fleet-scaling.js";
+import {
+  koshOpsPoolAutoscalePolicy,
+  reconcileKoshOpsPools
+} from "./kosh-ops-pool-scaling.js";
 import { processKoshOpsJobWithPostprocessing } from "./kosh-ops-processing.js";
 import { enqueueDueKoshOpsSchedules } from "./kosh-ops-scheduler.js";
 
@@ -130,6 +134,36 @@ async function releaseSchedulerIfNeeded() {
   await publishFleetHeartbeat().catch(() => undefined);
 }
 
+async function reconcileFleetCapacity() {
+  if (koshOpsPoolAutoscalePolicy().enabled) {
+    const scaling = await reconcileKoshOpsPools({ apply: true, automatic: true });
+    const appliedPools = scaling.results.filter((item) => item.applied).map((item) => item.pool);
+    if (appliedPools.length) {
+      console.log("Kosh operations pool scaling applied", {
+        pools: appliedPools,
+        results: scaling.results
+          .filter((item) => item.applied)
+          .map((item) => ({
+            pool: item.pool,
+            desiredWorkers: item.recommendation.desiredWorkers,
+            currentWorkers: item.recommendation.currentWorkers,
+            reason: item.recommendation.reason
+          }))
+      });
+    }
+    return;
+  }
+
+  const scaling = await reconcileKoshOpsFleet({ apply: true, automatic: true });
+  if (scaling.applied) {
+    console.log("Kosh operations fleet scaling applied", {
+      desiredWorkers: scaling.recommendation.desiredWorkers,
+      currentWorkers: scaling.recommendation.currentWorkers,
+      reason: scaling.recommendation.reason
+    });
+  }
+}
+
 async function runSchedulerLoop() {
   while (!stopping) {
     try {
@@ -146,14 +180,7 @@ async function runSchedulerLoop() {
       if (schedulerLeader) {
         const outcomes = await enqueueDueKoshOpsSchedules();
         if (outcomes.length) console.log(`Kosh operations scheduler enqueued ${outcomes.length} due schedule(s).`);
-        const scaling = await reconcileKoshOpsFleet({ apply: true, automatic: true });
-        if (scaling.applied) {
-          console.log("Kosh operations fleet scaling applied", {
-            desiredWorkers: scaling.recommendation.desiredWorkers,
-            currentWorkers: scaling.recommendation.currentWorkers,
-            reason: scaling.recommendation.reason
-          });
-        }
+        await reconcileFleetCapacity();
       }
     } catch (error) {
       schedulerLeader = false;
