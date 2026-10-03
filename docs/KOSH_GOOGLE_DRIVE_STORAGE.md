@@ -53,6 +53,7 @@ KOSH_GOOGLE_DRIVE_RELEASES_FOLDER_ID=
 KOSH_GOOGLE_DRIVE_ARTIFACTS_FOLDER_ID=
 KOSH_GOOGLE_DRIVE_BACKUPS_FOLDER_ID=
 KOSH_GOOGLE_DRIVE_TIMEOUT_MS=120000
+KOSH_GOOGLE_DRIVE_CHUNK_MB=8
 ```
 
 A class-specific folder ID takes precedence over the root folder ID. The root ID is only a fallback.
@@ -61,7 +62,7 @@ A class-specific folder ID takes precedence over the root folder ID. The root ID
 
 Drive objects are created with Kosh properties containing the repository ID, storage class, logical object ID and SHA-256 checksum.
 
-Kosh keeps the provider locator separately in the `kosh_storage_objects` index. This lets repository metadata stay provider-neutral while package versions, release assets, Automation artifacts and later storage classes can resolve the object without embedding a Drive-specific path into their primary records.
+Kosh keeps the provider locator separately in the `kosh_storage_objects` index. This lets repository metadata stay provider-neutral while package versions, release assets, Automation artifacts and recovery backups resolve the object without embedding a Drive-specific path into their primary records.
 
 Downloads pass through Kosh authorization and SHA-256/size verification. A Drive file is not treated as trusted merely because it exists.
 
@@ -76,9 +77,10 @@ With `KOSH_OBJECT_STORAGE_BACKEND=google-drive`:
 - release asset downloads and verification read the indexed Drive object;
 - Automation Runner artifact uploads are written to the Artifacts folder after Runner bearer authentication and active lease validation;
 - Automation artifact downloads and verification use repository-read authorization and verify SHA-256 plus byte length before returning data;
-- existing local package, release and Automation artifact payloads remain readable through their legacy local paths when no Drive locator exists.
-
-Recovery bundles already have Backups folder configuration in the adapter but remain on their current write path until the disaster-recovery migration handler is switched in the next storage-class change.
+- repository recovery bundles are written to the Backups folder with resumable chunked upload;
+- Drive recovery bundles are streamed back to a temporary file for Git bundle verification and restore staging instead of being loaded into Gateway memory;
+- pre-restore safety backups use the same configured backend as normal recovery points;
+- existing local package, release, Automation artifact and recovery payloads remain readable through their legacy local paths when no Drive locator exists.
 
 ## Automation artifact routes
 
@@ -102,13 +104,37 @@ Legacy local artifact reads are constrained to `KOSH_ARTIFACT_ROOT`; Kosh does n
 
 The Automation artifact payload limit remains 8 MiB, matching the pre-existing Runner contract.
 
+## Recovery bundle lifecycle
+
+Recovery stays on the native Kosh Systems API:
+
+```text
+POST /v1/kosh/repos/<namespace>/<repository>/systems/recovery/backups
+POST /v1/kosh/repos/<namespace>/<repository>/systems/recovery/backups/<backup-id>/verify
+POST /v1/kosh/repos/<namespace>/<repository>/systems/recovery/backups/<backup-id>/stage
+POST /v1/kosh/repos/<namespace>/<repository>/systems/recovery/backups/<backup-id>/activate
+GET  /v1/kosh/repos/<namespace>/<repository>/systems/recovery/backups/<backup-id>/download
+```
+
+Creation still produces a complete Git bundle with `--all`. Kosh hashes the bundle, checks the configured backup object limit, reserves repository capacity using the actual generated bundle size, and then persists the object and metadata.
+
+Google Drive backup upload uses Drive's resumable upload protocol in bounded chunks (`KOSH_GOOGLE_DRIVE_CHUNK_MB`, default 8 MiB), so multi-gigabyte bundle support does not require a same-sized in-memory buffer.
+
+Verification materializes a Drive bundle to a bounded temporary path below `KOSH_BACKUP_ROOT`, validates byte length and SHA-256, and runs `git bundle verify`. Staging then creates a bare repository from that verified bundle and runs `git fsck --full` before any activation is permitted.
+
+Activation retains Kosh's persisted operation guard and explicit `<namespace>/<repository>` confirmation. Immediately before switching the repository, Kosh creates a `pre_restore_safety` restore point through the same backend, validates the staged repository again, and only then performs the atomic repository-directory swap with rollback if the swap fails.
+
+Backup retention removes both the metadata resource and its indexed Drive object. Existing local restore points stay valid and continue to use their confined `KOSH_BACKUP_ROOT` path.
+
+The existing backup size policy remains controlled by `KOSH_BACKUP_MAX_MB` and repository storage policy.
+
 ## Quota accounting and concurrency
 
-Storage quota enforcement is independent of the physical backend. Before a storage-heavy request is accepted, Kosh reserves the estimated bytes for that repository.
+Storage quota enforcement is independent of the physical backend. Before a storage-heavy request is accepted, Kosh reserves the estimated or known bytes for that repository.
 
-With PostgreSQL configured, reservations use a repository-scoped PostgreSQL advisory lock and the `kosh_storage_reservations` table. Concurrent Gateway instances therefore account for each other's in-flight uploads before admitting another write.
+With PostgreSQL configured, reservations use a repository-scoped PostgreSQL advisory lock and the `kosh_storage_reservations` table. Concurrent Gateway instances therefore account for each other's in-flight writes before admitting another object.
 
-Repository package and release uploads must pass Kosh repository authorization before a reservation is created. Runner package/artifact uploads must pass the Runner bearer token and active job lease before reserving capacity. This prevents unauthenticated requests from consuming reservation headroom.
+Repository package and release uploads must pass Kosh repository authorization before a reservation is created. Runner package/artifact uploads must pass the Runner bearer token and active job lease before reserving capacity. Server-generated backups reserve capacity after the Git bundle is generated, using its actual byte size.
 
 Production storage writes fail closed if distributed reservations cannot use PostgreSQL. Development can use the in-memory reservation implementation.
 
@@ -118,8 +144,8 @@ Reservation TTL is controlled with:
 KOSH_STORAGE_RESERVATION_TTL_MINUTES=120
 ```
 
-Reservations are finalized when the HTTP response finishes. Successful 2xx writes become `completed`; failed or interrupted writes become `aborted`; stale active reservations expire automatically.
+Reservations are finalized when the storage operation commits. Completed writes become `completed`; failed writes become `aborted`; stale active reservations expire automatically.
 
 ## Migration model
 
-The storage adapter is intentionally provider-replaceable. Existing local objects remain readable, Drive-backed objects are resolved from the locator index, and Git repositories stay on Git-native persistent storage. Switching package/release/artifact payload storage therefore does not rewrite Git history or repository metadata.
+The storage adapter is intentionally provider-replaceable. Existing local objects remain readable, Drive-backed objects are resolved from the locator index, and Git repositories stay on Git-native persistent storage. Switching package/release/artifact/backup payload storage therefore does not rewrite Git history or repository metadata.
