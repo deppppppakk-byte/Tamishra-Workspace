@@ -4,6 +4,10 @@ import {
   getKoshOpsFleetRecommendation,
   reconcileKoshOpsFleet
 } from "./kosh-ops-fleet-scaling.js";
+import {
+  getKoshOpsPoolRecommendations,
+  reconcileKoshOpsPools
+} from "./kosh-ops-pool-scaling.js";
 
 type Identity = NonNullable<Awaited<ReturnType<typeof resolveKoshIdentity>>>;
 
@@ -62,7 +66,9 @@ export async function handleKoshOpsFleetControllerRequest(
   origin: string | undefined,
   allowedOrigins: ReadonlySet<string>
 ) {
-  if (url.pathname !== "/v1/kosh/systems/workers/capacity") return false;
+  const globalCapacity = url.pathname === "/v1/kosh/systems/workers/capacity";
+  const poolCapacity = url.pathname === "/v1/kosh/systems/workers/capacity/pools";
+  if (!globalCapacity && !poolCapacity) return false;
   if (!new Set(["GET", "POST"]).has(request.method ?? "")) return false;
 
   const identity = await resolveKoshIdentity(request);
@@ -74,7 +80,15 @@ export async function handleKoshOpsFleetControllerRequest(
   }
 
   if (request.method === "GET") {
-    json(response, 200, await getKoshOpsFleetRecommendation(), origin, allowedOrigins);
+    json(
+      response,
+      200,
+      poolCapacity
+        ? await getKoshOpsPoolRecommendations()
+        : await getKoshOpsFleetRecommendation(),
+      origin,
+      allowedOrigins
+    );
     return true;
   }
 
@@ -88,11 +102,16 @@ export async function handleKoshOpsFleetControllerRequest(
     if (body.apply !== true) {
       json(response, 400, {
         error: "explicit_apply_required",
-        recommendation: await getKoshOpsFleetRecommendation()
+        recommendation: poolCapacity
+          ? await getKoshOpsPoolRecommendations()
+          : await getKoshOpsFleetRecommendation()
       }, origin, allowedOrigins);
       return true;
     }
-    const result = await reconcileKoshOpsFleet({ apply: true, automatic: false });
+
+    const result = poolCapacity
+      ? await reconcileKoshOpsPools({ apply: true, automatic: false })
+      : await reconcileKoshOpsFleet({ apply: true, automatic: false });
     json(response, result.applied ? 202 : 200, result, origin, allowedOrigins);
   } catch (error) {
     const status = Number((error as { status?: unknown })?.status) || 500;
