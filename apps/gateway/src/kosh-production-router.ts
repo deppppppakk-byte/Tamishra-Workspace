@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { handleKoshOperationsMetricsRequest } from "./kosh-operations-metrics.js";
+import { handleKoshOpsFairnessRequest } from "./kosh-ops-fairness.js";
 import { handleKoshOpsFleetRequest } from "./kosh-ops-fleet.js";
 import { handleKoshOpsFleetControllerRequest } from "./kosh-ops-fleet-controller.js";
 import { handleKoshOpsPoolScalingRequest } from "./kosh-ops-pool-scaling-api.js";
@@ -16,6 +17,15 @@ export async function handleKoshProductionRequest(
 ) {
   if (
     await handleKoshOperationsMetricsRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) return true;
+  if (
+    await handleKoshOpsFairnessRequest(
       request,
       response,
       url,
