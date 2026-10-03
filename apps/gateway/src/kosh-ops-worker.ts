@@ -6,7 +6,7 @@ import {
   heartbeatKoshOpsJob,
   readyKoshOpsStore
 } from "./kosh-ops-store.js";
-import { processKoshOpsJob } from "./kosh-ops-processor.js";
+import { processKoshOpsJobWithPostprocessing } from "./kosh-ops-processing.js";
 import { enqueueDueKoshOpsSchedules } from "./kosh-ops-scheduler.js";
 
 const workerId =
@@ -48,7 +48,7 @@ async function runClaimLoop(slot: number) {
     heartbeat.unref();
 
     try {
-      const result = await processKoshOpsJob(job);
+      const result = await processKoshOpsJobWithPostprocessing(job);
       const completed = await completeKoshOpsJob(job.id, leaseToken, result);
       if (!completed) {
         console.error("Kosh operations job lost its lease before completion", job.id);
