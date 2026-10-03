@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "check": "node --check server.mjs"
+    "check": "node --check server.mjs && node --check smoke.mjs && node smoke.mjs"
   },
   "engines": {
     "node": "22.x"
