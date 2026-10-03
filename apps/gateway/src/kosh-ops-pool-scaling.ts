@@ -3,6 +3,7 @@ import {
   koshOpsPoolJobTypes,
   type KoshOpsWorkerPool
 } from "./kosh-ops-pool-claim.js";
+import { koshOpsPoolPolicy } from "./kosh-ops-pool-policy.js";
 import {
   listKoshOpsJobs,
   type KoshOpsJob,
@@ -346,6 +347,7 @@ export async function getKoshOpsPoolRecommendation(pool: KoshOpsDedicatedPool) {
     getPoolScalingState(pool)
   ]);
   const policy = koshOpsPoolAutoscalePolicy(pool);
+  const sloPolicy = koshOpsPoolPolicy(pool);
   const effectiveConcurrency = fleet.currentWorkers > 0
     ? Math.max(1, Math.round(fleet.totalConcurrency / fleet.currentWorkers))
     : policy.assumedConcurrency;
@@ -363,6 +365,23 @@ export async function getKoshOpsPoolRecommendation(pool: KoshOpsDedicatedPool) {
     reason = fleet.fallbackAllWorkers > 0 ? "dedicated_pool_missing_with_fallback" : "no_pool_workers";
   }
 
+  const queueAgeSloBreached = queue.queued > 0 && queue.oldestQueuedAgeMs >= sloPolicy.queueAgeSloMs;
+  const starvationRisk = queue.queued > 0 && queue.oldestQueuedAgeMs >= sloPolicy.starvationAgeMs;
+  if (queueAgeSloBreached) {
+    desiredWorkers = Math.min(
+      policy.maxWorkers,
+      Math.max(desiredWorkers, Math.max(1, fleet.currentWorkers + 1))
+    );
+    reason = starvationRisk ? "queue_age_starvation" : "queue_age_slo_breach";
+  }
+
+  const queueUtilization = sloPolicy.maxQueued > 0 ? queue.queued / sloPolicy.maxQueued : 0;
+  const sloStatus = starvationRisk || queue.queued >= sloPolicy.maxQueued
+    ? "critical" as const
+    : queueAgeSloBreached || queueUtilization >= 0.8
+      ? "degraded" as const
+      : "healthy" as const;
+
   return {
     pool,
     checkedAt: new Date().toISOString(),
@@ -373,6 +392,16 @@ export async function getKoshOpsPoolRecommendation(pool: KoshOpsDedicatedPool) {
     queue,
     fleet,
     policy,
+    slo: {
+      status: sloStatus,
+      queueUtilization,
+      queueAgeSloBreached,
+      starvationRisk,
+      admissionBlocked: queue.queued >= sloPolicy.maxQueued,
+      maxQueued: sloPolicy.maxQueued,
+      queueAgeSloMs: sloPolicy.queueAgeSloMs,
+      starvationAgeMs: sloPolicy.starvationAgeMs
+    },
     scalingState,
     scalerConfigured: Boolean(process.env.KOSH_OPS_SCALER_URL?.trim())
   };
@@ -428,7 +457,8 @@ export async function reconcileKoshOpsPool(
   const recommendation = await getKoshOpsPoolRecommendation(pool);
   const now = Date.now();
   const pressure = recommendation.queue.queued > recommendation.fleet.availableSlots ||
-    (recommendation.queue.queued > 0 && recommendation.currentWorkers === 0);
+    (recommendation.queue.queued > 0 && recommendation.currentWorkers === 0) ||
+    recommendation.slo.queueAgeSloBreached;
   const idle = recommendation.reason === "idle_capacity";
   const observedState = await updatePoolScalingState(pool, {
     desiredWorkers: recommendation.desiredWorkers,
