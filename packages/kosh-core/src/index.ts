@@ -100,8 +100,8 @@ export const koshModules: KoshModule[] = [
   {
     id: "merge-queue",
     name: "Merge Queue",
-    description: "Queue-entry control plane for validated serial or parallel merge processing.",
-    status: "foundation"
+    description: "Validated merge sequencing with queue priorities, pause/resume/cancel controls, required-check gating and audited processing.",
+    status: "active"
   },
   {
     id: "search",
@@ -160,46 +160,125 @@ export const koshModules: KoshModule[] = [
   {
     id: "advanced-projects",
     name: "Advanced Project Management",
-    description: "Custom-field resources extending Kosh Work toward roadmaps, iterations and cross-repository planning.",
-    status: "foundation"
+    description: "Repository roadmaps with projects, iterations, custom fields and issue/change-request-linked planning items.",
+    status: "active"
   },
   {
     id: "release-management",
     name: "Release & Deployment Management",
-    description: "Deployment-policy resources extending Automation environments and deployment history.",
-    status: "foundation"
+    description: "Release-linked deployment requests with environment policies, approvals, promotion, rollback and Automation execution records.",
+    status: "active"
   },
   {
     id: "storage",
     name: "Storage Layer",
-    description: "Storage-policy resources for Git LFS, artifacts, quotas, lifecycle and adapter selection.",
-    status: "foundation"
+    description: "Repository storage policy, quota accounting, lifecycle controls and provider-neutral storage-root boundaries.",
+    status: "active"
   },
   {
     id: "disaster-recovery",
     name: "Disaster Recovery",
-    description: "Backup and restore-point resources with auditable lifecycle state.",
-    status: "foundation"
+    description: "Checksum-verified Git restore points with retention, staged fsck validation, explicit activation and automatic pre-restore safety backup.",
+    status: "active"
   },
   {
     id: "observability",
     name: "Observability",
-    description: "Platform summary, resource counts and audit telemetry across Kosh control-plane services.",
-    status: "foundation"
+    description: "Repository and platform health views over automation state, deployments, storage, resource state and audit telemetry.",
+    status: "active"
   },
   {
     id: "administration",
     name: "Administration",
-    description: "Global settings and policy resources for platform administrators.",
-    status: "foundation"
+    description: "Audited global policy settings plus runtime posture for storage, recovery, extensions, access and runner controls.",
+    status: "active"
   },
   {
     id: "extensions",
     name: "Extension SDK",
-    description: "Generic extension registrations for code, CAD/BIM, documents, datasets and future assets.",
-    status: "foundation"
+    description: "Versioned declarative extension manifests with validated capabilities, permissions, asset kinds and controlled activation.",
+    status: "active"
   }
 ];
+
+export const koshExtensionCapabilities = [
+  "asset-preview",
+  "automation-step",
+  "code-intelligence",
+  "deployment-gate",
+  "project-panel",
+  "storage-adapter",
+  "webhook-transform"
+] as const;
+
+export const koshExtensionPermissions = [
+  "network.egress",
+  "repository.manage",
+  "repository.read",
+  "repository.write",
+  "storage.read",
+  "storage.write"
+] as const;
+
+export type KoshExtensionCapability = typeof koshExtensionCapabilities[number];
+export type KoshExtensionPermission = typeof koshExtensionPermissions[number];
+
+export type KoshExtensionManifest = {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  runtime: "declarative";
+  entrypoint: string | null;
+  capabilities: KoshExtensionCapability[];
+  permissions: KoshExtensionPermission[];
+  assetKinds: string[];
+  homepage: string | null;
+};
+
+export function validateKoshExtensionManifest(value: unknown): KoshExtensionManifest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("extension_manifest_required");
+  }
+  const input = value as Record<string, unknown>;
+  const id = String(input.id ?? "").trim().toLowerCase().slice(0, 100);
+  const name = String(input.name ?? "").trim().slice(0, 160);
+  const version = String(input.version ?? "").trim().slice(0, 80);
+  if (!/^[a-z][a-z0-9._-]{1,99}$/.test(id) || !name) {
+    throw new Error("invalid_extension_identity");
+  }
+  if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$/.test(version)) {
+    throw new Error("invalid_extension_version");
+  }
+  const capabilitySet = new Set<string>(koshExtensionCapabilities);
+  const permissionSet = new Set<string>(koshExtensionPermissions);
+  const capabilities = Array.isArray(input.capabilities)
+    ? [...new Set(input.capabilities.map(String))]
+        .filter((item): item is KoshExtensionCapability => capabilitySet.has(item))
+        .slice(0, 32)
+    : [];
+  const permissions = Array.isArray(input.permissions)
+    ? [...new Set(input.permissions.map(String))]
+        .filter((item): item is KoshExtensionPermission => permissionSet.has(item))
+        .slice(0, 32)
+    : [];
+  return {
+    schemaVersion: 1,
+    id,
+    name,
+    version,
+    description: String(input.description ?? "").trim().slice(0, 1000),
+    runtime: "declarative",
+    entrypoint: input.entrypoint ? String(input.entrypoint).trim().slice(0, 240) : null,
+    capabilities,
+    permissions,
+    assetKinds: Array.isArray(input.assetKinds)
+      ? [...new Set(input.assetKinds.map((item) => String(item).trim()).filter(Boolean))].slice(0, 64)
+      : [],
+    homepage: input.homepage ? String(input.homepage).trim().slice(0, 500) : null
+  };
+}
 
 export function normalizeKoshSlug(input: string) {
   return input
