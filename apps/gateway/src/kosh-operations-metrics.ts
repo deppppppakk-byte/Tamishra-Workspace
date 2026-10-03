@@ -108,6 +108,15 @@ function renderPrometheus(
     lines.push(metricLine("kosh_ops_worker_available_slots", fleet.availableSlots, labels));
     lines.push(metricLine("kosh_ops_scheduler_leaders", fleet.schedulerLeaders, labels));
     lines.push(metricLine("kosh_ops_fleet_healthy", fleet.healthy ? 1 : 0, labels));
+    for (const [pool, poolMetrics] of Object.entries(fleet.pools)) {
+      lines.push(metricLine("kosh_ops_pool_workers", Number(poolMetrics.online), { ...labels, pool, state: "online" }));
+      lines.push(metricLine("kosh_ops_pool_workers", Number(poolMetrics.stale), { ...labels, pool, state: "stale" }));
+      lines.push(metricLine("kosh_ops_pool_workers", Number(poolMetrics.active), { ...labels, pool, state: "active" }));
+      lines.push(metricLine("kosh_ops_pool_concurrency", Number(poolMetrics.totalConcurrency), { ...labels, pool }));
+      lines.push(metricLine("kosh_ops_pool_active_jobs", Number(poolMetrics.activeJobs), { ...labels, pool }));
+      lines.push(metricLine("kosh_ops_pool_available_slots", Number(poolMetrics.availableSlots), { ...labels, pool }));
+      lines.push(metricLine("kosh_ops_pool_scheduler_leaders", Number(poolMetrics.schedulerLeaders), { ...labels, pool }));
+    }
   }
   lines.push("# HELP kosh_storage_known_bytes Known Kosh object-storage bytes.");
   lines.push("# TYPE kosh_storage_known_bytes gauge");
