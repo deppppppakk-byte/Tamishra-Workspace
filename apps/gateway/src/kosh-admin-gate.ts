@@ -3,6 +3,7 @@ import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
 import { getKoshStore } from "./kosh-store.js";
 
 const repositoryStore = getKoshStore();
+const mutatingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 function sendJson(
   response: ServerResponse,
@@ -30,6 +31,8 @@ export async function handleKoshAdministrationGate(
   origin: string | undefined,
   allowedOrigins: ReadonlySet<string>
 ) {
+  if (!mutatingMethods.has(request.method ?? "")) return false;
+
   const match = url.pathname.match(
     /^\/v1\/kosh\/repos\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,63})\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,99})\/(?:webhooks|platform)(?:\/|$)/
   );
