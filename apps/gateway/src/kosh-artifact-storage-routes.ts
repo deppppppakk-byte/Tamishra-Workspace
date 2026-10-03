@@ -21,7 +21,7 @@ const objectIndex = getKoshObjectIndex();
 const artifactRoot = resolve(
   process.env.KOSH_ARTIFACT_ROOT?.trim() || ".kosh/artifacts"
 );
-
+const maxArtifactBytes = 8 * 1024 * 1024;
 const artifactObjectPrefix = "kosh-object://artifact/";
 
 type JsonBody = Record<string, unknown>;
@@ -85,14 +85,6 @@ function runnerHeader(request: IncomingMessage, name: string) {
   return Array.isArray(value)
     ? value[0]?.trim() ?? ""
     : String(value ?? "").trim();
-}
-
-function maxArtifactBytes() {
-  const configured = Number(process.env.KOSH_AUTOMATION_ARTIFACT_MAX_MB ?? 8);
-  const mb = Number.isFinite(configured)
-    ? Math.max(1, Math.min(1024, Math.floor(configured)))
-    : 8;
-  return mb * 1024 * 1024;
 }
 
 async function readJson(
@@ -225,7 +217,7 @@ async function storageForArtifact(
       localPath:
         indexed.locator.backend === "local"
           ? legacyArtifactPath(indexed.locator.objectId || artifact.storagePath)
-          : legacyArtifactPath(artifact.storagePath)
+          : ""
     };
   }
 
@@ -275,7 +267,7 @@ async function uploadDriveArtifact(
 
   const body = await readJson(
     request,
-    Math.floor(maxArtifactBytes() * 1.45) + 512 * 1024
+    Math.floor(maxArtifactBytes * 1.45) + 512 * 1024
   );
   const name = safeArtifactName(clean(body.name, 180));
   const encoded = String(body.base64 ?? "");
@@ -287,7 +279,7 @@ async function uploadDriveArtifact(
     });
     return true;
   }
-  if (!bytes.length || bytes.length > maxArtifactBytes()) {
+  if (!bytes.length || bytes.length > maxArtifactBytes) {
     sendJson(request, response, 413, { error: "artifact_size_invalid" });
     return true;
   }
@@ -308,6 +300,7 @@ async function uploadDriveArtifact(
     localPath
   });
 
+  let artifact: StoredKoshArtifact;
   let indexed = false;
   try {
     await objectIndex.put({
@@ -318,7 +311,7 @@ async function uploadDriveArtifact(
     });
     indexed = true;
 
-    const artifact = await store.createArtifact({
+    artifact = await store.createArtifact({
       runId: context.runId,
       jobId,
       name,
@@ -326,39 +319,6 @@ async function uploadDriveArtifact(
       sizeBytes: bytes.length,
       sha256: checksum
     });
-
-    await platformStore.appendAudit({
-      repositoryId: context.repository.id,
-      actorUserId: null,
-      actorName: "Kosh Automation Runner",
-      eventType: "automation_artifact_stored",
-      resourceType: "artifact",
-      resourceId: artifact.id,
-      metadata: {
-        runId: context.runId,
-        jobId,
-        name: artifact.name,
-        sizeBytes: artifact.sizeBytes,
-        sha256: artifact.sha256,
-        storageBackend: locator.backend
-      }
-    });
-
-    sendJson(request, response, 201, {
-      ...artifact,
-      storageBackend: locator.backend,
-      downloadPath:
-        "/v1/kosh/repos/" +
-        encodeURIComponent(context.repository.namespace) +
-        "/" +
-        encodeURIComponent(context.repository.slug) +
-        "/automation/runs/" +
-        encodeURIComponent(context.runId) +
-        "/artifacts/" +
-        encodeURIComponent(artifact.id) +
-        "/download"
-    });
-    return true;
   } catch (error) {
     if (indexed) {
       await objectIndex
@@ -368,6 +328,41 @@ async function uploadDriveArtifact(
     await deleteKoshObject(locator, localPath).catch(() => undefined);
     throw error;
   }
+
+  await platformStore.appendAudit({
+    repositoryId: context.repository.id,
+    actorUserId: null,
+    actorName: "Kosh Automation Runner",
+    eventType: "automation_artifact_stored",
+    resourceType: "artifact",
+    resourceId: artifact.id,
+    metadata: {
+      runId: context.runId,
+      jobId,
+      name: artifact.name,
+      sizeBytes: artifact.sizeBytes,
+      sha256: artifact.sha256,
+      storageBackend: locator.backend
+    }
+  }).catch((error) => {
+    console.error("Kosh artifact audit append failed", error);
+  });
+
+  sendJson(request, response, 201, {
+    ...artifact,
+    storageBackend: locator.backend,
+    downloadPath:
+      "/v1/kosh/repos/" +
+      encodeURIComponent(context.repository.namespace) +
+      "/" +
+      encodeURIComponent(context.repository.slug) +
+      "/automation/runs/" +
+      encodeURIComponent(context.runId) +
+      "/artifacts/" +
+      encodeURIComponent(artifact.id) +
+      "/download"
+  });
+  return true;
 }
 
 async function authorizeArtifactRead(
