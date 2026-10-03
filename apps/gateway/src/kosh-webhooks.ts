@@ -194,7 +194,7 @@ async function validateWebhookUrl(value: string) {
       throw new WebhookError("webhook_private_network_not_allowed");
     }
     if (!literalVersion) {
-      let addresses: Awaited<ReturnType<typeof lookup>>;
+      let addresses: Array<{ address: string; family: number }> = [];
       try {
         addresses = await lookup(hostname, { all: true, verbatim: true });
       } catch {
@@ -295,7 +295,11 @@ async function persistDelivery(input: {
   status: number | null;
   error: string | null;
 }) {
-  const succeeded = input.status !== null && input.status >= 200 && input.status < 300;
+  const succeeded =
+    input.error === null &&
+    input.status !== null &&
+    input.status >= 200 &&
+    input.status < 300;
   const resource = await platformStore.createResource({
     repositoryId: input.repositoryId,
     namespace: input.namespace,
@@ -424,7 +428,7 @@ async function deliverToEndpoint(input: {
           redirect: "error"
         });
         status = response.status;
-        await response.body?.cancel();
+        void response.body?.cancel();
         if (!response.ok) errorText = "http_" + response.status;
       } catch (error) {
         errorText = error instanceof Error ? error.message : "delivery_failed";
@@ -433,7 +437,7 @@ async function deliverToEndpoint(input: {
       attempts.push({
         attempt,
         status,
-        ok: status !== null && status >= 200 && status < 300,
+        ok: errorText === null && status !== null && status >= 200 && status < 300,
         error: errorText,
         durationMs: Date.now() - started
       });
