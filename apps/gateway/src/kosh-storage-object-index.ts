@@ -24,6 +24,10 @@ interface KoshObjectIndex {
     storageClass: KoshStorageClass,
     logicalId: string
   ): Promise<StoredKoshObjectLocator | null>;
+  list(
+    repositoryId: string,
+    storageClass?: KoshStorageClass
+  ): Promise<StoredKoshObjectLocator[]>;
   put(input: {
     repositoryId: string;
     storageClass: KoshStorageClass;
@@ -58,6 +62,17 @@ class MemoryKoshObjectIndex implements KoshObjectIndex {
   async get(repositoryId: string, storageClass: KoshStorageClass, logicalId: string) {
     const item = this.values.get(key(repositoryId, storageClass, logicalId));
     return item ? clone(item) : null;
+  }
+
+  async list(repositoryId: string, storageClass?: KoshStorageClass) {
+    return [...this.values.values()]
+      .filter(
+        (item) =>
+          item.repositoryId === repositoryId &&
+          (!storageClass || item.storageClass === storageClass)
+      )
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .map(clone);
   }
 
   async put(input: {
@@ -135,6 +150,25 @@ class PostgresKoshObjectIndex implements KoshObjectIndex {
       LIMIT 1
     `;
     return rows[0] ? fromRow(rows[0] as Record<string, unknown>) : null;
+  }
+
+  async list(repositoryId: string, storageClass?: KoshStorageClass) {
+    await this.ready();
+    const rows = storageClass
+      ? await this.sql`
+          SELECT * FROM kosh_storage_objects
+          WHERE repository_id = ${repositoryId}
+            AND storage_class = ${storageClass}
+          ORDER BY updated_at DESC
+          LIMIT 20000
+        `
+      : await this.sql`
+          SELECT * FROM kosh_storage_objects
+          WHERE repository_id = ${repositoryId}
+          ORDER BY updated_at DESC
+          LIMIT 20000
+        `;
+    return rows.map((row) => fromRow(row as Record<string, unknown>));
   }
 
   async put(input: {
