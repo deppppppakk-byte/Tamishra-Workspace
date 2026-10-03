@@ -15,6 +15,7 @@ import {
   readyKoshOpsSchedulerLeader,
   releaseKoshOpsSchedulerLeadership
 } from "./kosh-ops-scheduler-leader.js";
+import { reconcileKoshOpsFleet } from "./kosh-ops-fleet-scaling.js";
 import { processKoshOpsJobWithPostprocessing } from "./kosh-ops-processing.js";
 import { enqueueDueKoshOpsSchedules } from "./kosh-ops-scheduler.js";
 
@@ -91,6 +92,14 @@ async function runSchedulerLoop() {
       if (schedulerLeader) {
         const outcomes = await enqueueDueKoshOpsSchedules();
         if (outcomes.length) console.log(`Kosh operations scheduler enqueued ${outcomes.length} due schedule(s).`);
+        const scaling = await reconcileKoshOpsFleet({ apply: true, automatic: true });
+        if (scaling.applied) {
+          console.log("Kosh operations fleet scaling applied", {
+            desiredWorkers: scaling.recommendation.desiredWorkers,
+            currentWorkers: scaling.recommendation.currentWorkers,
+            reason: scaling.recommendation.reason
+          });
+        }
       }
     } catch (error) {
       schedulerLeader = false;
