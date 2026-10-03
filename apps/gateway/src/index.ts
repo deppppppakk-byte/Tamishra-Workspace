@@ -15,6 +15,8 @@ import { handleKoshPublicApiRequest } from "./kosh-api.js";
 import { handleKoshSystemsRequest } from "./kosh-systems-router.js";
 import { handleKoshStoragePreflight } from "./kosh-storage-guard.js";
 import { handleKoshReadinessRequest } from "./kosh-readiness.js";
+import { handleKoshProductionRequest } from "./kosh-production-router.js";
+import { handleKoshStorageStreamingRequest } from "./kosh-storage-streaming-routes.js";
 import {
   handleKoshOperationGuardRequest,
   runWithKoshOperationGuard
@@ -185,10 +187,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     if (origin && allowedOrigins.has(origin)) {
       response.setHeader("access-control-allow-origin", origin);
       response.setHeader("access-control-allow-credentials", "true");
-      response.setHeader(
-        "access-control-allow-methods",
-        "GET,POST,PUT,PATCH,DELETE,OPTIONS"
-      );
+      response.setHeader("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
       response.setHeader(
         "access-control-allow-headers",
         "content-type,authorization,idempotency-key,x-patra-company-provisioning-secret"
@@ -200,100 +199,40 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   }
 
   if (request.method === "GET" && url.pathname === "/health") {
-    json(
-      response,
-      200,
-      {
-        service: "tamishra-workspace-gateway",
-        status: "ok",
-        version: process.env.WORKSPACE_RELEASE_VERSION ?? "0.9.0",
-        mode: process.env.WORKSPACE_CORE_ONLY === "true" ? "core" : "full",
-        persistence: process.env.WORKSPACE_DATABASE_URL ? "postgres" : "ephemeral"
-      },
-      origin
-    );
+    json(response, 200, {
+      service: "tamishra-workspace-gateway",
+      status: "ok",
+      version: process.env.WORKSPACE_RELEASE_VERSION ?? "0.9.0",
+      mode: process.env.WORKSPACE_CORE_ONLY === "true" ? "core" : "full",
+      persistence: process.env.WORKSPACE_DATABASE_URL ? "postgres" : "ephemeral"
+    }, origin);
     return;
   }
 
   if (request.method === "GET" && url.pathname === "/ready") {
-    json(
-      response,
-      200,
-      {
-        service: "tamishra-workspace-gateway",
-        status: "ready",
-        production: isProduction
-      },
-      origin
-    );
+    json(response, 200, {
+      service: "tamishra-workspace-gateway",
+      status: "ready",
+      production: isProduction
+    }, origin);
     return;
   }
 
   if (request.method === "GET" && url.pathname === "/v1/workspace") {
-    json(
-      response,
-      200,
-      {
-        product: "Tamishra Workspace",
-        standalone: true,
-        apps: [
-          "docs",
-          "sheets",
-          "slides",
-          "pdf",
-          "chat",
-          "mail",
-          "meet",
-          "notes",
-          "forms",
-          "files",
-          "kosh"
-        ]
-      },
-      origin
-    );
+    json(response, 200, {
+      product: "Tamishra Workspace",
+      standalone: true,
+      apps: ["docs", "sheets", "slides", "pdf", "chat", "mail", "meet", "notes", "forms", "files", "kosh"]
+    }, origin);
     return;
   }
 
-  if (
-    await handleKoshPublicApiRequest(
-      request,
-      response,
-      url,
-      origin,
-      allowedOrigins
-    )
-  ) {
-    return;
-  }
-
-  if (
-    await handleKoshReadinessRequest(
-      request,
-      response,
-      url,
-      origin,
-      allowedOrigins
-    )
-  ) {
-    return;
-  }
-
-  if (await handleKoshStoragePreflight(request, response, url)) {
-    return;
-  }
-
-  if (
-    await handleKoshOperationGuardRequest(
-      request,
-      response,
-      url,
-      origin,
-      allowedOrigins
-    )
-  ) {
-    return;
-  }
+  if (await handleKoshPublicApiRequest(request, response, url, origin, allowedOrigins)) return;
+  if (await handleKoshReadinessRequest(request, response, url, origin, allowedOrigins)) return;
+  if (await handleKoshProductionRequest(request, response, url, origin, allowedOrigins)) return;
+  if (await handleKoshStorageStreamingRequest(request, response, url)) return;
+  if (await handleKoshStoragePreflight(request, response, url)) return;
+  if (await handleKoshOperationGuardRequest(request, response, url, origin, allowedOrigins)) return;
 
   if (isKoshOperationGuardedRequest(request)) {
     const handled = await runWithKoshOperationGuard(
@@ -301,21 +240,9 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       response,
       async () => {
         if (url.pathname.includes("/systems/")) {
-          return handleKoshSystemsRequest(
-            request,
-            response,
-            url,
-            origin,
-            allowedOrigins
-          );
+          return handleKoshSystemsRequest(request, response, url, origin, allowedOrigins);
         }
-        return handleKoshRequest(
-          request,
-          response,
-          url,
-          origin,
-          allowedOrigins
-        );
+        return handleKoshRequest(request, response, url, origin, allowedOrigins);
       },
       origin,
       allowedOrigins
@@ -323,158 +250,20 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     if (handled) return;
   }
 
-  if (
-    await handleKoshSystemsRequest(
-      request,
-      response,
-      url,
-      origin,
-      allowedOrigins
-    )
-  ) {
-    return;
-  }
-
-  if (await handleKoshAdministrationGate(request, response, url, origin)) {
-    return;
-  }
-
-  if (
-    await handleKoshWebhookRequest(
-      request,
-      response,
-      url,
-      origin,
-      allowedOrigins
-    )
-  ) {
-    return;
-  }
-
-  if (
-    await handleKoshPagesAdminRequest(
-      request,
-      response,
-      url,
-      origin,
-      allowedOrigins
-    )
-  ) {
-    return;
-  }
-
-  if (
-    await handleKoshWikiRequest(
-      request,
-      response,
-      url,
-      origin,
-      allowedOrigins
-    )
-  ) {
-    return;
-  }
-
-  if (
-    await handleKoshRequest(
-      request,
-      response,
-      url,
-      origin,
-      allowedOrigins
-    )
-  ) {
-    return;
-  }
-
-  if (
-    await handleDocsRequest(
-      request,
-      response,
-      url,
-      origin,
-      allowedOrigins
-    )
-  ) {
-    return;
-  }
-  if (
-    await handleFilesRequest(
-      request,
-      response,
-      url,
-      origin,
-      allowedOrigins
-    )
-  ) {
-    return;
-  }
-  if (
-    await handleContentRequest(
-      request,
-      response,
-      url,
-      origin,
-      allowedOrigins
-    )
-  ) {
-    return;
-  }
-  if (
-    await handleAssetsRequest(
-      request,
-      response,
-      url,
-      origin,
-      allowedOrigins
-    )
-  ) {
-    return;
-  }
-  if (
-    await handlePatraRequest(
-      request,
-      response,
-      url,
-      origin,
-      allowedOrigins
-    )
-  ) {
-    return;
-  }
-  if (
-    await handleIdentityRequest(
-      request,
-      response,
-      url,
-      origin,
-      allowedOrigins
-    )
-  ) {
-    return;
-  }
-  if (
-    await handleChatRequest(
-      request,
-      response,
-      url,
-      origin,
-      allowedOrigins
-    )
-  ) {
-    return;
-  }
-  if (
-    await handleMeetingRequest(
-      request,
-      response,
-      url,
-      origin,
-      allowedOrigins
-    )
-  ) {
-    return;
-  }
+  if (await handleKoshSystemsRequest(request, response, url, origin, allowedOrigins)) return;
+  if (await handleKoshAdministrationGate(request, response, url, origin)) return;
+  if (await handleKoshWebhookRequest(request, response, url, origin, allowedOrigins)) return;
+  if (await handleKoshPagesAdminRequest(request, response, url, origin, allowedOrigins)) return;
+  if (await handleKoshWikiRequest(request, response, url, origin, allowedOrigins)) return;
+  if (await handleKoshRequest(request, response, url, origin, allowedOrigins)) return;
+  if (await handleDocsRequest(request, response, url, origin, allowedOrigins)) return;
+  if (await handleFilesRequest(request, response, url, origin, allowedOrigins)) return;
+  if (await handleContentRequest(request, response, url, origin, allowedOrigins)) return;
+  if (await handleAssetsRequest(request, response, url, origin, allowedOrigins)) return;
+  if (await handlePatraRequest(request, response, url, origin, allowedOrigins)) return;
+  if (await handleIdentityRequest(request, response, url, origin, allowedOrigins)) return;
+  if (await handleChatRequest(request, response, url, origin, allowedOrigins)) return;
+  if (await handleMeetingRequest(request, response, url, origin, allowedOrigins)) return;
 
   notFound(response, origin);
 }

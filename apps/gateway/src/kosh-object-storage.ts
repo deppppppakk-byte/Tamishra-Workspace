@@ -8,12 +8,19 @@ import {
   stat,
   writeFile
 } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { Readable } from "node:stream";
+import { dirname, resolve, sep } from "node:path";
+import { Readable, type Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { KoshStorageClass } from "./kosh-storage-policy.js";
 
 export type KoshObjectStorageBackend = "local" | "google-drive";
+
+export type KoshObjectMirrorLocator = {
+  backend: "local";
+  objectId: string;
+  sizeBytes: number;
+  sha256: string;
+};
 
 export type KoshObjectLocator = {
   backend: KoshObjectStorageBackend;
@@ -21,6 +28,7 @@ export type KoshObjectLocator = {
   storageClass: KoshStorageClass;
   sizeBytes: number;
   sha256: string;
+  mirror?: KoshObjectMirrorLocator | null;
 };
 
 type PutKoshObjectInput = {
@@ -65,6 +73,42 @@ function configuredBackend(): KoshObjectStorageBackend {
 
 export function koshObjectStorageBackend() {
   return configuredBackend();
+}
+
+function mirrorRoot() {
+  const value = process.env.KOSH_OBJECT_MIRROR_ROOT?.trim();
+  return value ? resolve(value) : null;
+}
+
+function mirrorRequired() {
+  return process.env.KOSH_OBJECT_MIRROR_REQUIRED === "true";
+}
+
+function safeComponent(value: string, fallback: string) {
+  const result = clean(value, 160).replace(/[^a-zA-Z0-9._-]+/g, "-");
+  return result && result !== "." && result !== ".." ? result : fallback;
+}
+
+function objectMirrorPath(input: {
+  storageClass: KoshStorageClass;
+  repositoryId: string;
+  logicalId: string;
+  filename: string;
+}) {
+  const root = mirrorRoot();
+  if (!root) return null;
+  const path = resolve(
+    root,
+    input.storageClass,
+    safeComponent(input.repositoryId, "repository"),
+    safeComponent(input.logicalId, "object"),
+    safeComponent(input.filename, "object.bin")
+  );
+  const prefix = root.endsWith(sep) ? root : root + sep;
+  if (!path.startsWith(prefix)) {
+    throw Object.assign(new Error("kosh_object_mirror_path_invalid"), { status: 500 });
+  }
+  return path;
 }
 
 function driveFolderId(storageClass: KoshStorageClass) {
@@ -190,6 +234,37 @@ function driveMetadata(input: {
   };
 }
 
+async function createMirrorFromBytes(input: PutKoshObjectInput) {
+  const path = objectMirrorPath(input);
+  if (!path) return null;
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, input.bytes, { flag: "wx" });
+  return {
+    backend: "local" as const,
+    objectId: path,
+    sizeBytes: input.bytes.length,
+    sha256: input.sha256
+  };
+}
+
+async function createMirrorFromFile(input: PutKoshObjectFileInput) {
+  const path = objectMirrorPath(input);
+  if (!path) return null;
+  await mkdir(dirname(path), { recursive: true });
+  await copyFile(input.sourcePath, path);
+  const info = await stat(path);
+  if (info.size !== input.sizeBytes) {
+    await rm(path, { force: true }).catch(() => undefined);
+    throw Object.assign(new Error("kosh_object_mirror_size_changed"), { status: 500 });
+  }
+  return {
+    backend: "local" as const,
+    objectId: path,
+    sizeBytes: input.sizeBytes,
+    sha256: input.sha256
+  };
+}
+
 async function putGoogleDriveObject(input: PutKoshObjectInput): Promise<KoshObjectLocator> {
   const metadata = driveMetadata(input);
   const form = new FormData();
@@ -223,13 +298,23 @@ async function putGoogleDriveObject(input: PutKoshObjectInput): Promise<KoshObje
     );
   }
 
-  return {
+  const locator: KoshObjectLocator = {
     backend: "google-drive",
     objectId: payload.id,
     storageClass: input.storageClass,
     sizeBytes: input.bytes.length,
-    sha256: input.sha256
+    sha256: input.sha256,
+    mirror: null
   };
+  try {
+    locator.mirror = await createMirrorFromBytes(input);
+  } catch (error) {
+    if (mirrorRequired()) {
+      await deleteGoogleDriveObject(locator).catch(() => undefined);
+      throw error;
+    }
+  }
+  return locator;
 }
 
 async function putGoogleDriveFile(
@@ -270,13 +355,9 @@ async function putGoogleDriveFile(
       const buffer = Buffer.allocUnsafe(length);
       const result = await handle.read(buffer, 0, length, offset);
       if (result.bytesRead <= 0) {
-        throw Object.assign(new Error("kosh_object_source_truncated"), {
-          status: 500
-        });
+        throw Object.assign(new Error("kosh_object_source_truncated"), { status: 500 });
       }
-      const chunk = result.bytesRead === buffer.length
-        ? buffer
-        : buffer.subarray(0, result.bytesRead);
+      const chunk = result.bytesRead === buffer.length ? buffer : buffer.subarray(0, result.bytesRead);
       const end = offset + result.bytesRead - 1;
       const response = await googleRequest(uploadUrl, {
         method: "PUT",
@@ -304,26 +385,44 @@ async function putGoogleDriveFile(
   }
 
   if (!finalPayload?.id || offset !== input.sizeBytes) {
-    throw Object.assign(new Error("kosh_google_drive_resumable_upload_incomplete"), {
-      status: 503
-    });
+    throw Object.assign(new Error("kosh_google_drive_resumable_upload_incomplete"), { status: 503 });
   }
 
-  return {
+  const locator: KoshObjectLocator = {
     backend: "google-drive",
     objectId: finalPayload.id,
     storageClass: input.storageClass,
     sizeBytes: input.sizeBytes,
-    sha256: input.sha256
+    sha256: input.sha256,
+    mirror: null
   };
+  try {
+    locator.mirror = await createMirrorFromFile(input);
+  } catch (error) {
+    if (mirrorRequired()) {
+      await deleteGoogleDriveObject(locator).catch(() => undefined);
+      throw error;
+    }
+  }
+  return locator;
 }
 
-async function readGoogleDriveObject(locator: KoshObjectLocator) {
-  const response = await googleRequest(
+async function googleDriveResponse(locator: KoshObjectLocator) {
+  return googleRequest(
     `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(locator.objectId)}?alt=media`,
     { method: "GET" }
   );
+}
+
+async function readMirror(locator: KoshObjectLocator) {
+  if (!locator.mirror?.objectId) throw new Error("kosh_object_mirror_missing");
+  return readFile(locator.mirror.objectId);
+}
+
+async function readGoogleDriveObject(locator: KoshObjectLocator) {
+  const response = await googleDriveResponse(locator);
   if (!response.ok) {
+    if (locator.mirror?.objectId) return readMirror(locator);
     throw Object.assign(new Error("kosh_google_drive_object_missing"), {
       status: response.status === 404 ? 404 : 503
     });
@@ -335,16 +434,17 @@ async function materializeGoogleDriveObject(
   locator: KoshObjectLocator,
   destinationPath: string
 ) {
-  const response = await googleRequest(
-    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(locator.objectId)}?alt=media`,
-    { method: "GET" }
-  );
-  if (!response.ok || !response.body) {
+  const response = await googleDriveResponse(locator).catch(() => null);
+  await mkdir(dirname(destinationPath), { recursive: true });
+  if (!response?.ok || !response.body) {
+    if (locator.mirror?.objectId) {
+      await copyFile(locator.mirror.objectId, destinationPath);
+      return;
+    }
     throw Object.assign(new Error("kosh_google_drive_object_missing"), {
-      status: response.status === 404 ? 404 : 503
+      status: response?.status === 404 ? 404 : 503
     });
   }
-  await mkdir(dirname(destinationPath), { recursive: true });
   await pipeline(
     Readable.fromWeb(response.body as never),
     createWriteStream(destinationPath, { flags: "wx" })
@@ -357,10 +457,20 @@ async function deleteGoogleDriveObject(locator: KoshObjectLocator) {
     { method: "DELETE" }
   );
   if (!response.ok && response.status !== 404) {
-    throw Object.assign(new Error("kosh_google_drive_delete_failed"), {
-      status: 503
-    });
+    throw Object.assign(new Error("kosh_google_drive_delete_failed"), { status: 503 });
   }
+}
+
+function parseMirror(value: unknown): KoshObjectMirrorLocator | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  if (String(item.backend ?? "") !== "local" || !String(item.objectId ?? "")) return null;
+  return {
+    backend: "local",
+    objectId: String(item.objectId),
+    sizeBytes: Math.max(0, Number(item.sizeBytes) || 0),
+    sha256: String(item.sha256 ?? "")
+  };
 }
 
 export function parseKoshObjectLocator(value: unknown): KoshObjectLocator | null {
@@ -372,15 +482,14 @@ export function parseKoshObjectLocator(value: unknown): KoshObjectLocator | null
     (backend !== "local" && backend !== "google-drive") ||
     !["artifact", "package", "release", "backup"].includes(storageClass) ||
     !String(item.objectId ?? "")
-  ) {
-    return null;
-  }
+  ) return null;
   return {
     backend,
     objectId: String(item.objectId),
     storageClass: storageClass as KoshStorageClass,
     sizeBytes: Math.max(0, Number(item.sizeBytes) || 0),
-    sha256: String(item.sha256 ?? "")
+    sha256: String(item.sha256 ?? ""),
+    mirror: parseMirror(item.mirror)
   };
 }
 
@@ -388,7 +497,6 @@ export async function putKoshObject(input: PutKoshObjectInput) {
   if (configuredBackend() === "google-drive") {
     return putGoogleDriveObject(input);
   }
-
   await mkdir(dirname(input.localPath), { recursive: true });
   await writeFile(input.localPath, input.bytes, { flag: "wx" });
   return {
@@ -396,7 +504,8 @@ export async function putKoshObject(input: PutKoshObjectInput) {
     objectId: input.localPath,
     storageClass: input.storageClass,
     sizeBytes: input.bytes.length,
-    sha256: input.sha256
+    sha256: input.sha256,
+    mirror: null
   };
 }
 
@@ -404,7 +513,6 @@ export async function putKoshObjectFromFile(input: PutKoshObjectFileInput) {
   if (configuredBackend() === "google-drive") {
     return putGoogleDriveFile(input);
   }
-
   const source = resolve(input.sourcePath);
   const target = resolve(input.localPath);
   if (source !== target) {
@@ -420,7 +528,8 @@ export async function putKoshObjectFromFile(input: PutKoshObjectFileInput) {
     objectId: target,
     storageClass: input.storageClass,
     sizeBytes: input.sizeBytes,
-    sha256: input.sha256
+    sha256: input.sha256,
+    mirror: null
   };
 }
 
@@ -429,9 +538,32 @@ export async function readKoshObject(
   localFallbackPath: string
 ) {
   if (!locator || locator.backend === "local") {
-    return readFile(localFallbackPath);
+    return readFile(localFallbackPath || locator?.objectId || "");
   }
   return readGoogleDriveObject(locator);
+}
+
+export async function streamKoshObject(
+  locator: KoshObjectLocator | null,
+  localFallbackPath: string,
+  destination: Writable
+) {
+  if (!locator || locator.backend === "local") {
+    await pipeline(createReadStream(localFallbackPath || locator?.objectId || ""), destination);
+    return { source: "local" as const };
+  }
+  const response = await googleDriveResponse(locator).catch(() => null);
+  if (response?.ok && response.body) {
+    await pipeline(Readable.fromWeb(response.body as never), destination);
+    return { source: "google-drive" as const };
+  }
+  if (locator.mirror?.objectId) {
+    await pipeline(createReadStream(locator.mirror.objectId), destination);
+    return { source: "mirror" as const };
+  }
+  throw Object.assign(new Error("kosh_google_drive_object_missing"), {
+    status: response?.status === 404 ? 404 : 503
+  });
 }
 
 export async function materializeKoshObject(
@@ -441,12 +573,10 @@ export async function materializeKoshObject(
 ) {
   await rm(destinationPath, { force: true }).catch(() => undefined);
   if (!locator || locator.backend === "local") {
-    const source = resolve(localFallbackPath);
+    const source = resolve(localFallbackPath || locator?.objectId || "");
     const destination = resolve(destinationPath);
     await mkdir(dirname(destination), { recursive: true });
-    if (source !== destination) {
-      await copyFile(source, destination);
-    }
+    if (source !== destination) await copyFile(source, destination);
     return destination;
   }
   await materializeGoogleDriveObject(locator, destinationPath);
@@ -458,8 +588,11 @@ export async function deleteKoshObject(
   localFallbackPath: string
 ) {
   if (!locator || locator.backend === "local") {
-    await rm(localFallbackPath, { force: true }).catch(() => undefined);
+    await rm(localFallbackPath || locator?.objectId || "", { force: true }).catch(() => undefined);
     return;
   }
   await deleteGoogleDriveObject(locator);
+  if (locator.mirror?.objectId) {
+    await rm(locator.mirror.objectId, { force: true }).catch(() => undefined);
+  }
 }
