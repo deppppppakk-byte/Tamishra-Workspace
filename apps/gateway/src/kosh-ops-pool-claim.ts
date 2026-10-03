@@ -56,6 +56,23 @@ function leaseMs() {
   return boundedInteger(process.env.KOSH_OPS_LEASE_SECONDS, 120, 30, 1800) * 1000;
 }
 
+export function koshOpsFairSharePolicy() {
+  const agingMinutes = boundedInteger(process.env.KOSH_OPS_PRIORITY_AGING_MINUTES, 30, 1, 1440);
+  return {
+    enabled: process.env.KOSH_OPS_FAIR_SHARE_ENABLED !== "false",
+    repositorySoftConcurrency: boundedInteger(
+      process.env.KOSH_OPS_REPOSITORY_SOFT_CONCURRENCY,
+      4,
+      1,
+      64
+    ),
+    priorityBypass: boundedInteger(process.env.KOSH_OPS_FAIR_SHARE_PRIORITY_BYPASS, 95, 1, 100),
+    agingSeconds: agingMinutes * 60,
+    agingMinutes,
+    maxAgingBonus: boundedInteger(process.env.KOSH_OPS_PRIORITY_AGING_MAX_BONUS, 20, 0, 100)
+  };
+}
+
 function timestamp(value: unknown) {
   return value ? new Date(String(value)).toISOString() : null;
 }
@@ -131,55 +148,172 @@ async function recoverExpiredLeases(db: postgres.TransactionSql<{}>) {
     WHERE state = 'leased' AND lease_expires_at <= NOW()`;
 }
 
+async function selectAllCandidate(tx: postgres.TransactionSql<{}>) {
+  const policy = koshOpsFairSharePolicy();
+  return tx`WITH leased_counts AS (
+      SELECT repository_id, COUNT(*)::int AS leased_count
+      FROM kosh_ops_jobs
+      WHERE state = 'leased'
+      GROUP BY repository_id
+    )
+    SELECT j.* FROM kosh_ops_jobs j
+    LEFT JOIN leased_counts l
+      ON l.repository_id IS NOT DISTINCT FROM j.repository_id
+    WHERE j.state = 'queued' AND j.available_at <= NOW()
+    ORDER BY
+      CASE
+        WHEN ${policy.enabled} AND j.priority < ${policy.priorityBypass}
+          THEN CASE WHEN COALESCE(l.leased_count, 0) < ${policy.repositorySoftConcurrency} THEN 0 ELSE 1 END
+        ELSE 0
+      END ASC,
+      CASE
+        WHEN ${policy.enabled} AND j.priority < ${policy.priorityBypass}
+          THEN COALESCE(l.leased_count, 0)
+        ELSE 0
+      END ASC,
+      (j.priority + CASE
+        WHEN ${policy.enabled}
+          THEN LEAST(
+            ${policy.maxAgingBonus},
+            FLOOR(EXTRACT(EPOCH FROM (NOW() - GREATEST(j.created_at, j.available_at))) / ${policy.agingSeconds})
+          )
+        ELSE 0
+      END) DESC,
+      j.available_at ASC,
+      j.created_at ASC
+    FOR UPDATE OF j SKIP LOCKED LIMIT 1`;
+}
+
+async function selectGeneralCandidate(tx: postgres.TransactionSql<{}>) {
+  const policy = koshOpsFairSharePolicy();
+  return tx`WITH leased_counts AS (
+      SELECT repository_id, COUNT(*)::int AS leased_count
+      FROM kosh_ops_jobs
+      WHERE state = 'leased'
+        AND type IN ('alerts.evaluate','notification.deliver','pages.domain.verify','secret.rotation.audit')
+      GROUP BY repository_id
+    )
+    SELECT j.* FROM kosh_ops_jobs j
+    LEFT JOIN leased_counts l ON l.repository_id IS NOT DISTINCT FROM j.repository_id
+    WHERE j.state = 'queued' AND j.available_at <= NOW()
+      AND j.type IN ('alerts.evaluate','notification.deliver','pages.domain.verify','secret.rotation.audit')
+    ORDER BY
+      CASE WHEN ${policy.enabled} AND j.priority < ${policy.priorityBypass}
+        THEN CASE WHEN COALESCE(l.leased_count, 0) < ${policy.repositorySoftConcurrency} THEN 0 ELSE 1 END ELSE 0 END ASC,
+      CASE WHEN ${policy.enabled} AND j.priority < ${policy.priorityBypass}
+        THEN COALESCE(l.leased_count, 0) ELSE 0 END ASC,
+      (j.priority + CASE WHEN ${policy.enabled} THEN LEAST(${policy.maxAgingBonus}, FLOOR(EXTRACT(EPOCH FROM (NOW() - GREATEST(j.created_at, j.available_at))) / ${policy.agingSeconds})) ELSE 0 END) DESC,
+      j.available_at ASC, j.created_at ASC
+    FOR UPDATE OF j SKIP LOCKED LIMIT 1`;
+}
+
+async function selectStorageCandidate(tx: postgres.TransactionSql<{}>) {
+  const policy = koshOpsFairSharePolicy();
+  return tx`WITH leased_counts AS (
+      SELECT repository_id, COUNT(*)::int AS leased_count
+      FROM kosh_ops_jobs
+      WHERE state = 'leased' AND type IN ('storage.lifecycle','replication.verify')
+      GROUP BY repository_id
+    )
+    SELECT j.* FROM kosh_ops_jobs j
+    LEFT JOIN leased_counts l ON l.repository_id IS NOT DISTINCT FROM j.repository_id
+    WHERE j.state = 'queued' AND j.available_at <= NOW()
+      AND j.type IN ('storage.lifecycle','replication.verify')
+    ORDER BY
+      CASE WHEN ${policy.enabled} AND j.priority < ${policy.priorityBypass}
+        THEN CASE WHEN COALESCE(l.leased_count, 0) < ${policy.repositorySoftConcurrency} THEN 0 ELSE 1 END ELSE 0 END ASC,
+      CASE WHEN ${policy.enabled} AND j.priority < ${policy.priorityBypass}
+        THEN COALESCE(l.leased_count, 0) ELSE 0 END ASC,
+      (j.priority + CASE WHEN ${policy.enabled} THEN LEAST(${policy.maxAgingBonus}, FLOOR(EXTRACT(EPOCH FROM (NOW() - GREATEST(j.created_at, j.available_at))) / ${policy.agingSeconds})) ELSE 0 END) DESC,
+      j.available_at ASC, j.created_at ASC
+    FOR UPDATE OF j SKIP LOCKED LIMIT 1`;
+}
+
+async function selectRecoveryCandidate(tx: postgres.TransactionSql<{}>) {
+  const policy = koshOpsFairSharePolicy();
+  return tx`WITH leased_counts AS (
+      SELECT repository_id, COUNT(*)::int AS leased_count
+      FROM kosh_ops_jobs
+      WHERE state = 'leased' AND type = 'recovery.drill'
+      GROUP BY repository_id
+    )
+    SELECT j.* FROM kosh_ops_jobs j
+    LEFT JOIN leased_counts l ON l.repository_id IS NOT DISTINCT FROM j.repository_id
+    WHERE j.state = 'queued' AND j.available_at <= NOW() AND j.type = 'recovery.drill'
+    ORDER BY
+      CASE WHEN ${policy.enabled} AND j.priority < ${policy.priorityBypass}
+        THEN CASE WHEN COALESCE(l.leased_count, 0) < ${policy.repositorySoftConcurrency} THEN 0 ELSE 1 END ELSE 0 END ASC,
+      CASE WHEN ${policy.enabled} AND j.priority < ${policy.priorityBypass}
+        THEN COALESCE(l.leased_count, 0) ELSE 0 END ASC,
+      (j.priority + CASE WHEN ${policy.enabled} THEN LEAST(${policy.maxAgingBonus}, FLOOR(EXTRACT(EPOCH FROM (NOW() - GREATEST(j.created_at, j.available_at))) / ${policy.agingSeconds})) ELSE 0 END) DESC,
+      j.available_at ASC, j.created_at ASC
+    FOR UPDATE OF j SKIP LOCKED LIMIT 1`;
+}
+
+async function selectDatabaseCandidate(tx: postgres.TransactionSql<{}>) {
+  const policy = koshOpsFairSharePolicy();
+  return tx`WITH leased_counts AS (
+      SELECT repository_id, COUNT(*)::int AS leased_count
+      FROM kosh_ops_jobs
+      WHERE state = 'leased' AND type = 'database.backup'
+      GROUP BY repository_id
+    )
+    SELECT j.* FROM kosh_ops_jobs j
+    LEFT JOIN leased_counts l ON l.repository_id IS NOT DISTINCT FROM j.repository_id
+    WHERE j.state = 'queued' AND j.available_at <= NOW() AND j.type = 'database.backup'
+    ORDER BY
+      CASE WHEN ${policy.enabled} AND j.priority < ${policy.priorityBypass}
+        THEN CASE WHEN COALESCE(l.leased_count, 0) < ${policy.repositorySoftConcurrency} THEN 0 ELSE 1 END ELSE 0 END ASC,
+      CASE WHEN ${policy.enabled} AND j.priority < ${policy.priorityBypass}
+        THEN COALESCE(l.leased_count, 0) ELSE 0 END ASC,
+      (j.priority + CASE WHEN ${policy.enabled} THEN LEAST(${policy.maxAgingBonus}, FLOOR(EXTRACT(EPOCH FROM (NOW() - GREATEST(j.created_at, j.available_at))) / ${policy.agingSeconds})) ELSE 0 END) DESC,
+      j.available_at ASC, j.created_at ASC
+    FOR UPDATE OF j SKIP LOCKED LIMIT 1`;
+}
+
+async function selectIsolatedCandidate(tx: postgres.TransactionSql<{}>) {
+  const policy = koshOpsFairSharePolicy();
+  return tx`WITH leased_counts AS (
+      SELECT repository_id, COUNT(*)::int AS leased_count
+      FROM kosh_ops_jobs
+      WHERE state = 'leased' AND type IN ('extension.execute','load.test','failure.probe')
+      GROUP BY repository_id
+    )
+    SELECT j.* FROM kosh_ops_jobs j
+    LEFT JOIN leased_counts l ON l.repository_id IS NOT DISTINCT FROM j.repository_id
+    WHERE j.state = 'queued' AND j.available_at <= NOW()
+      AND j.type IN ('extension.execute','load.test','failure.probe')
+    ORDER BY
+      CASE WHEN ${policy.enabled} AND j.priority < ${policy.priorityBypass}
+        THEN CASE WHEN COALESCE(l.leased_count, 0) < ${policy.repositorySoftConcurrency} THEN 0 ELSE 1 END ELSE 0 END ASC,
+      CASE WHEN ${policy.enabled} AND j.priority < ${policy.priorityBypass}
+        THEN COALESCE(l.leased_count, 0) ELSE 0 END ASC,
+      (j.priority + CASE WHEN ${policy.enabled} THEN LEAST(${policy.maxAgingBonus}, FLOOR(EXTRACT(EPOCH FROM (NOW() - GREATEST(j.created_at, j.available_at))) / ${policy.agingSeconds})) ELSE 0 END) DESC,
+      j.available_at ASC, j.created_at ASC
+    FOR UPDATE OF j SKIP LOCKED LIMIT 1`;
+}
+
 async function selectPoolCandidate(
   tx: postgres.TransactionSql<{}>,
-  pool: Exclude<KoshOpsWorkerPool, "all">
+  pool: KoshOpsWorkerPool
 ) {
-  if (pool === "general") {
-    return tx`SELECT * FROM kosh_ops_jobs
-      WHERE state = 'queued' AND available_at <= NOW()
-        AND type IN ('alerts.evaluate','notification.deliver','pages.domain.verify','secret.rotation.audit')
-      ORDER BY priority DESC, available_at ASC, created_at ASC
-      FOR UPDATE SKIP LOCKED LIMIT 1`;
-  }
-  if (pool === "storage") {
-    return tx`SELECT * FROM kosh_ops_jobs
-      WHERE state = 'queued' AND available_at <= NOW()
-        AND type IN ('storage.lifecycle','replication.verify')
-      ORDER BY priority DESC, available_at ASC, created_at ASC
-      FOR UPDATE SKIP LOCKED LIMIT 1`;
-  }
-  if (pool === "recovery") {
-    return tx`SELECT * FROM kosh_ops_jobs
-      WHERE state = 'queued' AND available_at <= NOW()
-        AND type = 'recovery.drill'
-      ORDER BY priority DESC, available_at ASC, created_at ASC
-      FOR UPDATE SKIP LOCKED LIMIT 1`;
-  }
-  if (pool === "database") {
-    return tx`SELECT * FROM kosh_ops_jobs
-      WHERE state = 'queued' AND available_at <= NOW()
-        AND type = 'database.backup'
-      ORDER BY priority DESC, available_at ASC, created_at ASC
-      FOR UPDATE SKIP LOCKED LIMIT 1`;
-  }
-  return tx`SELECT * FROM kosh_ops_jobs
-    WHERE state = 'queued' AND available_at <= NOW()
-      AND type IN ('extension.execute','load.test','failure.probe')
-    ORDER BY priority DESC, available_at ASC, created_at ASC
-    FOR UPDATE SKIP LOCKED LIMIT 1`;
+  if (pool === "all") return selectAllCandidate(tx);
+  if (pool === "general") return selectGeneralCandidate(tx);
+  if (pool === "storage") return selectStorageCandidate(tx);
+  if (pool === "recovery") return selectRecoveryCandidate(tx);
+  if (pool === "database") return selectDatabaseCandidate(tx);
+  return selectIsolatedCandidate(tx);
 }
 
 export async function claimKoshOpsJobForPool(
   workerId: string,
   pool: KoshOpsWorkerPool
 ) {
-  if (pool === "all") return claimKoshOpsJob(workerId);
-
   const owner = workerId.trim().slice(0, 160);
   if (!owner) throw new Error("worker_id_required");
   const db = database();
   if (!db) {
+    if (pool === "all") return claimKoshOpsJob(workerId);
     throw Object.assign(new Error("kosh_ops_pool_claim_requires_database"), { status: 503 });
   }
 
