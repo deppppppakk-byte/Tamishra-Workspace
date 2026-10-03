@@ -12,6 +12,7 @@ import { handleKoshWikiRequest } from "./kosh-wiki.js";
 import { handleKoshPagesAdminRequest } from "./kosh-pages.js";
 import { handleKoshWebhookRequest } from "./kosh-webhooks.js";
 import { handleKoshPublicApiRequest } from "./kosh-api.js";
+import { handleKoshOAuthRequest } from "./kosh-oauth.js";
 import { handleKoshSystemsRequest } from "./kosh-systems-router.js";
 import { handleKoshStoragePreflight } from "./kosh-storage-guard.js";
 import { handleKoshReadinessRequest } from "./kosh-readiness.js";
@@ -63,6 +64,13 @@ function validateProductionConfiguration() {
   if (process.env.KOSH_SSH_PUBLIC_HOST?.trim()) {
     requireProductionValue("KOSH_SSH_SERVICE_TOKEN", 24);
     requireProductionValue("KOSH_REPO_ROOT", 2);
+  }
+  if (process.env.KOSH_OAUTH_ISSUER?.trim()) {
+    requireProductionValue("WORKSPACE_DATABASE_URL", 12);
+    requireProductionValue("KOSH_OAUTH_RESOURCES", 12);
+    requireProductionValue("KOSH_OAUTH_LOGIN_URL", 12);
+    requireProductionValue("KOSH_OAUTH_CONSENT_SECRET", 32);
+    requireProductionValue("KOSH_PLUGIN_ASSERTION_SECRET", 32);
   }
   if (!coreOnly) {
     const liveKitUrl = process.env.LIVEKIT_URL ?? "";
@@ -190,7 +198,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       response.setHeader("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
       response.setHeader(
         "access-control-allow-headers",
-        "content-type,authorization,idempotency-key,x-patra-company-provisioning-secret"
+        "content-type,authorization,idempotency-key,x-patra-company-provisioning-secret,x-kosh-oauth-resource,x-kosh-plugin-assertion"
       );
       response.setHeader("vary", "origin");
     }
@@ -227,6 +235,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     return;
   }
 
+  if (await handleKoshOAuthRequest(request, response, url)) return;
   if (await handleKoshPublicApiRequest(request, response, url, origin, allowedOrigins)) return;
   if (await handleKoshReadinessRequest(request, response, url, origin, allowedOrigins)) return;
   if (await handleKoshProductionRequest(request, response, url, origin, allowedOrigins)) return;
