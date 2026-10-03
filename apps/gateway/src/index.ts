@@ -15,7 +15,7 @@ import { handleKoshPublicApiRequest } from "./kosh-api.js";
 import { handleKoshSystemsRequest } from "./kosh-systems-router.js";
 import { handleKoshStoragePreflight } from "./kosh-storage-guard.js";
 import { handleKoshReadinessRequest } from "./kosh-readiness.js";
-import { handleKoshProductionOperationsRequest } from "./kosh-production-operations.js";
+import { handleKoshProductionRequest } from "./kosh-production-router.js";
 import { handleKoshStorageStreamingRequest } from "./kosh-storage-streaming-routes.js";
 import {
   handleKoshOperationGuardRequest,
@@ -229,7 +229,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
 
   if (await handleKoshPublicApiRequest(request, response, url, origin, allowedOrigins)) return;
   if (await handleKoshReadinessRequest(request, response, url, origin, allowedOrigins)) return;
-  if (await handleKoshProductionOperationsRequest(request, response, url, origin, allowedOrigins)) return;
+  if (await handleKoshProductionRequest(request, response, url, origin, allowedOrigins)) return;
   if (await handleKoshStorageStreamingRequest(request, response, url)) return;
   if (await handleKoshStoragePreflight(request, response, url)) return;
   if (await handleKoshOperationGuardRequest(request, response, url, origin, allowedOrigins)) return;
