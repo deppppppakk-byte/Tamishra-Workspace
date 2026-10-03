@@ -7,7 +7,7 @@ import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
 import { resolveKoshIdentity } from "./kosh-auth.js";
-import { automationStore } from "./kosh-automation-service.js";
+import { automationStore as getAutomationStore } from "./kosh-automation-service.js";
 import { getKoshPackageStore } from "./kosh-package-store.js";
 import {
   getKoshPlatformStore,
@@ -19,7 +19,7 @@ import { getKoshStore, type StoredKoshRepository } from "./kosh-store.js";
 const execFileAsync = promisify(execFile);
 const repositoryStore = getKoshStore();
 const platformStore = getKoshPlatformStore();
-const automationStore = automationStore();
+const automationStore = getAutomationStore();
 const packageStore = getKoshPackageStore();
 const releaseStore = getKoshReleaseStore();
 const repositoryRoot = resolve(process.env.KOSH_REPO_ROOT?.trim() || ".kosh/repos");
@@ -903,7 +903,7 @@ async function handleRepositorySystems(
       : childMatch[2] === "iterations"
         ? "iteration" as const
         : "item" as const;
-    let name = clean(body.name ?? body.title, 180);
+    const name = clean(body.name ?? body.title, 180);
     if (!name) {
       throw Object.assign(new Error("project_resource_name_required"), { status: 400 });
     }
