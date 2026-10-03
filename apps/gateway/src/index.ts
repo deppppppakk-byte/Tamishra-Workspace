@@ -11,9 +11,13 @@ import { handleKoshRequest } from "./kosh.js";
 import { handleKoshWikiRequest } from "./kosh-wiki.js";
 import { handleKoshPagesAdminRequest } from "./kosh-pages.js";
 import { handleKoshWebhookRequest } from "./kosh-webhooks.js";
+import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
+import { getKoshStore } from "./kosh-store.js";
 
 const port = Number(process.env.WORKSPACE_GATEWAY_PORT ?? process.env.PORT ?? 4100);
 const isProduction = process.env.NODE_ENV === "production";
+const koshRepositoryStore = getKoshStore();
+const koshAdminMutatingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 function requireProductionValue(name: string, minimumLength = 1) {
   const value = process.env[name]?.trim();
@@ -25,38 +29,30 @@ function requireProductionValue(name: string, minimumLength = 1) {
 
 function validateProductionConfiguration() {
   if (!isProduction) return;
-
   const coreOnly = process.env.WORKSPACE_CORE_ONLY === "true";
-
   if (!coreOnly) {
     requireProductionValue("WORKSPACE_DATABASE_URL", 12);
     requireProductionValue("LIVEKIT_URL", 8);
     requireProductionValue("LIVEKIT_API_KEY", 6);
     requireProductionValue("LIVEKIT_API_SECRET", 24);
   }
-
   requireProductionValue("WORKSPACE_IP_HASH_SECRET", 32);
-
   if (process.env.WORKSPACE_SESSION_COOKIE_SECURE === "false") {
     throw new Error("WORKSPACE_SESSION_COOKIE_SECURE must not be false in production.");
   }
-
   const allowed = process.env.WORKSPACE_ALLOWED_ORIGINS?.trim();
   if (!allowed) {
     throw new Error("WORKSPACE_ALLOWED_ORIGINS is required in production.");
   }
-
   if (process.env.KOSH_PUBLIC_ORIGIN?.trim()) {
     requireProductionValue("KOSH_REPO_ROOT", 2);
     requireProductionValue("KOSH_GIT_TOKEN", 24);
     requireProductionValue("KOSH_RUNNER_TOKEN", 24);
   }
-
   if (process.env.KOSH_SSH_PUBLIC_HOST?.trim()) {
     requireProductionValue("KOSH_SSH_SERVICE_TOKEN", 24);
     requireProductionValue("KOSH_REPO_ROOT", 2);
   }
-
   if (!coreOnly) {
     const liveKitUrl = process.env.LIVEKIT_URL ?? "";
     if (!/^wss:\/\//i.test(liveKitUrl)) {
@@ -128,9 +124,50 @@ function notFound(response: ServerResponse, origin?: string) {
   json(response, 404, { error: "not_found" }, origin);
 }
 
+async function handleKoshAdministrationGate(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  origin?: string
+) {
+  if (!koshAdminMutatingMethods.has(request.method ?? "")) return false;
+
+  const match = url.pathname.match(
+    /^\/v1\/kosh\/repos\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,63})\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,99})\/(?:webhooks|platform)(?:\/|$)/
+  );
+  if (!match) return false;
+
+  const repository = await koshRepositoryStore.get(match[1], match[2]);
+  if (!repository) {
+    json(response, 404, { error: "repository_not_found" }, origin);
+    return true;
+  }
+
+  const authorization = await authorizeKoshRepositoryRequest(
+    request,
+    repository,
+    "repository.manage"
+  );
+  if (!authorization.decision.allowed || !authorization.identity) {
+    json(
+      response,
+      authorization.identity ? 403 : 401,
+      {
+        error: authorization.identity
+          ? "repository_permission_denied"
+          : "authentication_required",
+        permission: "repository.manage",
+        role: authorization.decision.role
+      },
+      origin
+    );
+    return true;
+  }
+  return false;
+}
+
 async function handle(request: IncomingMessage, response: ServerResponse) {
   applySecurityHeaders(response);
-
   const origin = request.headers.origin;
   const url = new URL(request.url ?? "/", "http://workspace.local");
 
@@ -209,6 +246,10 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     return;
   }
 
+  if (await handleKoshAdministrationGate(request, response, url, origin)) {
+    return;
+  }
+
   if (
     await handleKoshWebhookRequest(
       request,
@@ -268,7 +309,6 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   ) {
     return;
   }
-
   if (
     await handleFilesRequest(
       request,
@@ -280,7 +320,6 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   ) {
     return;
   }
-
   if (
     await handleContentRequest(
       request,
@@ -292,7 +331,6 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   ) {
     return;
   }
-
   if (
     await handleAssetsRequest(
       request,
@@ -304,7 +342,6 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   ) {
     return;
   }
-
   if (
     await handlePatraRequest(
       request,
@@ -316,7 +353,6 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   ) {
     return;
   }
-
   if (
     await handleIdentityRequest(
       request,
@@ -328,7 +364,6 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   ) {
     return;
   }
-
   if (
     await handleChatRequest(
       request,
@@ -340,7 +375,6 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   ) {
     return;
   }
-
   if (
     await handleMeetingRequest(
       request,
@@ -380,7 +414,6 @@ function shutdown(signal: string) {
       process.exitCode = 1;
     }
   });
-
   setTimeout(() => {
     console.error("Gateway shutdown timed out.");
     process.exit(1);
