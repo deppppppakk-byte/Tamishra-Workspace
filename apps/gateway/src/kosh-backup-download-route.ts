@@ -5,9 +5,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
-import { materializeKoshObject } from "./kosh-object-storage.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
 import { getKoshObjectIndex } from "./kosh-storage-object-index.js";
+import { materializeKoshObjectWithReplica } from "./kosh-storage-replica.js";
 import { getKoshStore } from "./kosh-store.js";
 
 const repositoryStore = getKoshStore();
@@ -130,24 +130,29 @@ export async function handleKoshBackupDownloadRequest(
       json(response, 409, { error: "backup_file_missing" }, origin, allowedOrigins);
       return true;
     }
-    const logicalId = clean(backup.payload.storageLogicalId, 240) || null;
-    const indexed = logicalId
-      ? await objectIndex.get(repository.id, "backup", logicalId)
-      : await objectIndex.get(repository.id, "backup", backup.id);
+    const logicalId = clean(backup.payload.storageLogicalId, 240) || backup.id;
+    const indexed = await objectIndex.get(repository.id, "backup", logicalId);
     const localPath = safeStoragePath(backupRoot, repository.id, filename);
     let path = localPath;
-    if (indexed?.locator.backend === "google-drive") {
+    let storageSource = indexed?.locator.backend === "google-drive" ? "primary" : "local";
+    if (indexed?.locator.backend === "google-drive" || process.env.KOSH_REPLICA_ROOT?.trim()) {
       await mkdir(safeStoragePath(backupRoot, repository.id), { recursive: true });
       temporaryPath = safeStoragePath(
         backupRoot,
         repository.id,
-        "download-" +
-          backup.id.slice(0, 80) +
-          "-" +
-          randomUUID().slice(0, 12) +
-          ".bundle"
+        "download-" + backup.id.slice(0, 80) + "-" + randomUUID().slice(0, 12) + ".bundle"
       );
-      await materializeKoshObject(indexed.locator, "", temporaryPath);
+      const materialized = await materializeKoshObjectWithReplica({
+        repositoryId: repository.id,
+        storageClass: "backup",
+        logicalId,
+        locator: indexed?.locator ?? null,
+        localFallbackPath: localPath,
+        destinationPath: temporaryPath,
+        sizeBytes: Number(backup.payload.sizeBytes) || 0,
+        sha256: clean(backup.payload.sha256, 128)
+      });
+      storageSource = materialized.source;
       path = temporaryPath;
     }
 
@@ -180,6 +185,7 @@ export async function handleKoshBackupDownloadRequest(
       'attachment; filename="' + filename.replace(/["\r\n]/g, "_") + '"'
     );
     response.setHeader("x-kosh-sha256", checksum);
+    response.setHeader("x-kosh-storage-source", storageSource);
     response.setHeader("etag", '"' + checksum + '"');
     response.setHeader("cache-control", "private, no-store");
     if (origin && allowedOrigins.has(origin)) {
