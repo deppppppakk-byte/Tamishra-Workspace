@@ -4,7 +4,10 @@ import { resolveKoshIdentity } from "./kosh-auth.js";
 import {
   cancelKoshOpsJob,
   enqueueKoshOpsJob,
+  getKoshOpsJob,
+  getKoshOpsQueueStats,
   listKoshOpsJobs,
+  requeueKoshOpsJob,
   type KoshOpsJobType
 } from "./kosh-ops-store.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
@@ -79,6 +82,17 @@ function clean(value: unknown, maxLength: number) {
   return String(value ?? "").trim().slice(0, maxLength);
 }
 
+function boundedPriority(value: unknown) {
+  const parsed = Number(value);
+  return Math.max(0, Math.min(100, Number.isFinite(parsed) ? Math.floor(parsed) : 50));
+}
+
+function requestIdempotencyKey(request: IncomingMessage, body: Record<string, unknown>) {
+  const header = request.headers["idempotency-key"];
+  const value = Array.isArray(header) ? header[0] : header;
+  return clean(value ?? body.idempotencyKey, 200) || null;
+}
+
 function platformAdministrator(identity: Identity) {
   const ids = new Set(
     (process.env.KOSH_PLATFORM_ADMIN_USER_IDS ?? "")
@@ -121,6 +135,7 @@ async function upsertSchedule(input: {
   jobType: KoshOpsJobType;
   jobPayload: Record<string, unknown>;
   intervalMinutes: number;
+  priority: number;
   enabled: boolean;
   actor: Identity;
 }) {
@@ -133,9 +148,11 @@ async function upsertSchedule(input: {
     jobType: input.jobType,
     jobPayload: input.jobPayload,
     intervalMinutes: input.intervalMinutes,
+    priority: input.priority,
     enabled: input.enabled,
     nextRunAt,
-    lastEnqueuedAt: null
+    lastEnqueuedAt: null,
+    lastJobId: null
   };
   if (existing) {
     return platformStore.updateResource(existing.id, {
@@ -174,16 +191,28 @@ async function handlePlatform(
   }
 
   if (request.method === "GET" && !match[1]) {
-    const jobs = await listKoshOpsJobs(undefined, Number(url.searchParams.get("limit") ?? 100));
-    const schedules = (await platformStore.listResources("admin_setting", null))
-      .filter((item) => item.payload.kind === "ops_schedule");
-    sendJson(response, 200, { jobs, schedules }, origin, allowedOrigins);
+    const [jobs, stats, schedules] = await Promise.all([
+      listKoshOpsJobs(undefined, Number(url.searchParams.get("limit") ?? 100)),
+      getKoshOpsQueueStats(undefined),
+      platformStore.listResources("admin_setting", null)
+    ]);
+    sendJson(response, 200, {
+      jobs,
+      stats,
+      schedules: schedules.filter((item) => item.payload.kind === "ops_schedule")
+    }, origin, allowedOrigins);
     return true;
   }
   if (request.method === "POST" && match[1] === "cancel") {
     const body = await readJson(request);
     const id = clean(body.id, 100);
     sendJson(response, 200, { cancelled: id ? await cancelKoshOpsJob(id) : false }, origin, allowedOrigins);
+    return true;
+  }
+  if (request.method === "POST" && match[1] === "requeue") {
+    const body = await readJson(request);
+    const id = clean(body.id, 100);
+    sendJson(response, 200, { requeued: id ? await requeueKoshOpsJob(id) : false }, origin, allowedOrigins);
     return true;
   }
   if (request.method !== "POST" || match[1]) {
@@ -205,6 +234,7 @@ async function handlePlatform(
       jobType: type,
       jobPayload: safePayload(body.payload),
       intervalMinutes,
+      priority: boundedPriority(schedule.priority ?? body.priority),
       enabled: schedule.enabled !== false,
       actor: identity
     });
@@ -216,6 +246,8 @@ async function handlePlatform(
     type,
     payload: safePayload(body.payload),
     maxAttempts: Math.max(1, Math.min(10, Math.floor(Number(body.maxAttempts) || 3))),
+    priority: boundedPriority(body.priority),
+    idempotencyKey: requestIdempotencyKey(request, body),
     createdByUserId: identity.user.id,
     createdByName: identity.user.displayName
   });
@@ -251,18 +283,35 @@ async function handleRepository(
   }
 
   if (request.method === "GET" && !match[3]) {
-    const jobs = await listKoshOpsJobs(repository.id, Number(url.searchParams.get("limit") ?? 100));
-    const schedules = (await platformStore.listResources("admin_setting", repository.id))
-      .filter((item) => item.payload.kind === "ops_schedule");
-    sendJson(response, 200, { repository, jobs, schedules }, origin, allowedOrigins);
+    const [jobs, stats, schedules] = await Promise.all([
+      listKoshOpsJobs(repository.id, Number(url.searchParams.get("limit") ?? 100)),
+      getKoshOpsQueueStats(repository.id),
+      platformStore.listResources("admin_setting", repository.id)
+    ]);
+    sendJson(response, 200, {
+      repository,
+      jobs,
+      stats,
+      schedules: schedules.filter((item) => item.payload.kind === "ops_schedule")
+    }, origin, allowedOrigins);
     return true;
   }
   if (request.method === "POST" && match[3] === "cancel") {
     const body = await readJson(request);
     const id = clean(body.id, 100);
-    const jobs = await listKoshOpsJobs(repository.id, 1000);
-    const target = jobs.find((item) => item.id === id);
-    sendJson(response, 200, { cancelled: target ? await cancelKoshOpsJob(id) : false }, origin, allowedOrigins);
+    const target = id ? await getKoshOpsJob(id) : null;
+    sendJson(response, 200, {
+      cancelled: target?.repositoryId === repository.id ? await cancelKoshOpsJob(id) : false
+    }, origin, allowedOrigins);
+    return true;
+  }
+  if (request.method === "POST" && match[3] === "requeue") {
+    const body = await readJson(request);
+    const id = clean(body.id, 100);
+    const target = id ? await getKoshOpsJob(id) : null;
+    sendJson(response, 200, {
+      requeued: target?.repositoryId === repository.id ? await requeueKoshOpsJob(id) : false
+    }, origin, allowedOrigins);
     return true;
   }
   if (request.method !== "POST" || match[3]) {
@@ -284,6 +333,7 @@ async function handleRepository(
       jobType: type,
       jobPayload: safePayload(body.payload),
       intervalMinutes,
+      priority: boundedPriority(schedule.priority ?? body.priority),
       enabled: schedule.enabled !== false,
       actor: authorization.identity
     });
@@ -296,6 +346,8 @@ async function handleRepository(
     type,
     payload: safePayload(body.payload),
     maxAttempts: Math.max(1, Math.min(10, Math.floor(Number(body.maxAttempts) || 3))),
+    priority: boundedPriority(body.priority),
+    idempotencyKey: requestIdempotencyKey(request, body),
     createdByUserId: authorization.identity.user.id,
     createdByName: authorization.identity.user.displayName
   });
@@ -317,7 +369,14 @@ export async function handleKoshProductionOperationsRequest(
     const status = typeof error === "object" && error && "status" in error
       ? Number((error as { status?: number }).status) || 500
       : 500;
-    sendJson(response, status, { error: error instanceof Error ? error.message : "operations_request_failed" }, origin, allowedOrigins);
+    const retryAfterSeconds = typeof error === "object" && error && "retryAfterSeconds" in error
+      ? Number((error as { retryAfterSeconds?: number }).retryAfterSeconds) || 0
+      : 0;
+    if (retryAfterSeconds > 0) response.setHeader("retry-after", String(retryAfterSeconds));
+    sendJson(response, status, {
+      error: error instanceof Error ? error.message : "operations_request_failed",
+      ...(retryAfterSeconds > 0 ? { retryAfterSeconds } : {})
+    }, origin, allowedOrigins);
     return true;
   }
 }
