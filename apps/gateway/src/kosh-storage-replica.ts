@@ -35,14 +35,17 @@ export function koshReplicaObjectPath(
   storageClass: KoshStorageClass,
   logicalId: string
 ) {
-  const digest = createHash("sha256")
-    .update(repositoryId)
-    .update("\0")
-    .update(storageClass)
-    .update("\0")
-    .update(logicalId)
-    .digest("hex");
-  return safePath(replicaRoot, repositoryId.replace(/[^a-zA-Z0-9._-]+/g, "_"), storageClass, digest + ".object");
+  const repository = repositoryId.trim().slice(0, 200);
+  const logical = logicalId.trim().slice(0, 200);
+  if (
+    !repository ||
+    !logical ||
+    !/^[a-zA-Z0-9._-]+$/.test(repository) ||
+    !/^[a-zA-Z0-9._-]+$/.test(logical)
+  ) {
+    throw Object.assign(new Error("replica_identity_invalid"), { status: 500 });
+  }
+  return safePath(replicaRoot, repository, storageClass, logical + ".object");
 }
 
 export async function verifyKoshReplica(input: {
