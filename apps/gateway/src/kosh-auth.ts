@@ -117,8 +117,7 @@ export async function resolveKoshIdentity(
     return {
       ...sessionIdentity,
       authType: "session" as const,
-      apiToken: null,
-      oauthAccess: null
+      apiToken: null
     };
   }
 
@@ -161,7 +160,6 @@ export async function resolveKoshIdentity(
     ...authorization,
     session: null,
     authType: "api-token" as const,
-    apiToken,
-    oauthAccess: null
+    apiToken
   };
 }
