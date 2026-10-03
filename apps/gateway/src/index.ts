@@ -12,7 +12,7 @@ import { handleKoshWikiRequest } from "./kosh-wiki.js";
 import { handleKoshPagesAdminRequest } from "./kosh-pages.js";
 import { handleKoshWebhookRequest } from "./kosh-webhooks.js";
 import { handleKoshPublicApiRequest } from "./kosh-api.js";
-import { handleKoshSystemsRequest } from "./kosh-systems.js";
+import { handleKoshSystemsRequest } from "./kosh-systems-router.js";
 import { handleKoshStoragePreflight } from "./kosh-storage-guard.js";
 import { handleKoshReadinessRequest } from "./kosh-readiness.js";
 import {
