@@ -1,7 +1,11 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
 import { resolveKoshIdentity } from "./kosh-auth.js";
-import { listKoshOpsJobs, koshOpsStoreBackend } from "./kosh-ops-store.js";
+import {
+  getKoshOpsQueueStats,
+  listKoshOpsJobs,
+  type KoshOpsJob
+} from "./kosh-ops-store.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
 import { koshKnownStorageUsage, koshStorageLimits } from "./kosh-storage-policy.js";
 import { getKoshStore } from "./kosh-store.js";
@@ -48,38 +52,35 @@ function metricLine(name: string, value: number, labels: Record<string, string> 
   return `${name}${pairs ? `{${pairs}}` : ""} ${Number.isFinite(value) ? value : 0}`;
 }
 
+function successLatency(jobs: KoshOpsJob[]) {
+  const durations = jobs
+    .filter((item) => item.state === "succeeded")
+    .map((item) => new Date(item.finishedAt ?? item.updatedAt).getTime() - new Date(item.createdAt).getTime())
+    .filter((value) => Number.isFinite(value) && value >= 0)
+    .sort((a, b) => a - b);
+  const percentile = (p: number) => durations[
+    Math.min(durations.length - 1, Math.floor(Math.max(0, durations.length - 1) * p))
+  ] ?? 0;
+  return {
+    p50: percentile(0.5),
+    p95: percentile(0.95),
+    p99: percentile(0.99)
+  };
+}
+
 async function repositoryMetrics(repositoryId: string) {
-  const [jobs, usage, limits, audits, backups] = await Promise.all([
+  const [jobs, queue, usage, limits, audits, backups] = await Promise.all([
     listKoshOpsJobs(repositoryId, 1000),
+    getKoshOpsQueueStats(repositoryId),
     koshKnownStorageUsage(repositoryId),
     koshStorageLimits(repositoryId),
     platformStore.listAudit(repositoryId, 1000),
     platformStore.listResources("backup", repositoryId)
   ]);
-  const byState = Object.fromEntries(
-    ["queued", "leased", "succeeded", "failed", "cancelled"].map((state) => [
-      state,
-      jobs.filter((item) => item.state === state).length
-    ])
-  );
-  const successfulDurations = jobs
-    .filter((item) => item.state === "succeeded")
-    .map((item) => new Date(item.updatedAt).getTime() - new Date(item.createdAt).getTime())
-    .filter((value) => Number.isFinite(value) && value >= 0)
-    .sort((a, b) => a - b);
-  const percentile = (p: number) => successfulDurations[
-    Math.min(successfulDurations.length - 1, Math.floor(Math.max(0, successfulDurations.length - 1) * p))
-  ] ?? 0;
   return {
     queue: {
-      backend: koshOpsStoreBackend(),
-      total: jobs.length,
-      byState,
-      successLatencyMs: {
-        p50: percentile(0.5),
-        p95: percentile(0.95),
-        p99: percentile(0.99)
-      }
+      ...queue,
+      successLatencyMs: successLatency(jobs)
     },
     storage: {
       usage,
@@ -106,6 +107,16 @@ function renderPrometheus(
   for (const [state, count] of Object.entries(metrics.queue.byState)) {
     lines.push(metricLine("kosh_ops_jobs", Number(count), { ...labels, scope, state }));
   }
+  lines.push(metricLine("kosh_ops_dead_lettered", metrics.queue.deadLettered, { ...labels, scope }));
+  lines.push(metricLine("kosh_ops_retrying", metrics.queue.retrying, { ...labels, scope }));
+  lines.push(metricLine("kosh_ops_oldest_queued_age_ms", metrics.queue.oldestQueuedAgeMs, { ...labels, scope }));
+  lines.push(metricLine("kosh_ops_throughput", metrics.queue.throughput.lastHour, { ...labels, scope, window: "1h" }));
+  lines.push(metricLine("kosh_ops_throughput", metrics.queue.throughput.last24Hours, { ...labels, scope, window: "24h" }));
+  for (const [priority, count] of Object.entries(metrics.queue.queuedByPriority)) {
+    lines.push(metricLine("kosh_ops_queued_by_priority", Number(count), { ...labels, scope, priority }));
+  }
+  lines.push(metricLine("kosh_ops_queue_limit", metrics.queue.limits.globalQueued, { ...labels, scope, kind: "global" }));
+  lines.push(metricLine("kosh_ops_queue_limit", metrics.queue.limits.repositoryQueued, { ...labels, scope, kind: "repository" }));
   lines.push("# HELP kosh_storage_known_bytes Known Kosh object-storage bytes.");
   lines.push("# TYPE kosh_storage_known_bytes gauge");
   lines.push(metricLine("kosh_storage_known_bytes", metrics.storage.usage.knownBytes, labels));
@@ -146,21 +157,18 @@ export async function handleKoshOperationsMetricsRequest(
       return true;
     }
     const all = await repositories.list();
-    const perRepository = await Promise.all(all.map(async (repository) => ({
-      repository,
-      metrics: await repositoryMetrics(repository.id)
-    })));
+    const [perRepository, globalJobs, globalQueue] = await Promise.all([
+      Promise.all(all.map(async (repository) => ({
+        repository,
+        metrics: await repositoryMetrics(repository.id)
+      }))),
+      listKoshOpsJobs(undefined, 1000),
+      getKoshOpsQueueStats(undefined)
+    ]);
     const aggregate = {
       queue: {
-        backend: koshOpsStoreBackend(),
-        total: perRepository.reduce((sum, item) => sum + item.metrics.queue.total, 0),
-        byState: Object.fromEntries(
-          ["queued", "leased", "succeeded", "failed", "cancelled"].map((state) => [
-            state,
-            perRepository.reduce((sum, item) => sum + Number(item.metrics.queue.byState[state] ?? 0), 0)
-          ])
-        ),
-        successLatencyMs: { p50: 0, p95: 0, p99: 0 }
+        ...globalQueue,
+        successLatencyMs: successLatency(globalJobs)
       },
       storage: {
         usage: {
