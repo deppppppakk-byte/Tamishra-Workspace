@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { handleKoshBackupDownloadRequest } from "./kosh-backup-download-route.js";
 import { handleKoshBackupStorageRequest } from "./kosh-backup-storage-routes.js";
+import { handleKoshStorageReconciliationRequest } from "./kosh-storage-reconciliation.js";
 import { handleKoshSystemsRequest as handleCoreKoshSystemsRequest } from "./kosh-systems.js";
 
 export async function handleKoshSystemsRequest(
@@ -24,6 +25,18 @@ export async function handleKoshSystemsRequest(
 
   if (
     await handleKoshBackupStorageRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    await handleKoshStorageReconciliationRequest(
       request,
       response,
       url,
