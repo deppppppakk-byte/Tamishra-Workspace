@@ -90,13 +90,20 @@ function guardSpec(pathname: string): GuardSpec | null {
   return null;
 }
 
-function operationKey(spec: GuardSpec, request: IncomingMessage) {
+function idempotencyFingerprint(request: IncomingMessage) {
   const idempotency = clean(requestHeader(request, "idempotency-key"), 160);
-  if (idempotency && !/^[A-Za-z0-9._:-]{8,160}$/.test(idempotency)) {
+  if (!idempotency) return null;
+  if (!/^[A-Za-z0-9._:-]{8,160}$/.test(idempotency)) {
     throw Object.assign(new Error("invalid_idempotency_key"), { status: 400 });
   }
-  const material = idempotency ? spec.semanticKey + ":" + idempotency : spec.semanticKey;
-  return "operation:" + createHash("sha256").update(material).digest("hex").slice(0, 40);
+  return createHash("sha256").update(idempotency).digest("hex").slice(0, 24);
+}
+
+function operationKey(spec: GuardSpec) {
+  return "operation:" + createHash("sha256")
+    .update(spec.semanticKey)
+    .digest("hex")
+    .slice(0, 40);
 }
 
 function repositoryRoute(pathname: string) {
@@ -163,7 +170,8 @@ async function createGuard(
   identity: RequestIdentity,
   spec: GuardSpec
 ) {
-  const key = operationKey(spec, request);
+  const key = operationKey(spec);
+  const idempotencyKeyHash = idempotencyFingerprint(request);
   const make = () => platformStore.createResource({
     repositoryId: repository.id,
     namespace: repository.namespace,
@@ -177,6 +185,7 @@ async function createGuard(
       semanticKey: spec.semanticKey,
       mode: spec.mode,
       requestId: randomUUID(),
+      idempotencyKeyHash,
       acquiredAt: new Date().toISOString(),
       expiresAt: leaseExpiry()
     },
@@ -305,25 +314,36 @@ export async function runWithKoshOperationGuard(
   const spec = guardSpec(url.pathname);
   if (!spec) return next();
 
+  let context: GuardContext | null = null;
   try {
-    const context = await acquireGuard(request, spec);
+    context = await acquireGuard(request, spec);
     response.setHeader("x-kosh-operation-id", context.guard.id);
-    const handled = await next();
-    await finalizeGuard(context, response.statusCode || (handled ? 200 : 404));
+    let handled = false;
+    try {
+      handled = await next();
+    } catch (error) {
+      await finalizeGuard(context, 500).catch(() => undefined);
+      throw error;
+    }
+    await finalizeGuard(context, handled ? response.statusCode : 404);
     return handled;
   } catch (error) {
     const value = error as { status?: number; operationId?: string };
     const status = Number(value?.status) || 500;
-    sendJson(
-      response,
-      status,
-      {
-        error: error instanceof Error ? error.message : "operation_guard_error",
-        operationId: value?.operationId ?? null
-      },
-      origin,
-      allowedOrigins
-    );
+    if (!response.headersSent) {
+      sendJson(
+        response,
+        status,
+        {
+          error: error instanceof Error ? error.message : "operation_guard_error",
+          operationId: value?.operationId ?? context?.guard.id ?? null
+        },
+        origin,
+        allowedOrigins
+      );
+    } else if (!response.writableEnded) {
+      response.end();
+    }
     return true;
   }
 }
