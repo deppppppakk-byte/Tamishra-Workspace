@@ -254,6 +254,17 @@ export function KoshWorkspace() {
                     >
                       Open repository →
                     </Link>
+                    <Link
+                      className={styles.back}
+                      href={
+                        "/apps/kosh/wiki?namespace=" +
+                        encodeURIComponent(repository.namespace) +
+                        "&slug=" +
+                        encodeURIComponent(repository.slug)
+                      }
+                    >
+                      Wiki →
+                    </Link>
                   </div>
                   <small>
                     git clone {repository.cloneSshUrl || repository.cloneHttpUrl}
