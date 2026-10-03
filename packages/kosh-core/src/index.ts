@@ -148,8 +148,8 @@ export const koshModules: KoshModule[] = [
   {
     id: "api-cli",
     name: "Public API & CLI",
-    description: "Scoped personal API tokens with one-time token reveal and hashed-at-rest authentication.",
-    status: "foundation"
+    description: "Stable API discovery, scoped hashed-at-rest tokens, lifecycle controls, OpenAPI metadata and a native authenticated Kosh command-line client.",
+    status: "active"
   },
   {
     id: "notifications",

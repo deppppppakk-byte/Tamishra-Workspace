@@ -7,6 +7,82 @@ import { getKoshPlatformStore } from "./kosh-platform-store.js";
 
 const platformStore = getKoshPlatformStore();
 
+export const koshApiScopeCatalog = [
+  {
+    id: "repo:read",
+    name: "Repository read",
+    description: "Read repositories and repository-scoped Kosh data available to the token owner."
+  },
+  {
+    id: "repo:write",
+    name: "Repository write",
+    description: "Create or change repository-scoped Kosh data when the token owner also has the required repository role."
+  },
+  {
+    id: "*",
+    name: "Full API",
+    description: "Allow every Kosh API scope granted to the token owner. Use only for trusted automation."
+  }
+] as const;
+
+export type KoshApiScope = (typeof koshApiScopeCatalog)[number]["id"];
+
+const koshApiScopeIds = new Set<string>(
+  koshApiScopeCatalog.map((scope) => scope.id)
+);
+
+export function normalizeKoshApiScopes(value: unknown): KoshApiScope[] {
+  const values = Array.isArray(value) ? value.map(String) : ["repo:read"];
+  const unique = [...new Set(values.map((scope) => scope.trim()).filter(Boolean))];
+  if (!unique.length) return ["repo:read"];
+  const invalid = unique.find((scope) => !koshApiScopeIds.has(scope));
+  if (invalid) {
+    throw Object.assign(new Error("invalid_api_token_scope"), {
+      status: 400,
+      scope: invalid
+    });
+  }
+  if (unique.includes("*")) return ["*"];
+  // A writer must also be able to read the resources it changes.
+  if (unique.includes("repo:write") && !unique.includes("repo:read")) {
+    unique.unshift("repo:read");
+  }
+  return unique as KoshApiScope[];
+}
+
+export function koshApiTokenDefaultExpiry() {
+  const configured = Number(process.env.KOSH_API_TOKEN_DEFAULT_DAYS ?? 90);
+  const days = Number.isFinite(configured)
+    ? Math.max(1, Math.min(365, configured))
+    : 90;
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+export function validateKoshApiTokenExpiry(value: unknown) {
+  if (value === undefined || value === null || value === "") {
+    return koshApiTokenDefaultExpiry();
+  }
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) {
+    throw Object.assign(new Error("invalid_token_expiry"), { status: 400 });
+  }
+  const now = Date.now();
+  if (date.getTime() <= now + 60_000) {
+    throw Object.assign(new Error("token_expiry_must_be_future"), { status: 400 });
+  }
+  const configured = Number(process.env.KOSH_API_TOKEN_MAX_DAYS ?? 365);
+  const maxDays = Number.isFinite(configured)
+    ? Math.max(1, Math.min(3650, configured))
+    : 365;
+  if (date.getTime() > now + maxDays * 24 * 60 * 60 * 1000) {
+    throw Object.assign(new Error("token_expiry_too_far"), {
+      status: 400,
+      maxDays
+    });
+  }
+  return date.toISOString();
+}
+
 function bearerToken(request: IncomingMessage) {
   const authorization = request.headers.authorization?.trim() ?? "";
   return authorization.toLowerCase().startsWith("bearer ")

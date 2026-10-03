@@ -1,7 +1,8 @@
 {
   "name": "@tamishra/kosh-cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
+  "description": "Native command-line client for the Kosh public API",
   "type": "module",
   "bin": {
     "kosh": "dist/index.js"
