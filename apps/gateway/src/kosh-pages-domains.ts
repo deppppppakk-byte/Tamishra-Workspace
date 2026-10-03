@@ -2,6 +2,10 @@ import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
 import { enqueueKoshOpsJob } from "./kosh-ops-store.js";
+import {
+  claimKoshPagesDomain,
+  releaseKoshPagesDomain
+} from "./kosh-pages-domain-claims.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
 import { getKoshStore } from "./kosh-store.js";
 
@@ -127,43 +131,52 @@ export async function handleKoshPagesDomainRequest(
         sendJson(response, 409, { error: "custom_domain_exists" }, origin, allowedOrigins);
         return true;
       }
-      const verificationToken = randomBytes(24).toString("base64url");
-      const payload = {
-        kind: "domain",
-        hostname: host,
-        verificationToken,
-        verified: false,
-        verifiedAt: null,
-        tlsState: "unverified",
-        createdAt: new Date().toISOString()
-      };
-      const resource = existing
-        ? await platformStore.updateResource(existing.id, { state: "pending", name: host, payload })
-        : await platformStore.createResource({
-            repositoryId: repository.id,
-            namespace: repository.namespace,
-            type: "page_site",
-            key,
-            name: host,
-            state: "pending",
-            payload,
-            createdByUserId: auth.identity.user.id,
-            createdByName: auth.identity.user.displayName
-          });
-      await platformStore.appendAudit({
-        repositoryId: repository.id,
-        actorUserId: auth.identity.user.id,
-        actorName: auth.identity.user.displayName,
-        eventType: "pages_custom_domain_created",
-        resourceType: "page_site",
-        resourceId: resource?.id ?? existing?.id ?? null,
-        metadata: { hostname: host }
-      });
-      sendJson(response, 201, {
-        domain: resource,
-        dns: { type: "TXT", name: `_kosh.${host}`, value: `kosh-domain=${verificationToken}` }
-      }, origin, allowedOrigins);
-      return true;
+
+      const claim = await claimKoshPagesDomain(host, repository.id);
+      try {
+        const verificationToken = randomBytes(24).toString("base64url");
+        const payload = {
+          kind: "domain",
+          hostname: host,
+          verificationToken,
+          verified: false,
+          verifiedAt: null,
+          tlsState: "unverified",
+          createdAt: new Date().toISOString()
+        };
+        const resource = existing
+          ? await platformStore.updateResource(existing.id, { state: "pending", name: host, payload })
+          : await platformStore.createResource({
+              repositoryId: repository.id,
+              namespace: repository.namespace,
+              type: "page_site",
+              key,
+              name: host,
+              state: "pending",
+              payload,
+              createdByUserId: auth.identity.user.id,
+              createdByName: auth.identity.user.displayName
+            });
+        await platformStore.appendAudit({
+          repositoryId: repository.id,
+          actorUserId: auth.identity.user.id,
+          actorName: auth.identity.user.displayName,
+          eventType: "pages_custom_domain_created",
+          resourceType: "page_site",
+          resourceId: resource?.id ?? existing?.id ?? null,
+          metadata: { hostname: host, globalClaim: true }
+        });
+        sendJson(response, 201, {
+          domain: resource,
+          dns: { type: "TXT", name: `_kosh.${host}`, value: `kosh-domain=${verificationToken}` }
+        }, origin, allowedOrigins);
+        return true;
+      } catch (error) {
+        if (claim.created) {
+          await releaseKoshPagesDomain(host, repository.id).catch(() => undefined);
+        }
+        throw error;
+      }
     }
 
     if (!match[3]) {
@@ -178,6 +191,7 @@ export async function handleKoshPagesDomainRequest(
     }
 
     if (request.method === "POST" && match[4] === "verify") {
+      await claimKoshPagesDomain(host, repository.id);
       const job = await enqueueKoshOpsJob({
         repositoryId: repository.id,
         type: "pages.domain.verify",
@@ -198,6 +212,7 @@ export async function handleKoshPagesDomainRequest(
         state: "archived",
         payload: { ...resource.payload, archivedAt: new Date().toISOString() }
       });
+      await releaseKoshPagesDomain(host, repository.id);
       await platformStore.appendAudit({
         repositoryId: repository.id,
         actorUserId: auth.identity.user.id,
@@ -205,7 +220,7 @@ export async function handleKoshPagesDomainRequest(
         eventType: "pages_custom_domain_archived",
         resourceType: "page_site",
         resourceId: resource.id,
-        metadata: { hostname: host }
+        metadata: { hostname: host, globalClaimReleased: true }
       });
       sendJson(response, 200, { domain: archived }, origin, allowedOrigins);
       return true;
