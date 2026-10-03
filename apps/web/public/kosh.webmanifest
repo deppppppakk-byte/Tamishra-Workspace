@@ -1,0 +1,32 @@
+{
+  "name": "Kosh by Tamishra",
+  "short_name": "Kosh",
+  "description": "Kosh developer collaboration, repositories, automation and delivery.",
+  "id": "/kosh",
+  "start_url": "/kosh",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f6f8fb",
+  "theme_color": "#102a43",
+  "icons": [
+    {
+      "src": "/kosh-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Repositories",
+      "short_name": "Repos",
+      "url": "/apps/kosh/repositories"
+    },
+    {
+      "name": "Operations",
+      "short_name": "Ops",
+      "url": "/apps/kosh/operations"
+    }
+  ]
+}
