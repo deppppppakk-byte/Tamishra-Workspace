@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "prepare:web": "npm --prefix ../.. run build:web:native",
     "android:add": "cap add android",
     "ios:add": "cap add ios",
-    "sync": "cap sync",
-    "android": "cap sync && cap open android",
-    "ios": "cap sync && cap open ios"
+    "sync": "npm run prepare:web && cap sync",
+    "android": "npm run sync && cap open android",
+    "ios": "npm run sync && cap open ios"
   },
   "dependencies": {
     "@capacitor/core": "^7.0.0"
