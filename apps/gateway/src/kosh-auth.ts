@@ -1,8 +1,10 @@
+import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import {
   getWorkspaceIdentityAuthorization,
   resolveWorkspaceAuthorization
 } from "./identity.js";
+import { authenticateKoshOAuthAccessToken } from "./kosh-oauth-store.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
 
 const platformStore = getKoshPlatformStore();
@@ -90,6 +92,22 @@ function bearerToken(request: IncomingMessage) {
     : "";
 }
 
+function safeEqualText(left: string, right: string) {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function oauthResourceRequestAllowed(request: IncomingMessage, resource: string) {
+  const requestResource = String(request.headers["x-kosh-oauth-resource"] ?? "").trim();
+  if (!requestResource || requestResource !== resource) return false;
+
+  const expectedAssertion = process.env.KOSH_PLUGIN_ASSERTION_SECRET?.trim() ?? "";
+  if (!expectedAssertion) return process.env.NODE_ENV !== "production";
+  const actualAssertion = String(request.headers["x-kosh-plugin-assertion"] ?? "");
+  return safeEqualText(actualAssertion, expectedAssertion);
+}
+
 export async function resolveKoshIdentity(
   request: IncomingMessage,
   requiredScope?: string
@@ -104,6 +122,23 @@ export async function resolveKoshIdentity(
   }
 
   const token = bearerToken(request);
+  if (token.startsWith("kosh_oat_")) {
+    const oauthAccess = await authenticateKoshOAuthAccessToken(token);
+    if (!oauthAccess || !oauthResourceRequestAllowed(request, oauthAccess.resource)) return null;
+    if (requiredScope && !oauthAccess.scopes.includes(requiredScope)) return null;
+
+    const authorization = await getWorkspaceIdentityAuthorization(oauthAccess.userId);
+    if (!authorization) return null;
+
+    return {
+      ...authorization,
+      session: null,
+      authType: "oauth-token" as const,
+      apiToken: null,
+      oauthAccess
+    };
+  }
+
   if (!token.startsWith("kosh_pat_")) return null;
 
   await platformStore.ready();
