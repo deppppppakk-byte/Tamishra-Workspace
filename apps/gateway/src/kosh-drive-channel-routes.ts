@@ -1,8 +1,12 @@
 import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
-import { readKoshObject } from "./kosh-object-storage.js";
+import {
+  koshObjectStorageBackend,
+  readKoshObject
+} from "./kosh-object-storage.js";
 import { getKoshPackageStore } from "./kosh-package-store.js";
+import { verifyKoshPackageVersion } from "./kosh-packages.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
 import { getKoshObjectIndex } from "./kosh-storage-object-index.js";
 import { getKoshStore } from "./kosh-store.js";
@@ -101,6 +105,7 @@ export async function handleKoshDriveChannelRoute(
   response: ServerResponse,
   url: URL
 ) {
+  if (koshObjectStorageBackend() !== "google-drive") return false;
   if (request.method !== "POST" && request.method !== "PUT") return false;
 
   const match = url.pathname.match(
@@ -159,14 +164,12 @@ export async function handleKoshDriveChannelRoute(
       packageKey,
       versionName
     );
-    if (!version) return false;
-
-    const stored = await objectIndex.get(
-      repository.id,
-      "package",
-      version.id
-    );
-    if (!stored || stored.locator.backend !== "google-drive") return false;
+    if (!version) {
+      sendJson(request, response, 404, {
+        error: "package_version_not_found"
+      });
+      return true;
+    }
 
     if (version.state !== "published") {
       sendJson(request, response, 409, {
@@ -175,13 +178,25 @@ export async function handleKoshDriveChannelRoute(
       return true;
     }
 
-    const bytes = await readKoshObject(stored.locator, "");
-    const checksum = sha256(bytes);
-    if (bytes.length !== version.sizeBytes || checksum !== version.sha256) {
-      sendJson(request, response, 500, {
-        error: "package_integrity_failure"
-      });
-      return true;
+    const stored = await objectIndex.get(
+      repository.id,
+      "package",
+      version.id
+    );
+
+    let storageBackend = "local";
+    if (stored?.locator.backend === "google-drive") {
+      const bytes = await readKoshObject(stored.locator, "");
+      const checksum = sha256(bytes);
+      if (bytes.length !== version.sizeBytes || checksum !== version.sha256) {
+        sendJson(request, response, 500, {
+          error: "package_integrity_failure"
+        });
+        return true;
+      }
+      storageBackend = "google-drive";
+    } else {
+      await verifyKoshPackageVersion(version);
     }
 
     const channel = await packageStore.putChannel({
@@ -205,14 +220,14 @@ export async function handleKoshDriveChannelRoute(
         packageKey,
         channel: channelName,
         version: version.version,
-        storageBackend: "google-drive"
+        storageBackend
       }
     });
 
     sendJson(request, response, 200, {
       channel,
       version,
-      storage: "google-drive"
+      storage: storageBackend
     });
     return true;
   } catch (error) {
