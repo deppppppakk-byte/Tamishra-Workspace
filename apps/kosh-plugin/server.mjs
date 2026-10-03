@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 
-const PORT = Number(process.env.PORT ?? process.env.KOSH_PLUGIN_PORT ?? 4310);
+const PORT = Number(process.env.KOSH_PLUGIN_PORT ?? 4310);
 const MAX_BODY_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = Math.max(1000, Math.min(30000, Number(process.env.KOSH_PLUGIN_TIMEOUT_MS ?? 12000)));
 const SERVER_NAME = "kosh";
@@ -195,46 +195,90 @@ async function readBody(request) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-function incomingBearer(request) {
+function bearerValue(request) {
   const header = String(request.headers.authorization ?? "").trim();
-  if (/^Bearer\s+/i.test(header)) return header;
-  return SERVICE_TOKEN ? `Bearer ${SERVICE_TOKEN}` : "";
+  return /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i, "").trim() : "";
 }
 
-async function introspectOAuthToken(authorization) {
-  const token = authorization.replace(/^Bearer\s+/i, "").trim();
-  if (!token) return false;
-  const response = await fetch(`${OAUTH_ISSUER}/v1/kosh/oauth/introspect`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ token }).toString(),
-    redirect: "error"
-  });
-  if (!response.ok) return false;
-  const payload = await response.json().catch(() => null);
-  return Boolean(payload?.active && payload?.resource === RESOURCE && String(payload?.scope ?? "").split(/\s+/).includes("repo:read"));
+function protectedResourceMetadata() {
+  return {
+    resource: RESOURCE,
+    authorization_servers: [OAUTH_ISSUER],
+    scopes_supported: ["repo:read"],
+    bearer_methods_supported: ["header"],
+    resource_name: "Kosh MCP"
+  };
 }
 
-async function requireOAuth(request) {
-  const authorization = incomingBearer(request);
-  if (!authorization || !(await introspectOAuthToken(authorization))) {
-    throw Object.assign(new Error("kosh_oauth_required"), { status: 401 });
+function authenticationChallenge(response) {
+  response.statusCode = 401;
+  response.setHeader(
+    "www-authenticate",
+    `Bearer resource_metadata="${PUBLIC_ORIGIN}/.well-known/oauth-protected-resource", scope="repo:read"`
+  );
+  response.setHeader("cache-control", "no-store");
+  response.setHeader("x-content-type-options", "nosniff");
+  response.end();
+}
+
+async function introspectOAuth(token) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  timer.unref();
+  try {
+    const response = await fetch(`${KOSH_ORIGIN}/v1/kosh/oauth/introspect`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "x-kosh-oauth-resource": RESOURCE,
+        "x-kosh-plugin-assertion": ASSERTION_SECRET,
+        accept: "application/json"
+      },
+      redirect: "error",
+      signal: controller.signal
+    });
+    if (!response.ok) return null;
+    const body = await response.json();
+    return body?.active === true && String(body.resource ?? "") === RESOURCE ? body : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
-  return authorization;
 }
 
-async function callKosh(request, path, authenticated = true) {
-  const authorization = authenticated ? await requireOAuth(request) : incomingBearer(request);
+async function authenticateRequest(request) {
+  const incoming = bearerValue(request);
+  if (incoming.startsWith("kosh_oat_")) {
+    const introspection = await introspectOAuth(incoming);
+    return introspection ? { authorization: `Bearer ${incoming}`, oauth: true, introspection } : null;
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    const localToken = incoming || SERVICE_TOKEN;
+    if (localToken.startsWith("kosh_pat_")) {
+      return { authorization: `Bearer ${localToken}`, oauth: false, introspection: null };
+    }
+  }
+  return null;
+}
+
+async function callKosh(auth, path, authenticated = true) {
+  if (authenticated && !auth?.authorization) {
+    throw Object.assign(new Error("kosh_authentication_required"), { status: 401 });
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   timer.unref();
   try {
     const headers = { accept: "application/json" };
-    if (authenticated && authorization) {
-      headers.authorization = authorization;
-      headers["x-kosh-mcp-resource"] = RESOURCE;
-      headers["x-kosh-plugin-assertion"] = ASSERTION_SECRET;
+    if (authenticated && auth?.authorization) {
+      headers.authorization = auth.authorization;
+      if (auth.oauth) {
+        headers["x-kosh-oauth-resource"] = RESOURCE;
+        headers["x-kosh-plugin-assertion"] = ASSERTION_SECRET;
+      }
     }
     const response = await fetch(KOSH_ORIGIN + path, {
       method: "GET",
@@ -275,30 +319,30 @@ function repositoryPath(args) {
   return `/v1/kosh/repos/${encodeURIComponent(namespace)}/${encodeURIComponent(repository)}`;
 }
 
-async function executeTool(request, name, args = {}) {
+async function executeTool(auth, name, args = {}) {
   switch (name) {
     case "discover_kosh":
-      return callKosh(request, "/v1/kosh/api", false);
+      return callKosh(auth, "/v1/kosh/api", false);
     case "list_repositories":
-      return callKosh(request, "/v1/kosh/api/repositories");
+      return callKosh(auth, "/v1/kosh/api/repositories");
     case "get_repository":
-      return callKosh(request, repositoryPath(args));
+      return callKosh(auth, repositoryPath(args));
     case "search_repository": {
       const query = requiredString(args, "query", 500);
       const mode = ["code", "paths", "commits"].includes(args?.mode) ? args.mode : "code";
       return callKosh(
-        request,
+        auth,
         `${repositoryPath(args)}/platform/search?q=${encodeURIComponent(query)}&mode=${encodeURIComponent(mode)}`
       );
     }
     case "list_issues":
-      return callKosh(request, `${repositoryPath(args)}/work/issues`);
+      return callKosh(auth, `${repositoryPath(args)}/work/issues`);
     case "list_workflow_runs":
-      return callKosh(request, `${repositoryPath(args)}/automation/runs`);
+      return callKosh(auth, `${repositoryPath(args)}/automation/runs`);
     case "list_releases":
-      return callKosh(request, `${repositoryPath(args)}/platform/resources?type=release`);
+      return callKosh(auth, `${repositoryPath(args)}/platform/resources?type=release`);
     case "repository_readiness":
-      return callKosh(request, `${repositoryPath(args)}/systems/readiness`);
+      return callKosh(auth, `${repositoryPath(args)}/systems/readiness`);
     default:
       throw Object.assign(new Error("unknown_tool"), { status: 404 });
   }
@@ -312,7 +356,7 @@ function toolResult(data) {
   };
 }
 
-async function handleRpc(request, message) {
+async function handleRpc(auth, message) {
   const id = Object.prototype.hasOwnProperty.call(message ?? {}, "id") ? message.id : undefined;
   const method = typeof message?.method === "string" ? message.method : "";
   if (!method) return rpcError(id, -32600, "Invalid Request");
@@ -326,7 +370,7 @@ async function handleRpc(request, message) {
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
       instructions:
-        "Kosh tools are read-only. Use them to inspect repositories, work, automation, releases and readiness. Never request or expose API token values."
+        "Kosh tools are read-only. OAuth access is limited to repository data the signed-in Kosh user can already read. Never request or expose access, refresh, or personal API token values."
     });
   }
 
@@ -340,7 +384,7 @@ async function handleRpc(request, message) {
       ? message.params.arguments
       : {};
     try {
-      return rpcResult(id, toolResult(await executeTool(request, name, args)));
+      return rpcResult(id, toolResult(await executeTool(auth, name, args)));
     } catch (error) {
       const messageText = error instanceof Error ? error.message : "tool_failed";
       return rpcResult(id, {
@@ -354,16 +398,6 @@ async function handleRpc(request, message) {
   return rpcError(id, -32601, "Method not found", { method });
 }
 
-function protectedResourceMetadata() {
-  return {
-    resource: RESOURCE,
-    authorization_servers: [OAUTH_ISSUER],
-    bearer_methods_supported: ["header"],
-    scopes_supported: ["repo:read"],
-    resource_name: "Kosh MCP"
-  };
-}
-
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url ?? "/", "http://kosh-plugin.local");
@@ -374,16 +408,15 @@ const server = createServer(async (request, response) => {
         status: "ok",
         koshOrigin: KOSH_ORIGIN,
         publicOrigin: PUBLIC_ORIGIN,
-        oauthIssuer: OAUTH_ISSUER,
-        authentication: "oauth"
+        resource: RESOURCE,
+        authentication: process.env.NODE_ENV === "production" ? "oauth" : "oauth-or-development-pat"
       });
       return;
     }
 
     if (
       request.method === "GET" &&
-      (url.pathname === "/.well-known/oauth-protected-resource" ||
-        url.pathname === "/.well-known/oauth-protected-resource/mcp")
+      ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"].includes(url.pathname)
     ) {
       json(response, 200, protectedResourceMetadata());
       return;
@@ -408,10 +441,9 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (!incomingBearer(request)) {
-      response.statusCode = 401;
-      response.setHeader("www-authenticate", `Bearer resource_metadata="${PUBLIC_ORIGIN}/.well-known/oauth-protected-resource"`);
-      json(response, 401, { error: "oauth_required" });
+    const auth = await authenticateRequest(request);
+    if (!auth) {
+      authenticationChallenge(response);
       return;
     }
 
@@ -421,16 +453,9 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (!(await introspectOAuthToken(incomingBearer(request)))) {
-      response.statusCode = 401;
-      response.setHeader("www-authenticate", `Bearer resource_metadata="${PUBLIC_ORIGIN}/.well-known/oauth-protected-resource"`);
-      json(response, 401, { error: "invalid_token" });
-      return;
-    }
-
     const protocolVersion = String(request.headers["mcp-protocol-version"] ?? DEFAULT_PROTOCOL_VERSION);
     if (Array.isArray(body)) {
-      const replies = (await Promise.all(body.map((item) => handleRpc(request, item)))).filter(Boolean);
+      const replies = (await Promise.all(body.map((item) => handleRpc(auth, item)))).filter(Boolean);
       if (!replies.length) {
         response.statusCode = 202;
         response.end();
@@ -440,7 +465,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    const reply = await handleRpc(request, body);
+    const reply = await handleRpc(auth, body);
     if (!reply) {
       response.statusCode = 202;
       response.end();
@@ -458,5 +483,5 @@ server.headersTimeout = 15000;
 server.keepAliveTimeout = 5000;
 
 server.listen(PORT, () => {
-  console.log(`Kosh ChatGPT plugin MCP server listening on :${PORT}/mcp`);
+  console.log(`Kosh MCP server listening on :${PORT}/mcp (${RESOURCE})`);
 });
