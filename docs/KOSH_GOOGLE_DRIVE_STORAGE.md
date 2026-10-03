@@ -14,7 +14,7 @@ The default remains `local` for development and existing installations.
 
 ## Authentication
 
-Kosh runtime credentials are separate from any ChatGPT Google Drive connection.
+Kosh uses its own runtime credentials for Google Drive access.
 
 Preferred production configuration uses an OAuth refresh token:
 
