@@ -136,8 +136,8 @@ export const koshModules: KoshModule[] = [
   {
     id: "pages",
     name: "Pages & Static Hosting",
-    description: "Static-site configuration and deployment policy resources for repository publishing.",
-    status: "foundation"
+    description: "Commit-pinned static publishing with validated source trees, deployment history, rollback, SPA fallback and repository access control.",
+    status: "active"
   },
   {
     id: "webhooks",
