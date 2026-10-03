@@ -288,6 +288,17 @@ export function KoshWorkspace() {
                     >
                       Integrations →
                     </Link>
+                    <Link
+                      className={styles.back}
+                      href={
+                        "/apps/kosh/systems?namespace=" +
+                        encodeURIComponent(repository.namespace) +
+                        "&slug=" +
+                        encodeURIComponent(repository.slug)
+                      }
+                    >
+                      Systems →
+                    </Link>
                   </div>
                   <small>
                     git clone {repository.cloneSshUrl || repository.cloneHttpUrl}
