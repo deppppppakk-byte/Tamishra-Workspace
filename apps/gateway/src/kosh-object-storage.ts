@@ -159,9 +159,13 @@ async function putGoogleDriveObject(input: PutKoshObjectInput): Promise<KoshObje
     "metadata",
     new Blob([JSON.stringify(metadata)], { type: "application/json" })
   );
+  const fileBytes = new Uint8Array(input.bytes.length);
+  fileBytes.set(input.bytes);
   form.append(
     "file",
-    new Blob([input.bytes], { type: input.mediaType || "application/octet-stream" }),
+    new Blob([fileBytes.buffer], {
+      type: input.mediaType || "application/octet-stream"
+    }),
     clean(input.filename, 220) || "object.bin"
   );
 
