@@ -7,6 +7,7 @@ import {
   readyKoshOpsStore
 } from "./kosh-ops-store.js";
 import { processKoshOpsJob } from "./kosh-ops-processor.js";
+import { enqueueDueKoshOpsSchedules } from "./kosh-ops-scheduler.js";
 
 const workerId =
   process.env.KOSH_OPS_WORKER_ID?.trim() ||
@@ -18,6 +19,11 @@ const pollMs = Math.max(
 const concurrency = Math.max(
   1,
   Math.min(16, Math.floor(Number(process.env.KOSH_OPS_WORKER_CONCURRENCY ?? 2) || 2))
+);
+const schedulerEnabled = process.env.KOSH_OPS_SCHEDULER === "true";
+const schedulerPollMs = Math.max(
+  10_000,
+  Math.min(10 * 60_000, Number(process.env.KOSH_OPS_SCHEDULER_POLL_MS ?? 60_000) || 60_000)
 );
 let stopping = false;
 
@@ -59,10 +65,32 @@ async function runClaimLoop(slot: number) {
   }
 }
 
+async function runSchedulerLoop() {
+  while (!stopping) {
+    try {
+      const outcomes = await enqueueDueKoshOpsSchedules();
+      if (outcomes.length) {
+        console.log(`Kosh operations scheduler enqueued ${outcomes.length} due schedule(s).`);
+      }
+    } catch (error) {
+      console.error("Kosh operations scheduler cycle failed", error);
+    }
+    await sleep(schedulerPollMs);
+  }
+}
+
 async function main() {
   await readyKoshOpsStore();
-  console.log(`Kosh operations worker ${workerId} starting with concurrency ${concurrency}.`);
-  await Promise.all(Array.from({ length: concurrency }, (_, index) => runClaimLoop(index + 1)));
+  console.log(
+    `Kosh operations worker ${workerId} starting with concurrency ${concurrency}` +
+    (schedulerEnabled ? " and scheduler leadership." : ".")
+  );
+  const loops: Promise<void>[] = Array.from(
+    { length: concurrency },
+    (_, index) => runClaimLoop(index + 1)
+  );
+  if (schedulerEnabled) loops.push(runSchedulerLoop());
+  await Promise.all(loops);
 }
 
 function shutdown(signal: string) {
