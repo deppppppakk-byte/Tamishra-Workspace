@@ -5,10 +5,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { dirname, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
-import { materializeKoshObject } from "./kosh-object-storage.js";
 import { getKoshPackageStore, type StoredKoshPackageVersion } from "./kosh-package-store.js";
 import { getKoshReleaseStore, type StoredKoshReleaseAsset } from "./kosh-release-store.js";
 import { getKoshObjectIndex } from "./kosh-storage-object-index.js";
+import { materializeKoshObjectWithReplica } from "./kosh-storage-replica.js";
 import { getKoshStore, type StoredKoshRepository } from "./kosh-store.js";
 
 const repositoryStore = getKoshStore();
@@ -104,7 +104,16 @@ async function sendDriveFile(
   const path = safePath(directory, randomUUID() + ".download");
   await mkdir(dirname(path), { recursive: true });
   try {
-    await materializeKoshObject(indexed.locator, "", path);
+    const materialized = await materializeKoshObjectWithReplica({
+      repositoryId: input.repositoryId,
+      storageClass: input.storageClass,
+      logicalId: input.logicalId,
+      locator: indexed.locator,
+      localFallbackPath: "",
+      destinationPath: path,
+      sizeBytes: input.sizeBytes,
+      sha256: input.sha256
+    });
     const info = await stat(path);
     const checksum = await hashFile(path);
     if (info.size !== input.sizeBytes || checksum !== input.sha256) {
@@ -119,6 +128,7 @@ async function sendDriveFile(
       'attachment; filename="' + input.filename.replace(/["\r\n]/g, "_") + '"'
     );
     response.setHeader("x-kosh-sha256", checksum);
+    response.setHeader("x-kosh-storage-source", materialized.source);
     response.setHeader("etag", '"' + checksum + '"');
     response.setHeader("cache-control", "private, max-age=31536000, immutable");
     const origin = request.headers.origin;
