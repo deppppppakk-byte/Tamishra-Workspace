@@ -1,0 +1,32 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "kosh",
+  "version": "0.1.0",
+  "description": "Inspect Kosh repositories, work, automation, releases and production readiness from ChatGPT and Codex.",
+  "author": {
+    "name": "Tamishra",
+    "url": "https://tamishra.in"
+  },
+  "homepage": "https://kosh.tamishra.in",
+  "repository": "https://github.com/deppppppakk-byte/Tamishra-Workspace",
+  "keywords": ["developer-tools", "repositories", "automation", "devops"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Kosh",
+        "shortDescription": "Work with Kosh repositories from ChatGPT.",
+        "longDescription": "Inspect repositories, issues, code search, workflow runs, releases and evidence-based readiness through Kosh's read-only MCP tools.",
+        "developerName": "Tamishra",
+        "category": "Developer Tools",
+        "capabilities": ["Read"],
+        "websiteURL": "https://kosh.tamishra.in",
+        "defaultPrompt": [
+          "Show my Kosh repositories.",
+          "Check the readiness of a Kosh repository.",
+          "Search this Kosh repository for a symbol and summarize what you find."
+        ],
+        "brandColor": "#102A43"
+      }
+    }
+  }
+}
