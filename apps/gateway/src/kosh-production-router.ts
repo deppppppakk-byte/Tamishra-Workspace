@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { handleKoshOperationsMetricsRequest } from "./kosh-operations-metrics.js";
+import { handleKoshOpsFleetRequest } from "./kosh-ops-fleet.js";
 import { handleKoshPagesDomainRequest } from "./kosh-pages-domains.js";
 import { handleKoshProductionOperationsRequest } from "./kosh-production-operations.js";
 import { handleKoshSecretRotationRequest } from "./kosh-secret-rotation.js";
@@ -13,6 +14,15 @@ export async function handleKoshProductionRequest(
 ) {
   if (
     await handleKoshOperationsMetricsRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) return true;
+  if (
+    await handleKoshOpsFleetRequest(
       request,
       response,
       url,
