@@ -14,6 +14,7 @@ import { handleKoshWebhookRequest } from "./kosh-webhooks.js";
 import { handleKoshPublicApiRequest } from "./kosh-api.js";
 import { handleKoshSystemsRequest } from "./kosh-systems.js";
 import { handleKoshStoragePreflight } from "./kosh-storage-guard.js";
+import { handleKoshReadinessRequest } from "./kosh-readiness.js";
 import {
   handleKoshOperationGuardRequest,
   runWithKoshOperationGuard
@@ -256,6 +257,18 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
 
   if (
     await handleKoshPublicApiRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return;
+  }
+
+  if (
+    await handleKoshReadinessRequest(
       request,
       response,
       url,
