@@ -6,6 +6,7 @@ export function isKoshOperationGuardedRequest(request: IncomingMessage) {
   return (
     /^\/v1\/kosh\/repos\/[^/]+\/[^/]+\/systems\/deployments\/requests\/[^/]+\/execute$/.test(pathname) ||
     /^\/v1\/kosh\/repos\/[^/]+\/[^/]+\/systems\/recovery\/backups\/[^/]+\/activate$/.test(pathname) ||
+    /^\/v1\/kosh\/repos\/[^/]+\/[^/]+\/systems\/storage\/reconcile(?:\/(?:orphans|stale-index)\/delete)?$/.test(pathname) ||
     /^\/v1\/kosh\/repos\/[^/]+\/[^/]+\/merge-queue\/process$/.test(pathname)
   );
 }
