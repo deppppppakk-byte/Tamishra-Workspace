@@ -13,6 +13,11 @@ import { handleKoshPagesAdminRequest } from "./kosh-pages.js";
 import { handleKoshWebhookRequest } from "./kosh-webhooks.js";
 import { handleKoshPublicApiRequest } from "./kosh-api.js";
 import { handleKoshSystemsRequest } from "./kosh-systems.js";
+import {
+  handleKoshOperationGuardRequest,
+  runWithKoshOperationGuard
+} from "./kosh-operation-guards.js";
+import { isKoshOperationGuardedRequest } from "./kosh-operation-guard-match.js";
 import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
 import { getKoshStore } from "./kosh-store.js";
 
@@ -184,7 +189,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       );
       response.setHeader(
         "access-control-allow-headers",
-        "content-type,authorization,x-patra-company-provisioning-secret"
+        "content-type,authorization,idempotency-key,x-patra-company-provisioning-secret"
       );
       response.setHeader("vary", "origin");
     }
@@ -258,6 +263,46 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     )
   ) {
     return;
+  }
+
+  if (
+    await handleKoshOperationGuardRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return;
+  }
+
+  if (isKoshOperationGuardedRequest(request)) {
+    const handled = await runWithKoshOperationGuard(
+      request,
+      response,
+      async () => {
+        if (url.pathname.includes("/systems/")) {
+          return handleKoshSystemsRequest(
+            request,
+            response,
+            url,
+            origin,
+            allowedOrigins
+          );
+        }
+        return handleKoshRequest(
+          request,
+          response,
+          url,
+          origin,
+          allowedOrigins
+        );
+      },
+      origin,
+      allowedOrigins
+    );
+    if (handled) return;
   }
 
   if (
