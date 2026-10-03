@@ -1,9 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
 import { resolveKoshIdentity } from "./kosh-auth.js";
+import { enqueueKoshOpsJobWithPoolAdmission } from "./kosh-ops-pool-policy.js";
 import {
   cancelKoshOpsJob,
-  enqueueKoshOpsJob,
   getKoshOpsJob,
   getKoshOpsQueueStats,
   listKoshOpsJobs,
@@ -242,7 +242,7 @@ async function handlePlatform(
     return true;
   }
 
-  const job = await enqueueKoshOpsJob({
+  const job = await enqueueKoshOpsJobWithPoolAdmission({
     type,
     payload: safePayload(body.payload),
     maxAttempts: Math.max(1, Math.min(10, Math.floor(Number(body.maxAttempts) || 3))),
@@ -341,7 +341,7 @@ async function handleRepository(
     return true;
   }
 
-  const job = await enqueueKoshOpsJob({
+  const job = await enqueueKoshOpsJobWithPoolAdmission({
     repositoryId: repository.id,
     type,
     payload: safePayload(body.payload),
