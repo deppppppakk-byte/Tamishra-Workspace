@@ -125,6 +125,7 @@ export function KoshWorkspace() {
           <Link href="/apps/kosh/mesh">Mesh</Link>
           <Link href="/apps/kosh/pulse">Pulse</Link>
           <Link href="/apps/kosh/readiness">Readiness</Link>
+          <Link href="/apps/kosh/operations">Operations</Link>
           <Link href="/apps/kosh/access">Access</Link>
           <Link href="/apps/kosh/api">API & CLI</Link>
           <a href="#platform">Platform</a>
@@ -311,6 +312,17 @@ export function KoshWorkspace() {
                     >
                       Readiness →
                     </Link>
+                    <Link
+                      className={styles.back}
+                      href={
+                        "/apps/kosh/operations?namespace=" +
+                        encodeURIComponent(repository.namespace) +
+                        "&slug=" +
+                        encodeURIComponent(repository.slug)
+                      }
+                    >
+                      Operations →
+                    </Link>
                   </div>
                   <small>
                     git clone {repository.cloneSshUrl || repository.cloneHttpUrl}
@@ -348,7 +360,7 @@ export function KoshWorkspace() {
             <h2>Storage remains replaceable.</h2>
             <p>
               Git repositories use persistent Git-native storage. Database metadata uses the Workspace PostgreSQL layer.
-              Releases, build artifacts, backups and large project assets can later use Google Drive or another object-storage adapter.
+              Packages, release assets, Automation artifacts and recovery backups use the configured Kosh object-storage adapter, including Google Drive when enabled.
             </p>
           </div>
           <dl>
