@@ -190,7 +190,7 @@ export async function enqueueKoshOpsJob(input: EnqueueInput) {
       id, repository_id, type, state, payload, max_attempts, available_at,
       created_by_user_id, created_by_name
     ) VALUES(
-      ${id}, ${item.repositoryId}, ${item.type}, 'queued', ${db.json(item.payload)},
+      ${id}, ${item.repositoryId}, ${item.type}, 'queued', ${JSON.stringify(item.payload)}::jsonb,
       ${item.maxAttempts}, ${item.availableAt}, ${item.createdByUserId}, ${item.createdByName}
     )
     RETURNING *
@@ -330,7 +330,7 @@ export async function completeKoshOpsJob(
   await readyKoshOpsStore();
   const rows = await db`
     UPDATE kosh_ops_jobs
-    SET state = 'succeeded', result = ${db.json(result)}, error = NULL,
+    SET state = 'succeeded', result = ${JSON.stringify(result)}::jsonb, error = NULL,
         lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
     WHERE id = ${id} AND state = 'leased' AND lease_token = ${leaseToken}
     RETURNING id
