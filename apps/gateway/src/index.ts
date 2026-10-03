@@ -11,10 +11,13 @@ import { handleKoshRequest } from "./kosh.js";
 import { handleKoshWikiRequest } from "./kosh-wiki.js";
 import { handleKoshPagesAdminRequest } from "./kosh-pages.js";
 import { handleKoshWebhookRequest } from "./kosh-webhooks.js";
-import { handleKoshAdministrationGate } from "./kosh-admin-gate.js";
+import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
+import { getKoshStore } from "./kosh-store.js";
 
 const port = Number(process.env.WORKSPACE_GATEWAY_PORT ?? process.env.PORT ?? 4100);
 const isProduction = process.env.NODE_ENV === "production";
+const koshRepositoryStore = getKoshStore();
+const koshAdminMutatingMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 function requireProductionValue(name: string, minimumLength = 1) {
   const value = process.env[name]?.trim();
@@ -129,6 +132,49 @@ function notFound(response: ServerResponse, origin?: string) {
   json(response, 404, { error: "not_found" }, origin);
 }
 
+async function handleKoshAdministrationGate(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  origin?: string
+) {
+  if (!koshAdminMutatingMethods.has(request.method ?? "")) return false;
+
+  const match = url.pathname.match(
+    /^\/v1\/kosh\/repos\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,63})\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,99})\/(?:webhooks|platform)(?:\/|$)/
+  );
+  if (!match) return false;
+
+  const repository = await koshRepositoryStore.get(match[1], match[2]);
+  if (!repository) {
+    json(response, 404, { error: "repository_not_found" }, origin);
+    return true;
+  }
+
+  const authorization = await authorizeKoshRepositoryRequest(
+    request,
+    repository,
+    "repository.manage"
+  );
+  if (!authorization.decision.allowed || !authorization.identity) {
+    json(
+      response,
+      authorization.identity ? 403 : 401,
+      {
+        error: authorization.identity
+          ? "repository_permission_denied"
+          : "authentication_required",
+        permission: "repository.manage",
+        role: authorization.decision.role
+      },
+      origin
+    );
+    return true;
+  }
+
+  return false;
+}
+
 async function handle(request: IncomingMessage, response: ServerResponse) {
   applySecurityHeaders(response);
 
@@ -210,15 +256,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
     return;
   }
 
-  if (
-    await handleKoshAdministrationGate(
-      request,
-      response,
-      url,
-      origin,
-      allowedOrigins
-    )
-  ) {
+  if (await handleKoshAdministrationGate(request, response, url, origin)) {
     return;
   }
 
