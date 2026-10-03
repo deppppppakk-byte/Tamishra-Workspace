@@ -198,6 +198,12 @@ export const koshModules: KoshModule[] = [
     name: "Extension SDK",
     description: "Versioned declarative extension manifests with validated capabilities, permissions, asset kinds and controlled activation.",
     status: "active"
+  },
+  {
+    id: "policy-engine",
+    name: "Policy Engine",
+    description: "Native deterministic policy-as-code evaluation for merge, automation, deployment, package, storage, extension and repository controls.",
+    status: "active"
   }
 ];
 

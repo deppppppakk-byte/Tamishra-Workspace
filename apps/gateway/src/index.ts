@@ -13,6 +13,7 @@ import { handleKoshPagesAdminRequest } from "./kosh-pages.js";
 import { handleKoshWebhookRequest } from "./kosh-webhooks.js";
 import { handleKoshPublicApiRequest } from "./kosh-api.js";
 import { handleKoshSystemsRequest } from "./kosh-systems.js";
+import { handleKoshPolicyRequest } from "./kosh-policy-engine.js";
 import {
   handleKoshOperationGuardRequest,
   runWithKoshOperationGuard
@@ -255,6 +256,18 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
 
   if (
     await handleKoshPublicApiRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
+    return;
+  }
+
+  if (
+    await handleKoshPolicyRequest(
       request,
       response,
       url,
