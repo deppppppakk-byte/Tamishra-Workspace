@@ -11,6 +11,7 @@ import { handleKoshRequest } from "./kosh.js";
 import { handleKoshWikiRequest } from "./kosh-wiki.js";
 import { handleKoshPagesAdminRequest } from "./kosh-pages.js";
 import { handleKoshWebhookRequest } from "./kosh-webhooks.js";
+import { handleKoshPublicApiRequest } from "./kosh-api.js";
 import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
 import { getKoshStore } from "./kosh-store.js";
 
@@ -243,6 +244,18 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       },
       origin
     );
+    return;
+  }
+
+  if (
+    await handleKoshPublicApiRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) {
     return;
   }
 
