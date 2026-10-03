@@ -7,6 +7,7 @@ import {
   readyKoshOpsStore
 } from "./kosh-ops-store.js";
 import {
+  getKoshOpsWorkerControl,
   heartbeatKoshOpsWorker,
   readyKoshOpsWorkerRegistry
 } from "./kosh-ops-worker-registry.js";
@@ -48,8 +49,26 @@ async function publishFleetHeartbeat() {
   });
 }
 
+async function slotCanClaim(slot: number) {
+  const control = await getKoshOpsWorkerControl(workerId);
+  if (control.requestedState !== "active") return false;
+  const effectiveConcurrency = Math.max(1, Math.min(concurrency, control.desiredConcurrency ?? concurrency));
+  return slot <= effectiveConcurrency;
+}
+
 async function runClaimLoop(slot: number) {
   while (!stopping) {
+    try {
+      if (!(await slotCanClaim(slot))) {
+        await sleep(pollMs);
+        continue;
+      }
+    } catch (error) {
+      console.error("Kosh operations fleet control read failed", error);
+      await sleep(pollMs);
+      continue;
+    }
+
     const job = await claimKoshOpsJob(`${workerId}:${slot}`);
     if (!job || !job.leaseToken) {
       await sleep(pollMs);
@@ -82,9 +101,24 @@ async function runClaimLoop(slot: number) {
   }
 }
 
+async function releaseSchedulerIfNeeded() {
+  if (!schedulerLeader) return;
+  await releaseKoshOpsSchedulerLeadership(workerId).catch((error) => {
+    console.error("Kosh operations scheduler leadership release failed", error);
+  });
+  schedulerLeader = false;
+  await publishFleetHeartbeat().catch(() => undefined);
+}
+
 async function runSchedulerLoop() {
   while (!stopping) {
     try {
+      const control = await getKoshOpsWorkerControl(workerId);
+      if (control.requestedState !== "active") {
+        await releaseSchedulerIfNeeded();
+        await sleep(schedulerPollMs);
+        continue;
+      }
       const leadership = await acquireOrRenewKoshOpsSchedulerLeadership(workerId);
       const changed = schedulerLeader !== leadership.leader;
       schedulerLeader = leadership.leader;
@@ -107,6 +141,7 @@ async function runSchedulerLoop() {
     }
     await sleep(schedulerPollMs);
   }
+  await releaseSchedulerIfNeeded();
 }
 
 async function main() {
@@ -127,7 +162,7 @@ async function main() {
   if (schedulerCandidate) loops.push(runSchedulerLoop());
   await Promise.all(loops);
   clearInterval(fleetHeartbeat);
-  if (schedulerLeader) await releaseKoshOpsSchedulerLeadership(workerId).catch(() => undefined);
+  await releaseSchedulerIfNeeded();
 }
 
 function shutdown(signal: string) {

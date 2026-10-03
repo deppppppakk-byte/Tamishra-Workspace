@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
 import { resolveKoshIdentity } from "./kosh-auth.js";
+import { getKoshOpsWorkerFleetSummary } from "./kosh-ops-worker-registry.js";
 import {
   getKoshOpsQueueStats,
   listKoshOpsJobs,
@@ -16,16 +17,10 @@ const platformStore = getKoshPlatformStore();
 type Identity = NonNullable<Awaited<ReturnType<typeof resolveKoshIdentity>>>;
 
 function platformAdministrator(identity: Identity) {
-  const ids = new Set(
-    (process.env.KOSH_PLATFORM_ADMIN_USER_IDS ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean)
-  );
+  const ids = new Set((process.env.KOSH_PLATFORM_ADMIN_USER_IDS ?? "").split(",").map((value) => value.trim()).filter(Boolean));
   return ids.size > 0
     ? ids.has(identity.user.id)
-    : process.env.NODE_ENV !== "production" &&
-        identity.memberships.some((item) => ["owner", "admin"].includes(item.membership.role));
+    : process.env.NODE_ENV !== "production" && identity.memberships.some((item) => ["owner", "admin"].includes(item.membership.role));
 }
 
 function cors(response: ServerResponse, origin: string | undefined, allowed: ReadonlySet<string>) {
@@ -58,14 +53,8 @@ function successLatency(jobs: KoshOpsJob[]) {
     .map((item) => new Date(item.finishedAt ?? item.updatedAt).getTime() - new Date(item.createdAt).getTime())
     .filter((value) => Number.isFinite(value) && value >= 0)
     .sort((a, b) => a - b);
-  const percentile = (p: number) => durations[
-    Math.min(durations.length - 1, Math.floor(Math.max(0, durations.length - 1) * p))
-  ] ?? 0;
-  return {
-    p50: percentile(0.5),
-    p95: percentile(0.95),
-    p99: percentile(0.99)
-  };
+  const percentile = (p: number) => durations[Math.min(durations.length - 1, Math.floor(Math.max(0, durations.length - 1) * p))] ?? 0;
+  return { p50: percentile(0.5), p95: percentile(0.95), p99: percentile(0.99) };
 }
 
 async function repositoryMetrics(repositoryId: string) {
@@ -78,15 +67,8 @@ async function repositoryMetrics(repositoryId: string) {
     platformStore.listResources("backup", repositoryId)
   ]);
   return {
-    queue: {
-      ...queue,
-      successLatencyMs: successLatency(jobs)
-    },
-    storage: {
-      usage,
-      limits,
-      ratio: limits.maxTotalBytes > 0 ? usage.knownBytes / limits.maxTotalBytes : 0
-    },
+    queue: { ...queue, successLatencyMs: successLatency(jobs) },
+    storage: { usage, limits, ratio: limits.maxTotalBytes > 0 ? usage.knownBytes / limits.maxTotalBytes : 0 },
     evidence: {
       recentAuditEvents: audits.length,
       restorePoints: backups.length,
@@ -98,12 +80,10 @@ async function repositoryMetrics(repositoryId: string) {
 function renderPrometheus(
   scope: "platform" | "repository",
   metrics: Awaited<ReturnType<typeof repositoryMetrics>>,
-  labels: Record<string, string>
+  labels: Record<string, string>,
+  fleet?: Awaited<ReturnType<typeof getKoshOpsWorkerFleetSummary>>
 ) {
-  const lines = [
-    "# HELP kosh_ops_jobs Kosh asynchronous operations by state.",
-    "# TYPE kosh_ops_jobs gauge"
-  ];
+  const lines = ["# HELP kosh_ops_jobs Kosh asynchronous operations by state.", "# TYPE kosh_ops_jobs gauge"];
   for (const [state, count] of Object.entries(metrics.queue.byState)) {
     lines.push(metricLine("kosh_ops_jobs", Number(count), { ...labels, scope, state }));
   }
@@ -117,6 +97,18 @@ function renderPrometheus(
   }
   lines.push(metricLine("kosh_ops_queue_limit", metrics.queue.limits.globalQueued, { ...labels, scope, kind: "global" }));
   lines.push(metricLine("kosh_ops_queue_limit", metrics.queue.limits.repositoryQueued, { ...labels, scope, kind: "repository" }));
+  if (fleet) {
+    lines.push(metricLine("kosh_ops_workers", fleet.online, { ...labels, state: "online" }));
+    lines.push(metricLine("kosh_ops_workers", fleet.stale, { ...labels, state: "stale" }));
+    lines.push(metricLine("kosh_ops_workers", fleet.active, { ...labels, state: "active" }));
+    lines.push(metricLine("kosh_ops_workers", fleet.draining, { ...labels, state: "draining" }));
+    lines.push(metricLine("kosh_ops_workers", fleet.disabled, { ...labels, state: "disabled" }));
+    lines.push(metricLine("kosh_ops_worker_concurrency", fleet.totalConcurrency, labels));
+    lines.push(metricLine("kosh_ops_worker_active_jobs", fleet.activeJobs, labels));
+    lines.push(metricLine("kosh_ops_worker_available_slots", fleet.availableSlots, labels));
+    lines.push(metricLine("kosh_ops_scheduler_leaders", fleet.schedulerLeaders, labels));
+    lines.push(metricLine("kosh_ops_fleet_healthy", fleet.healthy ? 1 : 0, labels));
+  }
   lines.push("# HELP kosh_storage_known_bytes Known Kosh object-storage bytes.");
   lines.push("# TYPE kosh_storage_known_bytes gauge");
   lines.push(metricLine("kosh_storage_known_bytes", metrics.storage.usage.knownBytes, labels));
@@ -144,9 +136,7 @@ export async function handleKoshOperationsMetricsRequest(
 ) {
   if (request.method !== "GET") return false;
   const platformMatch = url.pathname === "/v1/kosh/systems/metrics";
-  const repoMatch = url.pathname.match(
-    /^\/v1\/kosh\/repos\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,63})\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,99})\/systems\/metrics$/
-  );
+  const repoMatch = url.pathname.match(/^\/v1\/kosh\/repos\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,63})\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,99})\/systems\/metrics$/);
   if (!platformMatch && !repoMatch) return false;
   await platformStore.ready();
 
@@ -157,19 +147,14 @@ export async function handleKoshOperationsMetricsRequest(
       return true;
     }
     const all = await repositories.list();
-    const [perRepository, globalJobs, globalQueue] = await Promise.all([
-      Promise.all(all.map(async (repository) => ({
-        repository,
-        metrics: await repositoryMetrics(repository.id)
-      }))),
+    const [perRepository, globalJobs, globalQueue, fleet] = await Promise.all([
+      Promise.all(all.map(async (repository) => ({ repository, metrics: await repositoryMetrics(repository.id) }))),
       listKoshOpsJobs(undefined, 1000),
-      getKoshOpsQueueStats(undefined)
+      getKoshOpsQueueStats(undefined),
+      getKoshOpsWorkerFleetSummary()
     ]);
     const aggregate = {
-      queue: {
-        ...globalQueue,
-        successLatencyMs: successLatency(globalJobs)
-      },
+      queue: { ...globalQueue, successLatencyMs: successLatency(globalJobs) },
       storage: {
         usage: {
           packageBytes: 0,
@@ -194,15 +179,13 @@ export async function handleKoshOperationsMetricsRequest(
         verifiedRestorePoints: perRepository.reduce((sum, item) => sum + item.metrics.evidence.verifiedRestorePoints, 0)
       }
     };
-    aggregate.storage.ratio = aggregate.storage.limits.maxTotalBytes > 0
-      ? aggregate.storage.usage.knownBytes / aggregate.storage.limits.maxTotalBytes
-      : 0;
+    aggregate.storage.ratio = aggregate.storage.limits.maxTotalBytes > 0 ? aggregate.storage.usage.knownBytes / aggregate.storage.limits.maxTotalBytes : 0;
     if ((request.headers.accept ?? "").includes("text/plain")) {
       response.statusCode = 200;
       response.setHeader("content-type", "text/plain; version=0.0.4; charset=utf-8");
       response.setHeader("cache-control", "no-store");
       cors(response, origin, allowedOrigins);
-      response.end(renderPrometheus("platform", aggregate, {}));
+      response.end(renderPrometheus("platform", aggregate, {}, fleet));
       return true;
     }
     json(response, 200, {
@@ -210,12 +193,8 @@ export async function handleKoshOperationsMetricsRequest(
       checkedAt: new Date().toISOString(),
       repositories: all.length,
       metrics: aggregate,
-      perRepository: perRepository.map((item) => ({
-        id: item.repository.id,
-        namespace: item.repository.namespace,
-        slug: item.repository.slug,
-        metrics: item.metrics
-      }))
+      fleet,
+      perRepository: perRepository.map((item) => ({ id: item.repository.id, namespace: item.repository.namespace, slug: item.repository.slug, metrics: item.metrics }))
     }, origin, allowedOrigins);
     return true;
   }
@@ -227,28 +206,24 @@ export async function handleKoshOperationsMetricsRequest(
   }
   const authorization = await authorizeKoshRepositoryRequest(request, repository, "repository.read");
   if (!authorization.identity || !authorization.decision.allowed) {
-    json(response, authorization.identity ? 403 : 401, {
-      error: authorization.identity ? "repository_permission_denied" : "authentication_required"
-    }, origin, allowedOrigins);
+    json(response, authorization.identity ? 403 : 401, { error: authorization.identity ? "repository_permission_denied" : "authentication_required" }, origin, allowedOrigins);
     return true;
   }
-  const metrics = await repositoryMetrics(repository.id);
+  const [metrics, fleet] = await Promise.all([repositoryMetrics(repository.id), getKoshOpsWorkerFleetSummary()]);
   if ((request.headers.accept ?? "").includes("text/plain")) {
     response.statusCode = 200;
     response.setHeader("content-type", "text/plain; version=0.0.4; charset=utf-8");
     response.setHeader("cache-control", "no-store");
     cors(response, origin, allowedOrigins);
-    response.end(renderPrometheus("repository", metrics, {
-      namespace: repository.namespace,
-      repository: repository.slug
-    }));
+    response.end(renderPrometheus("repository", metrics, { namespace: repository.namespace, repository: repository.slug }, fleet));
     return true;
   }
   json(response, 200, {
     scope: "repository",
     checkedAt: new Date().toISOString(),
     repository: { id: repository.id, namespace: repository.namespace, slug: repository.slug },
-    metrics
+    metrics,
+    fleet
   }, origin, allowedOrigins);
   return true;
 }
