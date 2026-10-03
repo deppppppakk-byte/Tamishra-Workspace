@@ -1,4 +1,5 @@
-import { enqueueKoshOpsJob, type KoshOpsJobType } from "./kosh-ops-store.js";
+import { enqueueKoshOpsJobWithPoolAdmission } from "./kosh-ops-pool-policy.js";
+import { type KoshOpsJobType } from "./kosh-ops-store.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
 
 const platformStore = getKoshPlatformStore();
@@ -51,7 +52,7 @@ export async function enqueueDueKoshOpsSchedules() {
     const next = new Date(now + intervalMinutes * 60_000).toISOString();
 
     try {
-      const job = await enqueueKoshOpsJob({
+      const job = await enqueueKoshOpsJobWithPoolAdmission({
         repositoryId: resource.repositoryId,
         type,
         payload: record(resource.payload.jobPayload),
