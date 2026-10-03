@@ -5,6 +5,7 @@ import { handleKoshArtifactStorageRoute } from "./kosh-artifact-storage-routes.j
 import { automationStore } from "./kosh-automation-service.js";
 import { handleKoshDriveChannelRoute } from "./kosh-drive-channel-routes.js";
 import { handleKoshDriveStorageRoute } from "./kosh-drive-storage-routes.js";
+import { handleKoshDriveStreamRoute } from "./kosh-drive-stream-routes.js";
 import type { KoshStorageClass } from "./kosh-storage-policy.js";
 import {
   finalizeKoshStorageReservation,
@@ -228,6 +229,9 @@ async function handleDriveNonReservedRoute(
     return true;
   }
   if (await handleKoshDriveChannelRoute(request, response, url)) {
+    return true;
+  }
+  if (await handleKoshDriveStreamRoute(request, response, url)) {
     return true;
   }
   return handleKoshDriveStorageRoute(request, response, url);
