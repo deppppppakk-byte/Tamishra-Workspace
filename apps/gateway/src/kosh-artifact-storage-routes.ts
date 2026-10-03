@@ -1,6 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
 import { automationStore } from "./kosh-automation-service.js";
 import type { StoredKoshArtifact } from "./kosh-automation-store.js";
@@ -133,6 +133,19 @@ function safeArtifactName(value: string) {
   return name && name !== "." && name !== ".." ? name : "";
 }
 
+function legacyArtifactPath(value: string) {
+  const path = resolve(value);
+  const rootPrefix = artifactRoot.endsWith(sep)
+    ? artifactRoot
+    : artifactRoot + sep;
+  if (path !== artifactRoot && !path.startsWith(rootPrefix)) {
+    throw Object.assign(new Error("artifact_storage_path_invalid"), {
+      status: 500
+    });
+  }
+  return path;
+}
+
 async function findRunnerContext(jobId: string): Promise<ArtifactContext | null> {
   await store.ready();
   for (const repository of await repositoryStore.list()) {
@@ -197,7 +210,10 @@ async function storageForArtifact(
     return {
       backend: indexed.locator.backend,
       locator: indexed.locator,
-      localPath: ""
+      localPath:
+        indexed.locator.backend === "local"
+          ? legacyArtifactPath(indexed.locator.objectId)
+          : ""
     };
   }
 
@@ -206,14 +222,17 @@ async function storageForArtifact(
     return {
       backend: indexed.locator.backend,
       locator: indexed.locator,
-      localPath: artifact.storagePath
+      localPath:
+        indexed.locator.backend === "local"
+          ? legacyArtifactPath(indexed.locator.objectId || artifact.storagePath)
+          : legacyArtifactPath(artifact.storagePath)
     };
   }
 
   return {
     backend: "local" as const,
     locator: null,
-    localPath: artifact.storagePath
+    localPath: legacyArtifactPath(artifact.storagePath)
   };
 }
 
