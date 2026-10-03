@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import postgres, { type TransactionSql } from "postgres";
+import postgres from "postgres";
 import {
   claimKoshOpsJob,
   type KoshOpsJob,
@@ -114,7 +114,7 @@ export function koshOpsPoolSupportsType(pool: KoshOpsWorkerPool, type: KoshOpsJo
   return pool === "all" || koshOpsPoolJobTypes[pool].includes(type);
 }
 
-async function recoverExpiredLeases(db: TransactionSql<{}>) {
+async function recoverExpiredLeases(db: postgres.TransactionSql<{}>) {
   await db`UPDATE kosh_ops_jobs
     SET state = CASE WHEN attempt >= max_attempts THEN 'failed' ELSE 'queued' END,
         error = 'operation_lease_expired',
@@ -132,7 +132,7 @@ async function recoverExpiredLeases(db: TransactionSql<{}>) {
 }
 
 async function selectPoolCandidate(
-  tx: TransactionSql<{}>,
+  tx: postgres.TransactionSql<{}>,
   pool: Exclude<KoshOpsWorkerPool, "all">
 ) {
   if (pool === "general") {
