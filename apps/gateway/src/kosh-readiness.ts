@@ -2,8 +2,11 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
 import { resolveKoshIdentity } from "./kosh-auth.js";
 import { automationStore } from "./kosh-automation-service.js";
+import { probeKoshDriveStorage } from "./kosh-google-drive-admin.js";
+import { koshObjectStorageBackend } from "./kosh-object-storage.js";
 import { getKoshPlatformStore } from "./kosh-platform-store.js";
 import { koshKnownStorageUsage, koshStorageLimits } from "./kosh-storage-policy.js";
+import { getKoshStorageReconciliationEvidence } from "./kosh-storage-reconciliation.js";
 import { getKoshStore } from "./kosh-store.js";
 
 const repositoryStore = getKoshStore();
@@ -77,11 +80,31 @@ function ratioStatus(value: number): ReadinessStatus {
   return "pass";
 }
 
+function record(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function numberValue(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+}
+
 async function platformReadiness() {
   await platformStore.ready();
   const production = process.env.NODE_ENV === "production";
   const repositories = await repositoryStore.list();
   const recentAudit = await platformStore.listAudit(undefined, 100);
+  const storageBackend = koshObjectStorageBackend();
+  const driveHealth = storageBackend === "google-drive"
+    ? await probeKoshDriveStorage().catch((error) => ({
+        ok: false,
+        checkedAt: new Date().toISOString(),
+        checks: [],
+        error: error instanceof Error ? error.message : "drive_probe_failed"
+      }))
+    : null;
 
   const checks: ReadinessCheck[] = [
     {
@@ -143,6 +166,22 @@ async function platformReadiness() {
         : "Kosh is using its default recovery-bundle root."
     },
     {
+      id: "object-storage-backend",
+      status: storageBackend === "google-drive" ? "pass" : production ? "warn" : "pass",
+      detail: storageBackend === "google-drive"
+        ? "Kosh object classes are configured for the Google Drive storage adapter."
+        : "Kosh object classes are using local object storage."
+    },
+    ...(storageBackend === "google-drive"
+      ? [{
+          id: "google-drive-folders",
+          status: driveHealth?.ok ? "pass" as const : "fail" as const,
+          detail: driveHealth?.ok
+            ? "All configured Kosh Drive storage folders are reachable."
+            : "One or more configured Kosh Drive storage folders could not be verified."
+        }]
+      : []),
+    {
       id: "legacy-access",
       status: (process.env.KOSH_ACCESS_LEGACY_MODE ?? "deny") === "deny"
         ? "pass"
@@ -181,14 +220,18 @@ async function platformReadiness() {
     checks,
     evidence: {
       repositories: repositories.length,
-      recentAuditEvents: recentAudit.length
+      recentAuditEvents: recentAudit.length,
+      objectStorage: {
+        backend: storageBackend,
+        drive: driveHealth
+      }
     }
   };
 }
 
 async function repositoryReadiness(repositoryId: string) {
   await Promise.all([platformStore.ready(), automation.ready()]);
-  const [usage, limits, backups, queue, runs, deployments, recentAudit] =
+  const [usage, limits, backups, queue, runs, deployments, recentAudit, reconciliation] =
     await Promise.all([
       koshKnownStorageUsage(repositoryId),
       koshStorageLimits(repositoryId),
@@ -196,7 +239,8 @@ async function repositoryReadiness(repositoryId: string) {
       platformStore.listResources("merge_queue_entry", repositoryId),
       automation.listRuns(repositoryId, 200),
       automation.listDeployments(repositoryId, 200),
-      platformStore.listAudit(repositoryId, 100)
+      platformStore.listAudit(repositoryId, 100),
+      getKoshStorageReconciliationEvidence(repositoryId)
     ]);
 
   const storageRatio = limits.maxTotalBytes > 0
@@ -212,12 +256,59 @@ async function repositoryReadiness(repositoryId: string) {
   const runningDeployments = deployments.filter((item) => item.status === "running");
   const processingQueue = queue.filter((item) => item.state === "processing");
   const failedQueue = queue.filter((item) => item.state === "failed");
+  const reconciliationPayload = record(reconciliation?.payload);
+  const reconciliationSummary = record(reconciliationPayload.summary);
+  const driveErrors = record(reconciliationPayload.driveErrors);
+  const reconciliationCheckedAt = String(reconciliationPayload.checkedAt ?? "");
+  const reconciliationAgeMs = reconciliationCheckedAt
+    ? Date.now() - new Date(reconciliationCheckedAt).getTime()
+    : Number.POSITIVE_INFINITY;
+  const missingStorage = numberValue(reconciliationSummary.missing);
+  const mismatchedStorage = numberValue(reconciliationSummary.mismatched);
+  const migratableStorage = numberValue(reconciliationSummary.migratable);
+  const recoverableStorage = numberValue(reconciliationSummary.recoverable);
+  const orphanStorage = numberValue(reconciliationSummary.orphanRemote);
+  const staleStorageIndex = numberValue(reconciliationSummary.staleIndex);
+  const uncheckedStorage = numberValue(reconciliationSummary.unchecked);
+  const driveErrorCount = Object.values(driveErrors).filter(Boolean).length;
+  const backend = koshObjectStorageBackend();
+
+  let reconciliationStatus: ReadinessStatus = "pass";
+  let reconciliationDetail = "Storage reconciliation is not required for the local object backend.";
+  if (backend === "google-drive") {
+    if (!reconciliation) {
+      reconciliationStatus = "warn";
+      reconciliationDetail = "No repository storage reconciliation evidence has been recorded yet.";
+    } else if (missingStorage > 0 || mismatchedStorage > 0) {
+      reconciliationStatus = "fail";
+      reconciliationDetail = `${missingStorage} missing and ${mismatchedStorage} integrity-mismatched storage object(s) require attention.`;
+    } else if (driveErrorCount > 0 || uncheckedStorage > 0) {
+      reconciliationStatus = "fail";
+      reconciliationDetail = "The latest reconciliation could not fully inspect the configured Drive backend.";
+    } else if (
+      migratableStorage > 0 ||
+      recoverableStorage > 0 ||
+      orphanStorage > 0 ||
+      staleStorageIndex > 0 ||
+      reconciliationAgeMs > 24 * 60 * 60 * 1000
+    ) {
+      reconciliationStatus = "warn";
+      reconciliationDetail = `${migratableStorage} local, ${recoverableStorage} recoverable, ${orphanStorage} orphan Drive and ${staleStorageIndex} stale-index object(s) are recorded by the latest reconciliation.`;
+    } else {
+      reconciliationDetail = "The latest repository storage reconciliation is clean and current.";
+    }
+  }
 
   const checks: ReadinessCheck[] = [
     {
       id: "storage-capacity",
       status: ratioStatus(storageRatio),
       detail: `${Math.round(storageRatio * 100)}% of known repository quota is used.`
+    },
+    {
+      id: "storage-reconciliation",
+      status: reconciliationStatus,
+      detail: reconciliationDetail
     },
     {
       id: "recovery-evidence",
@@ -273,7 +364,15 @@ async function repositoryReadiness(repositoryId: string) {
     storage: {
       usage,
       limits,
-      ratio: storageRatio
+      ratio: storageRatio,
+      reconciliation: reconciliation
+        ? {
+            checkedAt: reconciliationCheckedAt || null,
+            operation: reconciliationPayload.operation ?? null,
+            summary: reconciliationSummary,
+            driveErrors
+          }
+        : null
     },
     recovery: {
       restorePoints: backups.length,
