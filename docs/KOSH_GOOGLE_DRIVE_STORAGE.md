@@ -61,7 +61,7 @@ A class-specific folder ID takes precedence over the root folder ID. The root ID
 
 Drive objects are created with Kosh properties containing the repository ID, storage class, logical object ID and SHA-256 checksum.
 
-Kosh keeps the provider locator separately in the `kosh_storage_objects` index. This lets repository metadata stay provider-neutral while package versions, release assets and later storage classes can resolve the object without embedding a Drive-specific path into their primary records.
+Kosh keeps the provider locator separately in the `kosh_storage_objects` index. This lets repository metadata stay provider-neutral while package versions, release assets, Automation artifacts and later storage classes can resolve the object without embedding a Drive-specific path into their primary records.
 
 Downloads pass through Kosh authorization and SHA-256/size verification. A Drive file is not treated as trusted merely because it exists.
 
@@ -74,9 +74,33 @@ With `KOSH_OBJECT_STORAGE_BACKEND=google-drive`:
 - package channel promotion verifies the Drive object before promotion;
 - release asset uploads are written to the Releases folder;
 - release asset downloads and verification read the indexed Drive object;
-- existing local package/release objects keep using the legacy local path when no Drive locator exists.
+- Automation Runner artifact uploads are written to the Artifacts folder after Runner bearer authentication and active lease validation;
+- Automation artifact downloads and verification use repository-read authorization and verify SHA-256 plus byte length before returning data;
+- existing local package, release and Automation artifact payloads remain readable through their legacy local paths when no Drive locator exists.
 
-Automation artifacts and recovery bundles already have folder configuration in the adapter but are intentionally left on their current write path until their migration handlers are switched in a separate change. This keeps the rollout class-by-class and reversible.
+Recovery bundles already have Backups folder configuration in the adapter but remain on their current write path until the disaster-recovery migration handler is switched in the next storage-class change.
+
+## Automation artifact routes
+
+Runner upload remains:
+
+```text
+POST /v1/kosh/automation/runner/jobs/<job-id>/artifacts
+```
+
+When Drive storage is enabled, Kosh stores the bytes in the Artifacts folder and records a provider-neutral object reference in Automation metadata.
+
+Repository readers can inspect, download and verify an artifact through:
+
+```text
+GET /v1/kosh/repos/<namespace>/<repository>/automation/runs/<run-id>/artifacts/<artifact-id>
+GET /v1/kosh/repos/<namespace>/<repository>/automation/runs/<run-id>/artifacts/<artifact-id>/download
+GET /v1/kosh/repos/<namespace>/<repository>/automation/runs/<run-id>/artifacts/<artifact-id>/verify
+```
+
+Legacy local artifact reads are constrained to `KOSH_ARTIFACT_ROOT`; Kosh does not accept an arbitrary filesystem path from artifact metadata.
+
+The Automation artifact payload limit remains 8 MiB, matching the pre-existing Runner contract.
 
 ## Quota accounting and concurrency
 
@@ -98,4 +122,4 @@ Reservations are finalized when the HTTP response finishes. Successful 2xx write
 
 ## Migration model
 
-The storage adapter is intentionally provider-replaceable. Existing local objects remain readable, Drive-backed objects are resolved from the locator index, and Git repositories stay on Git-native persistent storage. Switching package/release payload storage therefore does not rewrite Git history or repository metadata.
+The storage adapter is intentionally provider-replaceable. Existing local objects remain readable, Drive-backed objects are resolved from the locator index, and Git repositories stay on Git-native persistent storage. Switching package/release/artifact payload storage therefore does not rewrite Git history or repository metadata.

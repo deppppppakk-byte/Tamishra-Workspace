@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
+import { handleKoshArtifactStorageRoute } from "./kosh-artifact-storage-routes.js";
 import { automationStore } from "./kosh-automation-service.js";
 import { handleKoshDriveChannelRoute } from "./kosh-drive-channel-routes.js";
 import { handleKoshDriveStorageRoute } from "./kosh-drive-storage-routes.js";
@@ -223,6 +224,9 @@ async function handleDriveNonReservedRoute(
   response: ServerResponse,
   url: URL
 ) {
+  if (await handleKoshArtifactStorageRoute(request, response, url)) {
+    return true;
+  }
   if (await handleKoshDriveChannelRoute(request, response, url)) {
     return true;
   }
@@ -268,6 +272,9 @@ export async function handleKoshStoragePreflight(
     response.setHeader("x-kosh-storage-reservation", reservation.id);
     registerReservationFinalizer(response, reservation.id);
 
+    if (await handleKoshArtifactStorageRoute(request, response, url)) {
+      return true;
+    }
     if (await handleKoshDriveStorageRoute(request, response, url)) {
       return true;
     }
