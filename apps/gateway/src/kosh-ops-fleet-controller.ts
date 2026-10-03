@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolveKoshIdentity } from "./kosh-auth.js";
 import { getKoshOpsWorkerFleetSummary } from "./kosh-ops-worker-registry.js";
 import { getKoshOpsSchedulerLeadership } from "./kosh-ops-scheduler-leader.js";
-import { listKoshOpsJobs } from "./kosh-ops-store.js";
+import { getKoshOpsQueueStats } from "./kosh-ops-store.js";
 
 type Identity = NonNullable<Awaited<ReturnType<typeof resolveKoshIdentity>>>;
 
@@ -43,14 +43,14 @@ function policy() {
 }
 
 async function recommendation() {
-  const [fleet, jobs, scheduler] = await Promise.all([
+  const [fleet, queueStats, scheduler] = await Promise.all([
     getKoshOpsWorkerFleetSummary(),
-    listKoshOpsJobs(undefined, 5000),
+    getKoshOpsQueueStats(undefined),
     getKoshOpsSchedulerLeadership()
   ]);
   const config = policy();
-  const queued = jobs.filter((job) => job.state === "queued").length;
-  const leased = jobs.filter((job) => job.state === "leased").length;
+  const queued = Number(queueStats.byState.queued ?? 0);
+  const leased = Number(queueStats.byState.leased ?? 0);
   const effectiveConcurrency = fleet.online > 0
     ? Math.max(1, Math.round(fleet.totalConcurrency / fleet.online))
     : config.assumedConcurrency;
@@ -73,7 +73,13 @@ async function recommendation() {
     desiredWorkers,
     delta: desiredWorkers - fleet.online,
     reason,
-    queue: { queued, leased },
+    queue: {
+      queued,
+      leased,
+      oldestQueuedAgeMs: queueStats.oldestQueuedAgeMs,
+      retrying: queueStats.retrying,
+      deadLettered: queueStats.deadLettered
+    },
     fleet,
     scheduler,
     policy: config,
