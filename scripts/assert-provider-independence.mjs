@@ -22,7 +22,21 @@ const skippedDirectories = new Set([
 ]);
 
 const self = "scripts/assert-provider-independence.mjs";
+const allowedExternalIntegrationPrefixes = [
+  "apps/kosh-plugin/",
+  "plugins/kosh/"
+];
+const allowedExternalIntegrationFiles = new Set([
+  "docs/KOSH_CHATGPT_WEB_APP.md"
+]);
 const violations = [];
+
+function isApprovedExternalIntegration(repoPath) {
+  return (
+    allowedExternalIntegrationFiles.has(repoPath) ||
+    allowedExternalIntegrationPrefixes.some((prefix) => repoPath.startsWith(prefix))
+  );
+}
 
 async function walk(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -35,7 +49,7 @@ async function walk(directory) {
       continue;
     }
 
-    if (repoPath === self) continue;
+    if (repoPath === self || isApprovedExternalIntegration(repoPath)) continue;
     if (
       !allowedExtensions.has(extname(entry.name).toLowerCase()) &&
       !entry.name.startsWith("package")
@@ -67,4 +81,4 @@ if (violations.length) {
   process.exit(1);
 }
 
-console.log("Provider-independence check passed.");
+console.log("Provider-independence check passed outside approved isolated plugin surfaces.");

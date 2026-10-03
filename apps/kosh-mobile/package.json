@@ -1,0 +1,22 @@
+{
+  "name": "@tamishra/kosh-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "prepare:web": "npm --prefix ../.. run build:web:native",
+    "android:add": "cap add android",
+    "ios:add": "cap add ios",
+    "sync": "npm run prepare:web && cap sync",
+    "android": "npm run sync && cap open android",
+    "ios": "npm run sync && cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "^7.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/cli": "^7.0.0",
+    "@capacitor/ios": "^7.0.0",
+    "typescript": "^5.9.0"
+  }
+}
