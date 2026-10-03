@@ -6,12 +6,17 @@ import {
   heartbeatKoshOpsJob,
   readyKoshOpsStore
 } from "./kosh-ops-store.js";
+import {
+  heartbeatKoshOpsWorker,
+  readyKoshOpsWorkerRegistry
+} from "./kosh-ops-worker-registry.js";
 import { processKoshOpsJobWithPostprocessing } from "./kosh-ops-processing.js";
 import { enqueueDueKoshOpsSchedules } from "./kosh-ops-scheduler.js";
 
+const host = hostname();
 const workerId =
   process.env.KOSH_OPS_WORKER_ID?.trim() ||
-  `${hostname()}:${process.pid}`;
+  `${host}:${process.pid}`;
 const pollMs = Math.max(
   250,
   Math.min(30_000, Number(process.env.KOSH_OPS_POLL_MS ?? 1500) || 1500)
@@ -25,10 +30,29 @@ const schedulerPollMs = Math.max(
   10_000,
   Math.min(10 * 60_000, Number(process.env.KOSH_OPS_SCHEDULER_POLL_MS ?? 60_000) || 60_000)
 );
+const fleetHeartbeatMs = Math.max(
+  5_000,
+  Math.min(60_000, Number(process.env.KOSH_OPS_WORKER_HEARTBEAT_SECONDS ?? 15) * 1000 || 15_000)
+);
+const startedAt = new Date().toISOString();
 let stopping = false;
+let activeJobs = 0;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function publishFleetHeartbeat() {
+  await heartbeatKoshOpsWorker({
+    workerId,
+    hostname: host,
+    processId: process.pid,
+    releaseVersion: process.env.WORKSPACE_RELEASE_VERSION ?? "dev",
+    concurrency,
+    activeJobs,
+    scheduler: schedulerEnabled,
+    startedAt
+  });
 }
 
 async function runClaimLoop(slot: number) {
@@ -38,6 +62,11 @@ async function runClaimLoop(slot: number) {
       await sleep(pollMs);
       continue;
     }
+
+    activeJobs += 1;
+    void publishFleetHeartbeat().catch((error) => {
+      console.error("Kosh operations fleet heartbeat failed", error);
+    });
 
     const leaseToken = job.leaseToken;
     const heartbeat = setInterval(() => {
@@ -61,6 +90,10 @@ async function runClaimLoop(slot: number) {
       });
     } finally {
       clearInterval(heartbeat);
+      activeJobs = Math.max(0, activeJobs - 1);
+      void publishFleetHeartbeat().catch((error) => {
+        console.error("Kosh operations fleet heartbeat failed", error);
+      });
     }
   }
 }
@@ -80,7 +113,15 @@ async function runSchedulerLoop() {
 }
 
 async function main() {
-  await readyKoshOpsStore();
+  await Promise.all([readyKoshOpsStore(), readyKoshOpsWorkerRegistry()]);
+  await publishFleetHeartbeat();
+  const fleetHeartbeat = setInterval(() => {
+    void publishFleetHeartbeat().catch((error) => {
+      console.error("Kosh operations fleet heartbeat failed", error);
+    });
+  }, fleetHeartbeatMs);
+  fleetHeartbeat.unref();
+
   console.log(
     `Kosh operations worker ${workerId} starting with concurrency ${concurrency}` +
     (schedulerEnabled ? " and scheduler leadership." : ".")
@@ -91,6 +132,7 @@ async function main() {
   );
   if (schedulerEnabled) loops.push(runSchedulerLoop());
   await Promise.all(loops);
+  clearInterval(fleetHeartbeat);
 }
 
 function shutdown(signal: string) {
