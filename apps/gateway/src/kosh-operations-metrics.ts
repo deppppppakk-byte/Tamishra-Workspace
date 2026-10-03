@@ -171,6 +171,7 @@ export async function handleKoshOperationsMetricsRequest(
           knownBytes: perRepository.reduce((sum, item) => sum + item.metrics.storage.usage.knownBytes, 0)
         },
         limits: {
+          policyId: null,
           maxTotalBytes: perRepository.reduce((sum, item) => sum + item.metrics.storage.limits.maxTotalBytes, 0),
           maxArtifactBytes: 0,
           maxPackageBytes: 0,
