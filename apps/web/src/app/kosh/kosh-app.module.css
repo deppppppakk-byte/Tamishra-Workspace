@@ -1,0 +1,85 @@
+.shell {
+  min-height: 100vh;
+  background: #f6f8fb;
+}
+
+.appBar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(16, 42, 67, 0.12);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(16px);
+  color: #102a43;
+}
+
+.appBar > div:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.subtitle {
+  color: #627d98;
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.online,
+.offline {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.online {
+  background: #e8f5ee;
+  color: #176b43;
+}
+
+.offline {
+  background: #fff1f0;
+  color: #a33a35;
+}
+
+.installButton {
+  min-height: 34px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 9px;
+  background: #102a43;
+  color: white;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.installButton:focus-visible {
+  outline: 3px solid rgba(44, 124, 188, 0.35);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .appBar {
+    padding: 9px 12px;
+  }
+
+  .subtitle {
+    display: none;
+  }
+}
