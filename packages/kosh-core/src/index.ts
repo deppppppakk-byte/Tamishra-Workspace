@@ -130,8 +130,8 @@ export const koshModules: KoshModule[] = [
   {
     id: "wiki",
     name: "Wiki & Documentation",
-    description: "Versionable repository knowledge pages stored as structured Kosh resources.",
-    status: "foundation"
+    description: "Versioned repository knowledge with Markdown editing, search, revision history, backlinks and repository access control.",
+    status: "active"
   },
   {
     id: "pages",
@@ -199,7 +199,7 @@ export const koshModules: KoshModule[] = [
     description: "Generic extension registrations for code, CAD/BIM, documents, datasets and future assets.",
     status: "foundation"
   }
-]
+];
 
 export function normalizeKoshSlug(input: string) {
   return input
