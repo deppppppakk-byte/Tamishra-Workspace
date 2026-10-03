@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, rm, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -141,7 +141,11 @@ export async function handleKoshBackupDownloadRequest(
       temporaryPath = safeStoragePath(
         backupRoot,
         repository.id,
-        "download-" + backup.id.slice(0, 80) + ".bundle"
+        "download-" +
+          backup.id.slice(0, 80) +
+          "-" +
+          randomUUID().slice(0, 12) +
+          ".bundle"
       );
       await materializeKoshObject(indexed.locator, "", temporaryPath);
       path = temporaryPath;
