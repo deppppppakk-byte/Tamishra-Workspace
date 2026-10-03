@@ -53,6 +53,11 @@ async function schedule() {
   if (queued > 0) {
     console.log(`[kosh-maintenance] scheduled ${queued} job(s)`);
   }
+  const alerts = await post("/v1/kosh/maintenance/alerts/evaluate", { workerId });
+  const active = Array.isArray(alerts.alerts) ? alerts.alerts.length : 0;
+  if (active > 0) {
+    console.log(`[kosh-maintenance] ${active} production alert(s) active`);
+  }
 }
 
 async function claim() {
