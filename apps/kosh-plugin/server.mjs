@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 
-const PORT = Number(process.env.KOSH_PLUGIN_PORT ?? 4310);
+const PORT = Number(process.env.PORT ?? process.env.KOSH_PLUGIN_PORT ?? 4310);
 const MAX_BODY_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = Math.max(1000, Math.min(30000, Number(process.env.KOSH_PLUGIN_TIMEOUT_MS ?? 12000)));
 const SERVER_NAME = "kosh";
