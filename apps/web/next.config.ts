@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 
+// Tamishra Workspace web is deployed directly from this repository.
 const workspaceBasePath = process.env.WORKSPACE_BASE_PATH ?? "/workspace";
 
 const nextConfig: NextConfig = {
