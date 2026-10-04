@@ -1,0 +1,170 @@
+.embedded {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #eef0f2;
+}
+
+.embedded > main {
+  height: 100%;
+  min-height: 0;
+  background: #eef0f2 !important;
+}
+
+.embedded > main:has(> aside) {
+  grid-template-columns: 210px minmax(0, 1fr) !important;
+}
+
+.embedded > main > aside:first-of-type {
+  display: none !important;
+}
+
+.embedded > main > aside:nth-of-type(2) {
+  height: 100%;
+  padding: 8px 7px 10px;
+  border-right: 1px solid #dfe2e5;
+  background: #f7f8f6 !important;
+  backdrop-filter: none !important;
+}
+
+.embedded > main > aside:nth-of-type(2) > div:first-child {
+  min-height: 35px;
+  padding: 3px 5px 7px;
+  border-bottom: 1px solid #e1e3e6;
+}
+
+.embedded > main > aside:nth-of-type(2) > div:first-child > a {
+  display: none;
+}
+
+.embedded > main > aside:nth-of-type(2) > button {
+  height: 32px;
+  border-radius: 3px !important;
+  box-shadow: none !important;
+  font-size: 10px;
+}
+
+.embedded > main > aside:nth-of-type(2) nav {
+  margin-top: 8px;
+  gap: 1px;
+}
+
+.embedded > main > aside:nth-of-type(2) nav button {
+  min-height: 31px;
+  border-radius: 3px !important;
+  padding-inline: 7px;
+  font-size: 10px;
+  box-shadow: none !important;
+}
+
+.embedded > main > aside:nth-of-type(2) nav button:hover,
+.embedded > main > aside:nth-of-type(2) nav button:focus-visible {
+  background: #e8eaed !important;
+}
+
+.embedded > main > aside:nth-of-type(2) nav button b {
+  min-width: 18px;
+  height: 18px;
+  border-radius: 3px !important;
+  padding-inline: 4px;
+}
+
+.embedded > main > aside:nth-of-type(2) > div:last-child {
+  padding: 8px 5px 2px;
+  border-top: 1px solid #e1e3e6;
+}
+
+.embedded > main > aside:nth-of-type(2) > div:last-child > div:first-child {
+  border-radius: 3px !important;
+}
+
+.embedded > main > section {
+  height: 100%;
+  min-height: 0;
+  padding: 0 !important;
+  gap: 0 !important;
+  background: #fff !important;
+}
+
+.embedded > main > section > header {
+  min-height: 48px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #dfe2e5;
+  background: #fff;
+}
+
+.embedded > main > section > header label {
+  width: min(620px, 70%);
+  height: 31px;
+  border-radius: 3px !important;
+  background: #f7f8f6 !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+.embedded > main > section > header button,
+.embedded > main > section > header a {
+  border-radius: 3px !important;
+  box-shadow: none !important;
+}
+
+.embedded > main > section > div:nth-of-type(1) {
+  min-height: 38px;
+  margin: 0;
+  padding: 5px 10px;
+  border-bottom: 1px solid #dfe2e5;
+  border-radius: 0 !important;
+  background: #f7f8f6 !important;
+  box-shadow: none !important;
+}
+
+.embedded > main > section > div:nth-of-type(1) button {
+  height: 25px;
+  border-radius: 3px !important;
+  box-shadow: none !important;
+}
+
+.embedded > main > section > div:nth-of-type(2) {
+  min-height: 0;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: #fff !important;
+  box-shadow: none !important;
+}
+
+.embedded > main article,
+.embedded > main button,
+.embedded > main input,
+.embedded > main textarea,
+.embedded > main select,
+.embedded > main a {
+  box-shadow: none !important;
+}
+
+.embedded > main article {
+  border-radius: 0 !important;
+}
+
+@media (max-width: 1050px) {
+  .embedded > main:has(> aside) {
+    grid-template-columns: 188px minmax(0, 1fr) !important;
+  }
+}
+
+@media (max-width: 780px) {
+  .embedded {
+    height: calc(100vh - 108px);
+  }
+
+  .embedded > main:has(> aside) {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .embedded > main > aside:nth-of-type(2) {
+    display: none;
+  }
+
+  .embedded > main > section > header label {
+    width: 100%;
+  }
+}
