@@ -1,0 +1,103 @@
+.embedded {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #eef0f2;
+}
+
+.embedded > main {
+  height: 100%;
+  min-height: 0;
+  background: #eef0f2;
+}
+
+.embedded > main > header {
+  min-height: 50px;
+  padding: 5px 11px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  border-bottom: 1px solid #dfe2e5;
+  background: #fff;
+  backdrop-filter: none;
+}
+
+.embedded > main > header > a {
+  display: none;
+}
+
+.embedded > main > header input[aria-label="Workbook title"] {
+  width: min(42vw, 430px);
+  min-width: 150px;
+  max-width: 430px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.embedded > main > header button {
+  min-height: 27px;
+  height: 27px;
+  border-radius: 3px;
+  font-size: 9px;
+}
+
+.embedded > main > header > div:last-child {
+  gap: 5px;
+}
+
+.embedded > main > header > div:last-child > button:last-child {
+  display: none;
+}
+
+.embedded > main > section[aria-label="Spreadsheet toolbar"] {
+  min-height: 40px;
+  padding: 5px 8px;
+  gap: 4px;
+  border-bottom: 1px solid #dfe2e5;
+  background: #f7f8f6;
+}
+
+.embedded > main > section[aria-label="Spreadsheet toolbar"] button,
+.embedded > main > section[aria-label="Spreadsheet toolbar"] select {
+  min-height: 27px;
+  border-radius: 3px;
+  font-size: 9px;
+}
+
+.embedded > main > section[aria-label="Spreadsheet toolbar"] button {
+  min-width: 27px;
+  padding-inline: 6px;
+}
+
+.embedded > main > section[aria-label="Spreadsheet toolbar"] + div {
+  min-height: 31px;
+  border-bottom-color: #dfe2e5;
+}
+
+.embedded > main > footer {
+  min-height: 27px;
+  border-top-color: #dfe2e5;
+  background: #f7f8f6;
+  font-size: 8px;
+}
+
+@media (max-width: 900px) {
+  .embedded > main > header > div:last-child button:first-child {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .embedded {
+    height: calc(100vh - 108px);
+  }
+
+  .embedded > main > header {
+    min-height: 46px;
+  }
+
+  .embedded > main > section[aria-label="Spreadsheet toolbar"] {
+    min-height: 38px;
+  }
+}
