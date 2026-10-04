@@ -12,6 +12,7 @@ import styles from "./meet-workspace.module.css";
 
 const GATEWAY_ORIGIN =
   process.env.NEXT_PUBLIC_WORKSPACE_GATEWAY_ORIGIN || "http://localhost:4100";
+const MEET_ROOM_PATH = "/workspace/apps/meet/room";
 
 type RuntimeState = {
   status: "checking" | "ready" | "offline";
@@ -106,6 +107,12 @@ export function MeetWorkspace() {
     };
   }, [gateway]);
 
+  function openRoom(roomName: string) {
+    window.location.assign(
+      MEET_ROOM_PATH + "?room=" + encodeURIComponent(roomName)
+    );
+  }
+
   async function createMeeting(mode: "instant" | "scheduled") {
     const name = displayName.trim();
     if (!name) {
@@ -143,10 +150,7 @@ export function MeetWorkspace() {
         result.joinCode
       );
 
-      window.location.assign(
-        "/apps/meet/room?room=" +
-          encodeURIComponent(result.meeting.roomName)
-      );
+      openRoom(result.meeting.roomName);
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "Unable to create meeting."
@@ -178,10 +182,7 @@ export function MeetWorkspace() {
         role: "participant",
         displayName: name
       });
-      window.location.assign(
-        "/apps/meet/room?room=" +
-          encodeURIComponent(result.meeting.roomName)
-      );
+      openRoom(result.meeting.roomName);
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "Unable to join meeting."
@@ -256,114 +257,104 @@ export function MeetWorkspace() {
 
   const runtimeLabel =
     runtime.status === "checking"
-      ? "Checking Workspace Meet"
+      ? "Checking service"
       : runtime.status === "offline"
-        ? "Gateway offline"
+        ? "Service offline"
         : runtime.mediaConfigured
-          ? "Native Workspace Meet ready"
-          : "Gateway ready · LiveKit setup required";
+          ? "Meeting service ready"
+          : "Media setup required";
 
   return (
     <main className={styles.page}>
-      <header className={styles.topbar}>
-        <a className={styles.brand} href="/">
-          <span className={styles.brandMark}>T</span>
-          <span>
-            <strong>Tamishra Meet</strong>
-            <small>Workspace-native meetings</small>
-          </span>
-        </a>
-
+      <div className={styles.consoleHeader}>
+        <div>
+          <h2>Meeting console</h2>
+          <p>Start, join or schedule a Workspace meeting.</p>
+        </div>
         <div
-          className={
-            runtime.status === "ready"
-              ? styles.serviceState
-              : runtime.status === "offline"
-                ? styles.serviceStateOffline
-                : styles.serviceStateChecking
-          }
+          className={`${styles.serviceIndicator} ${
+            runtime.status === "offline"
+              ? styles.offline
+              : runtime.status === "checking"
+                ? styles.checking
+                : styles.online
+          }`}
         >
           <span />
-          <strong>{runtimeLabel}</strong>
+          {runtimeLabel}
         </div>
+      </div>
 
-        <a className={styles.backLink} href="/">
-          Workspace home
-        </a>
-      </header>
-
-      <section className={styles.hero}>
-        <div className={styles.heroCopy}>
-          <p className={styles.eyebrow}>TAMISHRA MEET</p>
-          <h1>Private meetings owned by Tamishra Workspace.</h1>
-          <p className={styles.lead}>
-            Create an instant meeting, schedule one for later, admit participants
-            from a waiting room, and connect through the Workspace LiveKit
-            runtime without depending on Google, Microsoft, or the older
-            Tamishra training site.
-          </p>
-
-          <div className={styles.identityField}>
-            <label htmlFor="meet-display-name">Your display name</label>
-            <input
-              id="meet-display-name"
-              value={displayName}
-              onChange={(event) => setDisplayName(event.target.value)}
-              placeholder="Enter your name"
-              maxLength={100}
-            />
-          </div>
-
-          <div className={styles.heroActions}>
-            <button
-              className={styles.primaryAction}
-              disabled={busy !== "" || runtime.status === "offline"}
-              onClick={() => void createMeeting("instant")}
-            >
-              {busy === "instant" ? "Creating…" : "Start meeting now"}
-            </button>
-            <button
-              className={styles.secondaryAction}
-              disabled={busy !== "" || runtime.status === "offline"}
-              onClick={() => {
-                document
-                  .getElementById("schedule-meeting")
-                  ?.scrollIntoView({ behavior: "smooth" });
-              }}
-            >
-              Schedule meeting
-            </button>
-          </div>
-
-          {message && (
-            <p className={styles.notice} role="status">
-              {message}
-            </p>
-          )}
+      {message && (
+        <div className={styles.notice} role="status">
+          {message}
         </div>
+      )}
 
-        <div className={styles.joinCard}>
-          <div className={styles.joinHeading}>
-            <span>JOIN</span>
-            <strong>Enter private meeting code</strong>
+      <section className={styles.identityBar}>
+        <label htmlFor="meet-display-name">Display name</label>
+        <input
+          id="meet-display-name"
+          value={displayName}
+          onChange={(event) => setDisplayName(event.target.value)}
+          placeholder="Your name"
+          maxLength={100}
+        />
+        <span>This name is shown to people in the meeting.</span>
+      </section>
+
+      <section className={styles.actionGrid}>
+        <div className={styles.actionPanel}>
+          <div className={styles.panelHeading}>
+            <span className={styles.actionIcon}>＋</span>
+            <div>
+              <h3>Start a meeting</h3>
+              <p>Create a room and enter immediately.</p>
+            </div>
           </div>
-
-          <div className={styles.codeInputWrap}>
+          <label>
+            Meeting title
             <input
-              aria-label="Private meeting code"
-              autoComplete="one-time-code"
-              maxLength={10}
-              onChange={(event) =>
-                setJoinCode(normalizeMeetingCode(event.target.value))
-              }
-              placeholder="7KF9W2Q8MX"
-              value={joinCode}
+              value={title}
+              maxLength={160}
+              onChange={(event) => setTitle(event.target.value)}
             />
-            <span>{normalizeMeetingCode(joinCode).length}/10</span>
-          </div>
-
+          </label>
           <button
-            className={styles.joinButton}
+            className={styles.primaryButton}
+            disabled={busy !== "" || runtime.status === "offline"}
+            onClick={() => void createMeeting("instant")}
+          >
+            {busy === "instant" ? "Creating…" : "Start now"}
+          </button>
+        </div>
+
+        <div className={styles.actionPanel}>
+          <div className={styles.panelHeading}>
+            <span className={styles.actionIcon}>→</span>
+            <div>
+              <h3>Join a meeting</h3>
+              <p>Use the 10-character private code.</p>
+            </div>
+          </div>
+          <label>
+            Meeting code
+            <div className={styles.codeField}>
+              <input
+                aria-label="Private meeting code"
+                autoComplete="one-time-code"
+                maxLength={10}
+                onChange={(event) =>
+                  setJoinCode(normalizeMeetingCode(event.target.value))
+                }
+                placeholder="7KF9W2Q8MX"
+                value={joinCode}
+              />
+              <span>{normalizeMeetingCode(joinCode).length}/10</span>
+            </div>
+          </label>
+          <button
+            className={styles.secondaryButton}
             disabled={
               busy !== "" ||
               normalizeMeetingCode(joinCode).length !== 10 ||
@@ -371,248 +362,152 @@ export function MeetWorkspace() {
             }
             onClick={() => void joinMeeting()}
           >
-            {busy === "join" ? "Joining…" : "Join meeting"}
+            {busy === "join" ? "Joining…" : "Join"}
           </button>
+        </div>
 
-          <div className={styles.joinMeta}>
-            <span>Private access key generated after code verification</span>
-            <span>Waiting-room policy enforced by Workspace gateway</span>
+        <div className={styles.actionPanel} id="schedule-meeting">
+          <div className={styles.panelHeading}>
+            <span className={styles.actionIcon}>◷</span>
+            <div>
+              <h3>Schedule</h3>
+              <p>Create a room for a specific time.</p>
+            </div>
           </div>
+          <label>
+            Date and time
+            <input
+              type="datetime-local"
+              value={scheduleAt}
+              onChange={(event) => setScheduleAt(event.target.value)}
+            />
+          </label>
+          <div className={styles.inlineOptions}>
+            <label>
+              <input
+                type="checkbox"
+                checked={waitingRoom}
+                onChange={(event) => setWaitingRoom(event.target.checked)}
+              />
+              Waiting room
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={allowShare}
+                onChange={(event) => setAllowShare(event.target.checked)}
+              />
+              Participant screen share
+            </label>
+          </div>
+          <button
+            className={styles.secondaryButton}
+            disabled={busy !== "" || runtime.status === "offline"}
+            onClick={() => void createMeeting("scheduled")}
+          >
+            {busy === "scheduled" ? "Scheduling…" : "Schedule"}
+          </button>
         </div>
       </section>
 
-      <section className={styles.builder} id="schedule-meeting">
-        <div className={styles.sectionHeading}>
-          <div>
-            <p className={styles.eyebrow}>MEETING SETUP</p>
-            <h2>Configure the room before you start.</h2>
-          </div>
-          <span className={styles.runtimeTag}>Gateway v0.6</span>
-        </div>
-
-        <div className={styles.builderGrid}>
-          <div className={styles.builderPanel}>
-            <label>
-              Meeting title
-              <input
-                value={title}
-                maxLength={160}
-                onChange={(event) => setTitle(event.target.value)}
-              />
-            </label>
-
-            <label>
-              Schedule date & time
-              <input
-                type="datetime-local"
-                value={scheduleAt}
-                onChange={(event) => setScheduleAt(event.target.value)}
-              />
-            </label>
-
-            <div className={styles.toggleGrid}>
-              <label className={styles.toggleCard}>
-                <input
-                  type="checkbox"
-                  checked={waitingRoom}
-                  onChange={(event) => setWaitingRoom(event.target.checked)}
-                />
-                <span>
-                  <strong>Waiting room</strong>
-                  <small>Host admits participants before media access.</small>
-                </span>
-              </label>
-
-              <label className={styles.toggleCard}>
-                <input
-                  type="checkbox"
-                  checked={allowShare}
-                  onChange={(event) => setAllowShare(event.target.checked)}
-                />
-                <span>
-                  <strong>Participant screen share</strong>
-                  <small>Store the policy with the room for media controls.</small>
-                </span>
-              </label>
+      <section className={styles.lowerGrid}>
+        <div className={styles.recentPanel}>
+          <div className={styles.sectionHeader}>
+            <div>
+              <h3>Recent meetings</h3>
+              <p>Rooms created or joined on this device.</p>
             </div>
-
-            <button
-              className={styles.primaryAction}
-              disabled={busy !== "" || runtime.status === "offline"}
-              onClick={() => void createMeeting("scheduled")}
-            >
-              {busy === "scheduled" ? "Scheduling…" : "Create scheduled meeting"}
-            </button>
+            <span>{historyLoading ? "Loading" : history.length}</span>
           </div>
 
-          <div className={styles.statusPanel}>
-            <div>
-              <span>Meeting service</span>
-              <strong>
-                {runtime.status === "ready" ? "Workspace gateway" : runtimeLabel}
-              </strong>
+          {historyLoading ? (
+            <div className={styles.emptyState}>Loading meeting history…</div>
+          ) : history.length === 0 ? (
+            <div className={styles.emptyState}>
+              No meetings yet. Start or join a meeting to see it here.
             </div>
-            <div>
-              <span>Realtime media</span>
-              <strong>
-                {runtime.mediaConfigured ? "LiveKit configured" : "Needs LiveKit environment"}
-              </strong>
-            </div>
-            <div>
-              <span>Recording storage</span>
-              <strong>
-                {runtime.recordingConfigured
-                  ? "Configured"
-                  : "Optional storage setup required"}
-              </strong>
-            </div>
-            <div>
-              <span>Current persistence</span>
-              <strong>{runtime.persistence}</strong>
-            </div>
-            <div>
-              <span>Desktop / mobile</span>
-              <strong>Shared web runtime through Tauri + Capacitor</strong>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className={styles.historySection}>
-        <div className={styles.sectionHeading}>
-          <div>
-            <p className={styles.eyebrow}>RECENT MEETINGS</p>
-            <h2>Resume rooms and export attendance.</h2>
-          </div>
-          <span className={styles.runtimeTag}>
-            {historyLoading ? "Loading" : history.length + " available"}
-          </span>
-        </div>
-
-        {historyLoading ? (
-          <div className={styles.historyEmpty}>Loading meeting history…</div>
-        ) : history.length === 0 ? (
-          <div className={styles.historyEmpty}>
-            Meetings created or joined on this device will appear here.
-          </div>
-        ) : (
-          <div className={styles.historyGrid}>
-            {history.map((item) => (
-              <article className={styles.historyCard} key={item.roomName}>
-                <div className={styles.historyCardTop}>
-                  <span className={styles.historyStatus}>
-                    {item.status}
-                  </span>
-                  <span>{item.role === "cohost" ? "Co-host" : item.role}</span>
-                </div>
-                <h3>{item.title}</h3>
-                <p>
-                  {new Intl.DateTimeFormat(undefined, {
-                    dateStyle: "medium",
-                    timeStyle: "short"
-                  }).format(
-                    new Date(
-                      item.startedAt ??
-                        item.scheduledStartAt ??
-                        item.createdAt
-                    )
-                  )}
-                </p>
-
-                <div className={styles.historyMetrics}>
-                  <span>
-                    <strong>{item.participantCount}</strong>
-                    people
-                  </span>
-                  <span>
-                    <strong>{item.attendanceCount}</strong>
-                    attendance
-                  </span>
-                  <span>
-                    <strong>{item.recordingCount}</strong>
-                    recordings
-                  </span>
-                </div>
-
-                {item.role === "host" && item.joinCode && (
-                  <div className={styles.historyCode}>
-                    Private code <strong>{item.joinCode}</strong>
+          ) : (
+            <div className={styles.meetingList}>
+              {history.map((item) => (
+                <article className={styles.meetingRow} key={item.roomName}>
+                  <div className={styles.meetingMain}>
+                    <div className={styles.meetingTitleRow}>
+                      <strong>{item.title}</strong>
+                      <span className={styles.statusTag}>{item.status}</span>
+                    </div>
+                    <span className={styles.meetingMeta}>
+                      {new Intl.DateTimeFormat(undefined, {
+                        dateStyle: "medium",
+                        timeStyle: "short"
+                      }).format(
+                        new Date(
+                          item.startedAt ??
+                            item.scheduledStartAt ??
+                            item.createdAt
+                        )
+                      )}
+                      {" · "}
+                      {item.role === "cohost" ? "Co-host" : item.role}
+                    </span>
+                    <span className={styles.metrics}>
+                      {item.participantCount} people · {item.attendanceCount} attendance
+                      {item.recordingCount > 0
+                        ? ` · ${item.recordingCount} recordings`
+                        : ""}
+                    </span>
                   </div>
-                )}
 
-                <div className={styles.historyActions}>
-                  <a
-                    href={
-                      "/apps/meet/room?room=" +
-                      encodeURIComponent(item.roomName)
-                    }
-                  >
-                    {item.status === "ended" ? "View room" : "Open meeting"}
-                  </a>
-                  {(item.role === "host" || item.role === "cohost") && (
-                    <button
-                      disabled={busy !== ""}
-                      onClick={() => void exportAttendance(item)}
-                    >
-                      {busy === "report:" + item.roomName
-                        ? "Exporting…"
-                        : "Attendance CSV"}
+                  {item.role === "host" && item.joinCode ? (
+                    <code className={styles.meetingCode}>{item.joinCode}</code>
+                  ) : null}
+
+                  <div className={styles.rowActions}>
+                    <button onClick={() => openRoom(item.roomName)}>
+                      {item.status === "ended" ? "Open" : "Rejoin"}
                     </button>
-                  )}
-                </div>
-              </article>
-            ))}
+                    {(item.role === "host" || item.role === "cohost") && (
+                      <button
+                        disabled={busy !== ""}
+                        onClick={() => void exportAttendance(item)}
+                      >
+                        {busy === "report:" + item.roomName
+                          ? "Exporting…"
+                          : "Attendance"}
+                      </button>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <aside className={styles.systemPanel}>
+          <div className={styles.sectionHeader}>
+            <div>
+              <h3>Service status</h3>
+              <p>Workspace meeting runtime.</p>
+            </div>
           </div>
-        )}
-      </section>
-
-      <section className={styles.runtime}>
-        <div className={styles.sectionHeading}>
-          <div>
-            <p className={styles.eyebrow}>NATIVE FLOW</p>
-            <h2>Meeting lifecycle now belongs to Workspace.</h2>
-          </div>
-        </div>
-
-        <div className={styles.flow}>
-          <article>
-            <span className={styles.step}>01</span>
-            <strong>Create</strong>
-            <p>
-              Workspace gateway generates the room, host capability key and a
-              private 10-character join code.
-            </p>
-          </article>
-          <article>
-            <span className={styles.step}>02</span>
-            <strong>Admit</strong>
-            <p>
-              Join-code verification creates a participant capability. The host
-              can admit or deny waiting-room requests.
-            </p>
-          </article>
-          <article>
-            <span className={styles.step}>03</span>
-            <strong>Connect</strong>
-            <p>
-              The gateway issues LiveKit media tokens only for active, admitted
-              meeting participants.
-            </p>
-          </article>
-        </div>
-      </section>
-
-      <section className={styles.migrationNote}>
-        <div>
-          <p className={styles.eyebrow}>WORKSPACE MEET</p>
-          <h2>Meeting operations are now durable and reportable.</h2>
-        </div>
-        <p>
-          Meeting lifecycle, memberships, collaboration, audit, attendance and
-          recording metadata share the same Workspace gateway boundary.
-          Recording uses server-side LiveKit Egress with Workspace-configured
-          S3-compatible object storage and participant consent enforcement.
-        </p>
+          <dl className={styles.statusList}>
+            <div>
+              <dt>Gateway</dt>
+              <dd>{runtime.status === "ready" ? "Connected" : runtimeLabel}</dd>
+            </div>
+            <div>
+              <dt>Realtime media</dt>
+              <dd>{runtime.mediaConfigured ? "Ready" : "Not configured"}</dd>
+            </div>
+            <div>
+              <dt>Recording</dt>
+              <dd>{runtime.recordingConfigured ? "Ready" : "Not configured"}</dd>
+            </div>
+            <div>
+              <dt>Persistence</dt>
+              <dd>{runtime.persistence}</dd>
+            </div>
+          </dl>
+        </aside>
       </section>
     </main>
   );
