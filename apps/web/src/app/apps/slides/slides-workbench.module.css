@@ -1,0 +1,133 @@
+.embedded {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #eef0f2;
+}
+
+.embedded > main {
+  height: 100%;
+  min-height: 0;
+  background: #eef0f2;
+}
+
+.embedded > main > header {
+  height: 48px;
+  min-height: 48px;
+  gap: 6px;
+  padding: 5px 10px;
+  border-bottom: 1px solid #dfe2e5;
+  background: #fff;
+  backdrop-filter: none;
+}
+
+.embedded > main > header > a,
+.embedded > main > header > div:nth-child(2) {
+  display: none;
+}
+
+.embedded > main > header input[aria-label="Presentation title"] {
+  min-width: 160px;
+  max-width: 430px;
+  padding: 2px 4px;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.embedded > main > header button {
+  height: 28px;
+  min-height: 28px;
+  border-radius: 3px;
+  padding-block: 0;
+  font-size: 9px;
+  box-shadow: none;
+}
+
+.embedded > main > nav[aria-label="Presentation menu"] {
+  min-height: 31px;
+  padding: 3px 9px;
+  gap: 1px;
+  overflow-x: auto;
+  border-bottom: 1px solid #dfe2e5;
+  background: #f7f8f6;
+  scrollbar-width: thin;
+}
+
+.embedded > main > nav[aria-label="Presentation menu"] button {
+  border-radius: 3px;
+  padding: 4px 6px;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.embedded > main > nav[aria-label="Presentation menu"] + section {
+  min-height: 39px;
+  padding: 5px 9px;
+  gap: 4px;
+  border-bottom: 1px solid #dfe2e5;
+  background: #fff;
+}
+
+.embedded > main > nav[aria-label="Presentation menu"] + section button {
+  min-height: 27px;
+  border-radius: 3px;
+  padding: 4px 7px;
+  font-size: 9px;
+}
+
+.embedded > main > nav[aria-label="Presentation menu"] + section + section {
+  grid-template-columns: 190px minmax(0, 1fr) 260px;
+}
+
+.embedded > main > nav[aria-label="Presentation menu"] + section + section > aside:first-child {
+  padding: 8px 7px 14px;
+  border-right-color: #dfe2e5;
+  background: #f6f7f5;
+}
+
+.embedded > main > nav[aria-label="Presentation menu"] + section + section > aside:last-child {
+  border-left-color: #dfe2e5;
+  background: #f7f8f6;
+}
+
+.embedded > main > footer {
+  min-height: 27px;
+  border-top-color: #dfe2e5;
+  background: #f7f8f6;
+  font-size: 8px;
+}
+
+@media (max-width: 1080px) {
+  .embedded > main > nav[aria-label="Presentation menu"] + section + section {
+    grid-template-columns: 172px minmax(0, 1fr) 220px;
+  }
+}
+
+@media (max-width: 860px) {
+  .embedded > main > nav[aria-label="Presentation menu"] + section + section {
+    grid-template-columns: 150px minmax(0, 1fr);
+  }
+
+  .embedded > main > nav[aria-label="Presentation menu"] + section + section > aside:last-child {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .embedded {
+    height: calc(100vh - 108px);
+  }
+
+  .embedded > main > header {
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .embedded > main > nav[aria-label="Presentation menu"] + section + section {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .embedded > main > nav[aria-label="Presentation menu"] + section + section > aside:first-child {
+    display: none;
+  }
+}
