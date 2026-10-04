@@ -38,7 +38,8 @@ const child = spawn(process.execPath, [new URL("./server.mjs", import.meta.url).
   env: {
     ...process.env,
     NODE_ENV: "test",
-    KOSH_PLUGIN_PORT: String(port),
+    PORT: String(port),
+    KOSH_PLUGIN_PORT: "",
     KOSH_ORIGIN: gatewayOrigin,
     KOSH_PLUGIN_PUBLIC_ORIGIN: origin,
     KOSH_OAUTH_ISSUER: gatewayOrigin,
@@ -118,7 +119,7 @@ try {
     throw new Error("plugin_tool_readonly_annotation_missing");
   }
 
-  process.stdout.write(`Kosh MCP OAuth smoke passed with ${tools.length} tools.\n`);
+  process.stdout.write(`Kosh MCP OAuth smoke passed with ${tools.length} tools on platform PORT.\n`);
 } finally {
   child.kill("SIGTERM");
   await new Promise((resolve) => mockGateway.close(resolve));
