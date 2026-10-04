@@ -60,6 +60,10 @@
   white-space: nowrap;
 }
 
+.embedded > main > nav[aria-label="Presentation menu"] button:nth-child(4) {
+  display: none;
+}
+
 .embedded > main > nav[aria-label="Presentation menu"] + section {
   min-height: 39px;
   padding: 5px 9px;
