@@ -1,0 +1,114 @@
+.embedded {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #eef0f2;
+}
+
+.embedded > main {
+  height: 100%;
+  min-height: 0;
+  background: #eef0f2;
+}
+
+.embedded > main:has(> aside) {
+  grid-template-columns: 270px minmax(420px, 1fr) 300px;
+}
+
+.embedded > main > aside:first-of-type {
+  display: none;
+}
+
+.embedded > main > aside:nth-of-type(2) {
+  height: 100%;
+  border-right: 1px solid #dfe2e5;
+  background: #f7f8f6;
+  backdrop-filter: none;
+}
+
+.embedded > main > aside:nth-of-type(2) > div:first-child {
+  min-height: 49px;
+  padding: 7px 9px;
+  border-bottom: 1px solid #dfe2e5;
+  background: #fff;
+}
+
+.embedded > main > aside:nth-of-type(2) button,
+.embedded > main > aside:nth-of-type(2) select,
+.embedded > main > aside:nth-of-type(2) input {
+  border-radius: 3px !important;
+  box-shadow: none !important;
+}
+
+.embedded > main > aside:nth-of-type(2) form {
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: none;
+}
+
+.embedded > main > section:first-of-type {
+  min-height: 0;
+  background: #fff;
+}
+
+.embedded > main > section:first-of-type > header {
+  min-height: 49px;
+  padding: 7px 10px;
+  border-bottom: 1px solid #dfe2e5;
+  background: #fff;
+}
+
+.embedded > main > section:first-of-type > header button,
+.embedded > main > section:first-of-type > header a {
+  border-radius: 3px;
+  box-shadow: none;
+}
+
+.embedded > main article,
+.embedded > main button,
+.embedded > main input,
+.embedded > main textarea,
+.embedded > main select,
+.embedded > main a {
+  box-shadow: none !important;
+}
+
+.embedded > main article {
+  border-radius: 3px !important;
+}
+
+.embedded > main > aside:last-of-type {
+  min-height: 0;
+  border-left: 1px solid #dfe2e5;
+  background: #f7f8f6;
+}
+
+@media (max-width: 1120px) {
+  .embedded > main:has(> aside) {
+    grid-template-columns: 245px minmax(360px, 1fr) 270px;
+  }
+}
+
+@media (max-width: 920px) {
+  .embedded > main:has(> aside) {
+    grid-template-columns: 230px minmax(0, 1fr);
+  }
+
+  .embedded > main > aside:last-of-type:not(:nth-of-type(2)) {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .embedded {
+    height: calc(100vh - 108px);
+  }
+
+  .embedded > main:has(> aside) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .embedded > main > aside:nth-of-type(2) {
+    display: none;
+  }
+}
