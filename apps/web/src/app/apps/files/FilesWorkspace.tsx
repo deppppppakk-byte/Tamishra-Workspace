@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   permanentlyDeleteWorkspaceFile,
@@ -44,6 +45,7 @@ function viewLabel(view: View) {
 }
 
 export default function FilesWorkspace() {
+  const router = useRouter();
   const [index, setIndex] = useState<WorkspaceFileIndex>(emptyIndex);
   const [view, setView] = useState<View>("all");
   const [query, setQuery] = useState("");
@@ -101,7 +103,7 @@ export default function FilesWorkspace() {
 
     try {
       await createNativeFileHandoff(file);
-      location.assign(target);
+      router.push(target);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not open this file.");
     }
@@ -109,8 +111,9 @@ export default function FilesWorkspace() {
 
   const setViewAndUrl = (next: View) => {
     setView(next);
-    const url = next === "all" ? "/apps/files" : `/apps/files?view=${next}`;
-    history.replaceState(null, "", url);
+    router.replace(next === "all" ? "/apps/files" : `/apps/files?view=${next}`, {
+      scroll: false
+    });
   };
 
   const favorites = index.records.filter((item) => item.favorite && !item.trashedAt).length;
