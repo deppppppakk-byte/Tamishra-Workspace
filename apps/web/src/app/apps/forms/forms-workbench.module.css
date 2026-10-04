@@ -1,0 +1,189 @@
+.embedded {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #eef0f2;
+}
+
+.embedded > main {
+  height: 100%;
+  min-height: 0;
+  grid-template-columns: 160px 250px minmax(0, 1fr);
+  background: #eef0f2;
+}
+
+.embedded > main > aside {
+  padding: 8px 7px 12px;
+  border-right: 1px solid #dfe2e5;
+  background: #f7f8f6;
+}
+
+.embedded > main > aside > a {
+  display: none;
+}
+
+.embedded > main > aside > button {
+  width: 100%;
+  height: 31px;
+  border: 1px solid #1f2937;
+  border-radius: 3px;
+  background: #1f2937;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.embedded > main > aside nav {
+  gap: 1px;
+  margin-top: 8px;
+}
+
+.embedded > main > aside nav button {
+  border-radius: 3px;
+  padding: 7px 8px;
+  font-size: 9px;
+}
+
+.embedded > main > aside nav button:hover,
+.embedded > main > aside nav button:focus-visible {
+  background: #e8eaed;
+  color: #111827;
+}
+
+.embedded > main > aside > div:last-child {
+  margin-top: 14px;
+  padding: 8px;
+  border: 1px solid #e1e3e6;
+  border-radius: 3px;
+  background: #fff;
+}
+
+.embedded > main > section:first-of-type {
+  border-right: 1px solid #dfe2e5;
+  background: #fbfbfa;
+}
+
+.embedded > main > section:first-of-type > div:first-child {
+  gap: 5px;
+  padding: 7px;
+  border-bottom: 1px solid #dfe2e5;
+  background: #fff;
+}
+
+.embedded > main > section:first-of-type > div:first-child input,
+.embedded > main > section:first-of-type > div:first-child button {
+  height: 29px;
+  border-radius: 3px;
+  font-size: 9px;
+  box-shadow: none;
+}
+
+.embedded > main > section:first-of-type > div:nth-child(2) {
+  padding: 4px;
+}
+
+.embedded > main > section:first-of-type > div:nth-child(2) > button {
+  padding: 8px 7px;
+  border-radius: 3px;
+  border-bottom: 1px solid #eceef0;
+}
+
+.embedded > main > section:first-of-type > div:nth-child(2) > button:hover,
+.embedded > main > section:first-of-type > div:nth-child(2) > button:focus-visible {
+  border-color: transparent;
+  box-shadow: none;
+  background: #f1f3f4;
+}
+
+.embedded > main > section:last-of-type {
+  background: #fff;
+}
+
+.embedded > main > section:last-of-type > header {
+  min-height: 47px;
+  padding: 7px 10px;
+  gap: 8px;
+  border-bottom: 1px solid #dfe2e5;
+}
+
+.embedded > main > section:last-of-type > header input {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.embedded > main > section:last-of-type > header button {
+  height: 27px;
+  border-radius: 3px;
+  padding-inline: 7px;
+  font-size: 8px;
+  box-shadow: none;
+}
+
+.embedded > main > section:last-of-type > nav {
+  min-height: 34px;
+  gap: 1px;
+  padding: 4px 10px;
+  border-bottom: 1px solid #dfe2e5;
+  background: #f7f8f6;
+}
+
+.embedded > main > section:last-of-type > nav button {
+  height: 25px;
+  border-radius: 3px;
+  font-size: 9px;
+  box-shadow: none;
+}
+
+.embedded > main > section:last-of-type > div {
+  background: #eef0f2;
+}
+
+.embedded > main article {
+  border-radius: 4px !important;
+  box-shadow: none !important;
+}
+
+.embedded > main textarea,
+.embedded > main input,
+.embedded > main select,
+.embedded > main button {
+  box-shadow: none !important;
+}
+
+@media (max-width: 1100px) {
+  .embedded > main {
+    grid-template-columns: 145px 220px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 860px) {
+  .embedded > main {
+    grid-template-columns: 215px minmax(0, 1fr);
+  }
+
+  .embedded > main > aside {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .embedded {
+    height: calc(100vh - 108px);
+  }
+
+  .embedded > main {
+    display: block;
+    min-height: 100%;
+  }
+
+  .embedded > main > section:first-of-type {
+    height: 31%;
+    border-right: 0;
+    border-bottom: 1px solid #dfe2e5;
+  }
+
+  .embedded > main > section:last-of-type {
+    height: 69%;
+  }
+}
