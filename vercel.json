@@ -1,0 +1,13 @@
+{
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/workspace",
+      "destination": "/"
+    },
+    {
+      "source": "/workspace/:path*",
+      "destination": "/:path*"
+    }
+  ]
+}
