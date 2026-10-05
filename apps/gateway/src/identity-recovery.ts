@@ -1,6 +1,10 @@
 import { createHash, createHmac, randomBytes, randomUUID, scrypt as nodeScrypt, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createIdentityStore } from "./identity-store.js";
+import {
+  createIdentityIds,
+  createIdentityStore,
+  type StoredIdentityUser
+} from "./identity-store.js";
 
 const store = createIdentityStore();
 const MAX_BODY_BYTES = 16_384;
@@ -11,8 +15,31 @@ const SCRYPT_KEY_LENGTH = 64;
 const SCRYPT_MAXMEM = 64 * 1024 * 1024;
 const RESET_TOKEN_TTL_MS = 20 * 60 * 1000;
 const SIGNED_LINK_MAX_FUTURE_MS = 30 * 60 * 1000;
+const GOOGLE_HANDOFF_COOKIE = "kosh_google_identity_handoff";
+const GOOGLE_HANDOFF_MAX_FUTURE_MS = 5 * 60 * 1000;
+const SESSION_COOKIE =
+  process.env.WORKSPACE_SESSION_COOKIE_NAME?.trim() ||
+  "tamishra_workspace_session";
+const SESSION_COOKIE_PATH =
+  process.env.WORKSPACE_SESSION_COOKIE_PATH?.trim() ||
+  (process.env.NODE_ENV === "production" ? "/api/workspace" : "/");
+const SECURE_COOKIE =
+  process.env.WORKSPACE_SESSION_COOKIE_SECURE === "true" ||
+  process.env.NODE_ENV === "production";
+const REMEMBER_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 
 type JsonObject = Record<string, unknown>;
+
+type GoogleHandoffPayload = {
+  v: 1;
+  provider: "google";
+  sub: string;
+  email: string;
+  name: string;
+  emailVerified: true;
+  handoffHash: string;
+  exp: number;
+};
 
 function sendJson(
   response: ServerResponse,
@@ -60,6 +87,10 @@ function normalizeEmail(value: unknown) {
 
 function validEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function cleanDisplayName(value: unknown) {
+  return String(value ?? "").trim().replace(/\s+/g, " ").slice(0, 100);
 }
 
 function validatePassword(value: unknown) {
@@ -111,6 +142,10 @@ function tokenHash(token: string) {
 
 function recoverySecret() {
   return process.env.WORKSPACE_RECOVERY_ADMIN_SECRET?.trim() ?? "";
+}
+
+function googleHandoffSecret() {
+  return process.env.KOSH_IDENTITY_HANDOFF_SECRET?.trim() ?? "";
 }
 
 function safeTextEqual(left: string, right: string) {
@@ -166,6 +201,199 @@ function errorCode(error: unknown) {
   return error instanceof Error ? error.message : "recovery_error";
 }
 
+function parseCookies(request: IncomingMessage) {
+  const raw = request.headers.cookie ?? "";
+  const result = new Map<string, string>();
+  for (const item of raw.split(";")) {
+    const index = item.indexOf("=");
+    if (index <= 0) continue;
+    const key = item.slice(0, index).trim();
+    const value = item.slice(index + 1).trim();
+    if (key) result.set(key, value);
+  }
+  return result;
+}
+
+function sessionCookieValue(token: string, maxAgeSeconds: number) {
+  const parts = [
+    SESSION_COOKIE + "=" + token,
+    "HttpOnly",
+    "SameSite=Lax",
+    "Path=" + SESSION_COOKIE_PATH,
+    "Max-Age=" + Math.max(0, Math.floor(maxAgeSeconds)),
+    "Priority=High"
+  ];
+  if (SECURE_COOKIE) parts.push("Secure");
+  return parts.join("; ");
+}
+
+function clearGoogleHandoffCookieValue() {
+  const parts = [
+    GOOGLE_HANDOFF_COOKIE + "=",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Path=/",
+    "Max-Age=0",
+    "Priority=High"
+  ];
+  if (SECURE_COOKIE) parts.push("Secure");
+  return parts.join("; ");
+}
+
+function userAgent(request: IncomingMessage) {
+  return String(request.headers["user-agent"] ?? "").slice(0, 512) || null;
+}
+
+function requestIp(request: IncomingMessage) {
+  const trustedProxy = process.env.WORKSPACE_TRUST_PROXY === "true";
+  if (trustedProxy) {
+    const forwarded = request.headers["x-forwarded-for"];
+    const first = Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(",")[0];
+    if (first?.trim()) return first.trim();
+  }
+  return request.socket.remoteAddress ?? "";
+}
+
+function privacyIpHash(request: IncomingMessage) {
+  const secret = process.env.WORKSPACE_IP_HASH_SECRET?.trim();
+  const ip = requestIp(request);
+  if (!secret || !ip) return null;
+  return createHash("sha256").update(secret + ":" + ip).digest("hex");
+}
+
+function slugBase(displayName: string) {
+  const cleaned = displayName
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  return cleaned || "workspace";
+}
+
+function safeReturnTo(value: string | null) {
+  const raw = String(value ?? "").trim();
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/kosh";
+  return raw;
+}
+
+function decodeGoogleHandoff(payloadEncoded: string, signature: string): GoogleHandoffPayload {
+  const secret = googleHandoffSecret();
+  if (!secret || !payloadEncoded || !signature) {
+    throw Object.assign(new Error("google_login_not_configured"), { status: 503 });
+  }
+
+  const expectedSignature = createHmac("sha256", secret)
+    .update(payloadEncoded)
+    .digest("base64url");
+  if (!safeTextEqual(signature, expectedSignature)) {
+    throw Object.assign(new Error("invalid_google_handoff"), { status: 400 });
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(payloadEncoded, "base64url").toString("utf8"));
+  } catch {
+    throw Object.assign(new Error("invalid_google_handoff"), { status: 400 });
+  }
+
+  const value = parsed as Partial<GoogleHandoffPayload>;
+  const now = Date.now();
+  if (
+    value.v !== 1 ||
+    value.provider !== "google" ||
+    value.emailVerified !== true ||
+    typeof value.sub !== "string" || value.sub.length < 3 || value.sub.length > 255 ||
+    typeof value.email !== "string" || !validEmail(normalizeEmail(value.email)) ||
+    typeof value.name !== "string" || value.name.length > 100 ||
+    typeof value.handoffHash !== "string" || value.handoffHash.length !== 64 ||
+    typeof value.exp !== "number" ||
+    value.exp <= now ||
+    value.exp > now + GOOGLE_HANDOFF_MAX_FUTURE_MS
+  ) {
+    throw Object.assign(new Error("invalid_google_handoff"), { status: 400 });
+  }
+
+  return value as GoogleHandoffPayload;
+}
+
+async function createGoogleSession(
+  request: IncomingMessage,
+  userId: string
+) {
+  const ids = createIdentityIds();
+  const token = randomBytes(32).toString("base64url");
+  const now = new Date();
+  const session = {
+    id: ids.sessionId,
+    userId,
+    tokenHash: tokenHash(token),
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + REMEMBER_SESSION_MS).toISOString(),
+    lastSeenAt: now.toISOString(),
+    userAgent: userAgent(request),
+    ipHash: privacyIpHash(request),
+    revokedAt: null
+  };
+  await store.createSession(session);
+  return { token, maxAgeSeconds: REMEMBER_SESSION_MS / 1000 };
+}
+
+async function resolveOrCreateGoogleUser(payload: GoogleHandoffPayload) {
+  const email = normalizeEmail(payload.email);
+  const existing = await store.findUserByEmail(email);
+  if (existing) {
+    if (existing.disabled) {
+      throw Object.assign(new Error("account_disabled"), { status: 403 });
+    }
+    if (!existing.emailVerified) {
+      const verified = await store.markEmailVerified(existing.id);
+      return verified ?? existing;
+    }
+    return existing;
+  }
+
+  const ids = createIdentityIds();
+  const now = new Date().toISOString();
+  const displayName = cleanDisplayName(payload.name) || email.split("@")[0].slice(0, 100) || "Google User";
+  const credential = await hashPassword(randomBytes(48).toString("base64url"));
+  const organizationName = displayName + " Workspace";
+  const organizationSlug =
+    slugBase(displayName) + "-" + ids.userId.replace(/[^a-z0-9]/gi, "").slice(-8).toLowerCase();
+
+  const user: StoredIdentityUser = {
+    id: ids.userId,
+    email,
+    displayName,
+    emailVerified: true,
+    disabled: false,
+    createdAt: now,
+    updatedAt: now
+  };
+
+  await store.createUserBundle({
+    user,
+    credential,
+    organization: {
+      id: ids.organizationId,
+      name: organizationName,
+      slug: organizationSlug,
+      createdAt: now,
+      updatedAt: now
+    },
+    membership: {
+      id: ids.membershipId,
+      userId: ids.userId,
+      organizationId: ids.organizationId,
+      role: "owner",
+      joinedAt: now,
+      disabled: false
+    }
+  });
+
+  return user;
+}
+
 export async function handleIdentityRecoveryRequest(
   request: IncomingMessage,
   response: ServerResponse,
@@ -173,7 +401,9 @@ export async function handleIdentityRecoveryRequest(
   origin: string | undefined,
   allowedOrigins: ReadonlySet<string>
 ) {
-  if (!url.pathname.startsWith("/v1/auth/recovery/")) return false;
+  const isRecovery = url.pathname.startsWith("/v1/auth/recovery/");
+  const isGoogleHandoff = url.pathname === "/v1/auth/google/handoff";
+  if (!isRecovery && !isGoogleHandoff) return false;
 
   try {
     await store.ready();
@@ -188,6 +418,49 @@ export async function handleIdentityRecoveryRequest(
     !mutationOriginAllowed(request, allowedOrigins)
   ) {
     sendJson(response, 403, { error: "origin_not_allowed" }, origin, allowedOrigins);
+    return true;
+  }
+
+  if (request.method === "GET" && isGoogleHandoff) {
+    try {
+      const payloadEncoded = String(url.searchParams.get("payload") ?? "").trim();
+      const signature = String(url.searchParams.get("sig") ?? "").trim();
+      if (payloadEncoded.length > 4096 || signature.length > 256) {
+        throw Object.assign(new Error("invalid_google_handoff"), { status: 400 });
+      }
+
+      const payload = decodeGoogleHandoff(payloadEncoded, signature);
+      const handoffCookie = parseCookies(request).get(GOOGLE_HANDOFF_COOKIE) ?? "";
+      if (!handoffCookie || !safeTextEqual(tokenHash(handoffCookie), payload.handoffHash)) {
+        throw Object.assign(new Error("invalid_google_handoff"), { status: 400 });
+      }
+
+      const user = await resolveOrCreateGoogleUser(payload);
+      const session = await createGoogleSession(request, user.id);
+      const destination = safeReturnTo(url.searchParams.get("return_to"));
+
+      response.statusCode = 302;
+      response.setHeader("location", destination);
+      response.setHeader("cache-control", "no-store");
+      response.setHeader("set-cookie", [
+        sessionCookieValue(session.token, session.maxAgeSeconds),
+        clearGoogleHandoffCookieValue()
+      ]);
+      response.end();
+    } catch (error) {
+      console.error("Google identity handoff failed", {
+        error: errorCode(error),
+        status: errorStatus(error)
+      });
+      response.statusCode = 302;
+      response.setHeader(
+        "location",
+        "/kosh/sign-in?google_error=" + encodeURIComponent(errorCode(error))
+      );
+      response.setHeader("cache-control", "no-store");
+      response.setHeader("set-cookie", clearGoogleHandoffCookieValue());
+      response.end();
+    }
     return true;
   }
 
