@@ -13,21 +13,35 @@ if (!["hosted", "native", "patra"].includes(target)) {
   process.exit(1);
 }
 
+function normalizeBasePath(value, fallback) {
+  let normalized = String(value ?? fallback).trim();
+  if (!normalized || normalized === "/") return "/";
+  if (!normalized.startsWith("/")) normalized = `/${normalized}`;
+  return normalized.replace(/\/+$/, "");
+}
+
+const basePath = normalizeBasePath(
+  process.env.WORKSPACE_BASE_PATH,
+  target === "hosted" ? "/workspace" : "/"
+);
+
+const nativeApiDefault =
+  basePath === "/" ? "https://tamishra.in/api/workspace" : `${basePath}/api/workspace`;
+
 const apiBase =
   target === "hosted"
     ? process.env.WORKSPACE_HOSTED_API_BASE ||
       process.env.NEXT_PUBLIC_WORKSPACE_API_BASE ||
       "/api/workspace"
     : target === "native"
-      ? process.env.WORKSPACE_NATIVE_API_BASE ||
-        "https://tamishra.in/api/workspace"
+      ? process.env.WORKSPACE_NATIVE_API_BASE || nativeApiDefault
       : process.env.PATRA_API_BASE ||
         process.env.NEXT_PUBLIC_WORKSPACE_API_BASE ||
         "https://api.patra.tamishra.in";
 
 const env = {
   ...process.env,
-  WORKSPACE_BASE_PATH: target === "hosted" ? "/workspace" : "/",
+  WORKSPACE_BASE_PATH: basePath,
   NEXT_PUBLIC_WORKSPACE_API_BASE: apiBase,
   NEXT_PUBLIC_WORKSPACE_SURFACE: target === "patra" ? "patra" : "workspace"
 };
