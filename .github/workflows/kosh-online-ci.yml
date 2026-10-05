@@ -6,6 +6,7 @@ on:
     paths:
       - "apps/gateway/**"
       - "apps/kosh-node-agent/**"
+      - "apps/web/src/app/apps/kosh/cloud/**"
       - "packages/identity/**"
       - "packages/permissions/**"
       - "scripts/assert-provider-independence.mjs"
@@ -19,6 +20,7 @@ on:
     paths:
       - "apps/gateway/**"
       - "apps/kosh-node-agent/**"
+      - "apps/web/src/app/apps/kosh/cloud/**"
       - "packages/identity/**"
       - "packages/permissions/**"
       - "scripts/assert-provider-independence.mjs"
@@ -38,9 +40,9 @@ concurrency:
 
 jobs:
   gateway:
-    name: Kosh Cloud controller and node gate
+    name: Kosh Cloud controller node relay and UI gate
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -56,6 +58,8 @@ jobs:
         run: npm run check:gateway
       - name: Kosh Node Agent typecheck
         run: npm run check:kosh-node-agent
+      - name: Kosh Cloud dashboard typecheck
+        run: npm run check:web
       - name: Gateway production build
         run: npm run build:gateway
       - name: Kosh Node Agent build
