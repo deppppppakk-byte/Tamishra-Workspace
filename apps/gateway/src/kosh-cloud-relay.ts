@@ -121,15 +121,18 @@ async function requireCloudAdmin(request: IncomingMessage) {
 }
 
 let relaySql: ReturnType<typeof postgres> | null = null;
-function sql() {
+function getRelaySql() {
   const databaseUrl = process.env.WORKSPACE_DATABASE_URL?.trim();
-  if (!databaseUrl) throw Object.assign(new Error("kosh_cloud_database_required"), { status: 503 });
+  if (!databaseUrl) {
+    throw Object.assign(new Error("kosh_cloud_database_required"), { status: 503 });
+  }
   relaySql ??= postgres(databaseUrl, { max: 2, prepare: false });
   return relaySql;
 }
 
 async function findDeployment(slug: string) {
-  const rows = await sql()<RelayDeployment[]>`
+  const database = getRelaySql();
+  const rows = await database<RelayDeployment[]>`
     SELECT id, slug, node_id, assignment_generation, state
     FROM kosh_cloud_deployments
     WHERE slug=${slug}
@@ -169,6 +172,39 @@ async function authenticateRelayUpgrade(request: IncomingMessage, nodeId: string
   return Boolean(node);
 }
 
+function bindRelaySocket(websocket: WebSocket, nodeId: string) {
+  const old = relaySockets.get(nodeId);
+  if (old && old !== websocket) old.close(1012, "replaced by newer Kosh Relay session");
+  relaySockets.set(nodeId, websocket);
+  let alive = true;
+
+  websocket.on("pong", () => {
+    alive = true;
+  });
+  websocket.on("message", (data) => handleRelayMessage(nodeId, data));
+  websocket.on("close", () => {
+    if (relaySockets.get(nodeId) === websocket) relaySockets.delete(nodeId);
+    settlePending(nodeId, new Error("kosh_relay_node_disconnected"));
+  });
+  websocket.on("error", () => undefined);
+
+  const pingTimer = setInterval(() => {
+    if (websocket.readyState !== WebSocket.OPEN) {
+      clearInterval(pingTimer);
+      return;
+    }
+    if (!alive) {
+      websocket.terminate();
+      clearInterval(pingTimer);
+      return;
+    }
+    alive = false;
+    websocket.ping();
+  }, 25_000);
+  pingTimer.unref?.();
+  websocket.once("close", () => clearInterval(pingTimer));
+}
+
 export function attachKoshCloudRelay(server: Server) {
   const wss = new WebSocketServer({
     noServer: true,
@@ -187,58 +223,20 @@ export function attachKoshCloudRelay(server: Server) {
           return;
         }
         wss.handleUpgrade(request, socket, head, (websocket) => {
-          wss.emit("connection", websocket, request, nodeId);
+          bindRelaySocket(websocket, nodeId);
         });
       })
       .catch(() => rejectUpgrade(socket, 401));
   });
-
-  wss.on("connection", (websocket, _request, nodeIdValue) => {
-    const nodeId = String(nodeIdValue ?? "");
-    if (!nodeId) {
-      websocket.close(1008, "node id required");
-      return;
-    }
-    const old = relaySockets.get(nodeId);
-    if (old && old !== websocket) old.close(1012, "replaced by newer Kosh Relay session");
-    relaySockets.set(nodeId, websocket);
-    let alive = true;
-
-    websocket.on("pong", () => {
-      alive = true;
-    });
-    websocket.on("message", (data) => handleRelayMessage(nodeId, data));
-    websocket.on("close", () => {
-      if (relaySockets.get(nodeId) === websocket) relaySockets.delete(nodeId);
-      settlePending(nodeId, new Error("kosh_relay_node_disconnected"));
-    });
-    websocket.on("error", () => undefined);
-
-    const pingTimer = setInterval(() => {
-      if (websocket.readyState !== WebSocket.OPEN) {
-        clearInterval(pingTimer);
-        return;
-      }
-      if (!alive) {
-        websocket.terminate();
-        clearInterval(pingTimer);
-        return;
-      }
-      alive = false;
-      websocket.ping();
-    }, 25_000);
-    pingTimer.unref?.();
-    websocket.once("close", () => clearInterval(pingTimer));
-  });
 }
 
-function relayRequest(nodeId: string, payload: unknown) {
+function relayRequest(nodeId: string, payload: Record<string, unknown>) {
   const websocket = relaySockets.get(nodeId);
   if (!websocket || websocket.readyState !== WebSocket.OPEN) {
     throw Object.assign(new Error("kosh_relay_node_unavailable"), { status: 503 });
   }
   const requestId = randomUUID();
-  const envelope = { ...(payload as Record<string, unknown>), type: "http-request", requestId };
+  const envelope = { ...payload, type: "http-request", requestId };
   return new Promise<RelayHttpResponse>((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(requestId);
@@ -310,7 +308,9 @@ export async function handleKoshCloudRelayHttpRequest(
     const output = relayResponse.bodyBase64
       ? Buffer.from(relayResponse.bodyBase64, "base64")
       : Buffer.alloc(0);
-    if (output.length > maxBodyBytes()) throw Object.assign(new Error("relay_response_too_large"), { status: 502 });
+    if (output.length > maxBodyBytes()) {
+      throw Object.assign(new Error("relay_response_too_large"), { status: 502 });
+    }
     response.end(output);
   } catch (error) {
     const status = Number((error as { status?: number }).status ?? 502);
