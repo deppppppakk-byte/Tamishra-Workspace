@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
+import {
+  ensureKoshRepositoryPersistence,
+  scheduleKoshRepositoryPersistence
+} from "./kosh-repository-persistence.js";
 
 export type KoshVisibility = "private" | "internal" | "public";
 export type KoshRepositoryState = "ready" | "provisioning" | "error";
@@ -141,7 +145,14 @@ class PostgresKoshStore implements KoshStore {
       LIMIT 1
     `;
     const row = rows[0] as Record<string, unknown> | undefined;
-    return row ? rowToRepository(row) : null;
+    if (!row) return null;
+
+    // The live Git repository stays Git-native on the server. PostgreSQL keeps
+    // a durable Git bundle snapshot so free/ephemeral server filesystems can be
+    // reconstructed after a restart without Google Drive.
+    await ensureKoshRepositoryPersistence(this.sql, namespace, slug);
+    scheduleKoshRepositoryPersistence(this.sql, namespace, slug);
+    return rowToRepository(row);
   }
 
   async create(input: CreateRepositoryInput) {
@@ -161,6 +172,7 @@ class PostgresKoshStore implements KoshStore {
         RETURNING id, namespace, slug, name, description, visibility,
                   default_branch, state, clone_http_url, created_at, updated_at
       `;
+      scheduleKoshRepositoryPersistence(this.sql, input.namespace, input.slug);
       return rowToRepository(rows[0] as Record<string, unknown>);
     } catch (error) {
       if (
