@@ -58,17 +58,34 @@ function cloneUrl(namespace: string, slug: string) {
 
 type OwnerCandidate = { organization_id: string; user_id: string; display_name: string; role: "owner" | "admin" };
 
+function singleOwnerFallbackEnabled() {
+  const value = (process.env.KOSH_BOOTSTRAP_SINGLE_OWNER_FALLBACK ?? "").trim().toLowerCase();
+  return value === "true" || value === "1";
+}
+
 async function uniqueNamespaceOwner(namespace: string, organizationId?: string | null) {
   const databaseUrl = process.env.WORKSPACE_DATABASE_URL?.trim();
   if (!databaseUrl) return null;
   const sql = postgres(databaseUrl, { max: 1, prepare: false });
   try {
-    const rows = organizationId
+    const scoped = organizationId
       ? await sql<OwnerCandidate[]>`SELECT o.id AS organization_id, u.id AS user_id, u.display_name, m.role FROM workspace_organizations o JOIN workspace_memberships m ON m.organization_id=o.id JOIN workspace_users u ON u.id=m.user_id WHERE o.id=${organizationId} AND m.disabled=FALSE AND u.disabled=FALSE AND m.role IN ('owner','admin') ORDER BY CASE WHEN m.role='owner' THEN 0 ELSE 1 END, m.joined_at ASC`
       : await sql<OwnerCandidate[]>`SELECT o.id AS organization_id, u.id AS user_id, u.display_name, m.role FROM workspace_organizations o JOIN workspace_memberships m ON m.organization_id=o.id JOIN workspace_users u ON u.id=m.user_id WHERE o.slug=${namespace} AND m.disabled=FALSE AND u.disabled=FALSE AND m.role IN ('owner','admin') ORDER BY CASE WHEN m.role='owner' THEN 0 ELSE 1 END, m.joined_at ASC`;
-    const owners = rows.filter((row) => row.role === "owner");
-    if (owners.length === 1) return owners[0];
-    if (owners.length === 0 && rows.length === 1) return rows[0];
+    const scopedOwners = scoped.filter((row) => row.role === "owner");
+    if (scopedOwners.length === 1) return scopedOwners[0];
+    if (scopedOwners.length === 0 && scoped.length === 1) return scoped[0];
+
+    // Initial self-hosted Kosh installs generate a unique personal workspace slug
+    // at registration. When explicitly enabled, allow bootstrap only when there is
+    // exactly one active owner/admin identity across the entire installation.
+    // The moment there is ambiguity, no automatic claim is performed.
+    if (!organizationId && scoped.length === 0 && singleOwnerFallbackEnabled()) {
+      const all = await sql<OwnerCandidate[]>`SELECT o.id AS organization_id, u.id AS user_id, u.display_name, m.role FROM workspace_organizations o JOIN workspace_memberships m ON m.organization_id=o.id JOIN workspace_users u ON u.id=m.user_id WHERE m.disabled=FALSE AND u.disabled=FALSE AND m.role IN ('owner','admin') ORDER BY CASE WHEN m.role='owner' THEN 0 ELSE 1 END, m.joined_at ASC`;
+      const uniqueUsers = new Set(all.map((row) => row.user_id));
+      if (uniqueUsers.size === 1 && all.length >= 1) {
+        return all.find((row) => row.role === "owner") ?? all[0] ?? null;
+      }
+    }
     return null;
   } catch (error) {
     console.warn("Kosh bootstrap owner lookup skipped", { namespace, error: error instanceof Error ? error.message : String(error) });
