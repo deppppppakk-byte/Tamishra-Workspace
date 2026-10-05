@@ -1,0 +1,57 @@
+name: Kosh Online CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/gateway/**"
+      - "packages/identity/**"
+      - "packages/permissions/**"
+      - "scripts/assert-provider-independence.mjs"
+      - "scripts/assert-kosh-systems.mjs"
+      - ".env.kosh-node.example"
+      - ".env.kosh-online.example"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/kosh-online-ci.yml"
+  pull_request:
+    paths:
+      - "apps/gateway/**"
+      - "packages/identity/**"
+      - "packages/permissions/**"
+      - "scripts/assert-provider-independence.mjs"
+      - "scripts/assert-kosh-systems.mjs"
+      - ".env.kosh-node.example"
+      - ".env.kosh-online.example"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/kosh-online-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kosh-online-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gateway:
+    name: Gateway online-native gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install exact dependencies
+        run: npm ci
+      - name: Provider independence
+        run: npm run check:provider-independence
+      - name: Kosh systems contract
+        run: npm run check:kosh-systems
+      - name: Gateway typecheck
+        run: npm run check:gateway
+      - name: Gateway production build
+        run: npm run build:gateway
