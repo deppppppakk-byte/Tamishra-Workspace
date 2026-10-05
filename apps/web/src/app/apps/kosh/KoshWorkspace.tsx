@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   koshModules,
@@ -26,6 +27,7 @@ function apiBase() {
 }
 
 export function KoshWorkspace() {
+  const router = useRouter();
   const [repositories, setRepositories] = useState<KoshRepository[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -40,6 +42,10 @@ export function KoshWorkspace() {
 
   const base = useMemo(apiBase, []);
 
+  const requireSignIn = useCallback(() => {
+    router.replace("/sign-in");
+  }, [router]);
+
   const loadRepositories = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -48,8 +54,13 @@ export function KoshWorkspace() {
         credentials: "include",
         cache: "no-store"
       });
+      if (response.status === 401) {
+        requireSignIn();
+        return;
+      }
       if (!response.ok) {
-        throw new Error("Kosh gateway returned " + response.status + ".");
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error || "Kosh gateway returned " + response.status + ".");
       }
       const payload = (await response.json()) as RepositoryListResponse;
       setRepositories(payload.repositories ?? []);
@@ -60,7 +71,7 @@ export function KoshWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [base]);
+  }, [base, requireSignIn]);
 
   useEffect(() => {
     void loadRepositories();
@@ -83,6 +94,11 @@ export function KoshWorkspace() {
           visibility
         })
       });
+
+      if (response.status === 401) {
+        requireSignIn();
+        return;
+      }
 
       const payload = (await response.json()) as KoshRepository | { error?: string };
       if (!response.ok) {
