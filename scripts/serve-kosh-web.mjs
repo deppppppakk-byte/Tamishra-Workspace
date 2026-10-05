@@ -5,7 +5,7 @@ import { extname, join, normalize, resolve, sep } from "node:path";
 
 const port = Number(process.env.PORT ?? 3000);
 const root = resolve(process.env.KOSH_WEB_ROOT ?? "apps/web/out");
-const gatewayOrigin = (process.env.KOSH_GATEWAY_ORIGIN ?? "https://tamishra-workspace-api.onrender.com").replace(/\/$/, "");
+const gatewayOrigin = (process.env.KOSH_GATEWAY_ORIGIN ?? "https://kosh-node.tamishra.in").replace(/\/$/, "");
 
 function normalizeBasePath(value) {
   let normalized = String(value ?? "/kosh").trim();
