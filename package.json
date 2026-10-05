@@ -14,6 +14,8 @@
     "build": "npm run build:web",
     "build:web": "node scripts/run-web.mjs build hosted",
     "build:gateway": "npm run build:runtime-packages && npm run build --workspace @tamishra/gateway",
+    "kosh:online:migrate": "node scripts/migrate-git-to-kosh.mjs",
+    "kosh:online:smoke": "node scripts/kosh-online-smoke.mjs",
     "kosh:node:build": "npm run build:gateway",
     "kosh:node:start": "node --env-file=.env.kosh-node apps/gateway/dist/index.js",
     "kosh:node:bootstrap": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-kosh-node.ps1",
