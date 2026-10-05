@@ -1,0 +1,62 @@
+name: Kosh Online Gateway
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/gateway/**"
+      - "packages/identity/**"
+      - "packages/permissions/**"
+      - "scripts/kosh-online-smoke.mjs"
+      - "scripts/migrate-git-to-kosh.mjs"
+      - "Dockerfile.kosh-online"
+      - ".dockerignore"
+      - ".env.kosh-online.example"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/kosh-online.yml"
+  pull_request:
+    paths:
+      - "apps/gateway/**"
+      - "packages/identity/**"
+      - "packages/permissions/**"
+      - "scripts/kosh-online-smoke.mjs"
+      - "scripts/migrate-git-to-kosh.mjs"
+      - "Dockerfile.kosh-online"
+      - ".dockerignore"
+      - ".env.kosh-online.example"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/kosh-online.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kosh-online-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck gateway runtime
+        run: npm run check:gateway
+
+      - name: Provider-independence guard
+        run: npm run check:provider-independence
+
+      - name: Build gateway
+        run: npm run build:gateway
+
+      - name: Build online container
+        run: docker build -f Dockerfile.kosh-online -t tamishra-kosh-online:ci .
