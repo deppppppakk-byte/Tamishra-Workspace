@@ -26,6 +26,13 @@ function apiBase() {
   return configured.replace(/\/$/, "");
 }
 
+function koshRequestError(status: number, fallback: string, error?: string) {
+  if (status === 502 || status === 503 || status === 504) {
+    return "Kosh Node is offline. Start the Kosh Node host PC, then retry.";
+  }
+  return error || fallback;
+}
+
 export function KoshWorkspace() {
   const router = useRouter();
   const [repositories, setRepositories] = useState<KoshRepository[]>([]);
@@ -60,14 +67,20 @@ export function KoshWorkspace() {
       }
       if (!response.ok) {
         const payload = (await response.json().catch(() => ({}))) as { error?: string };
-        throw new Error(payload.error || "Kosh gateway returned " + response.status + ".");
+        throw new Error(
+          koshRequestError(
+            response.status,
+            "Kosh request failed with status " + response.status + ".",
+            payload.error
+          )
+        );
       }
       const payload = (await response.json()) as RepositoryListResponse;
       setRepositories(payload.repositories ?? []);
       setPersistence(payload.persistence ?? "");
       setGitStorage(payload.gitStorage ?? "");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not connect to the Kosh gateway.");
+      setError(reason instanceof Error ? reason.message : "Could not connect to Kosh Node.");
     } finally {
       setLoading(false);
     }
@@ -100,9 +113,12 @@ export function KoshWorkspace() {
         return;
       }
 
-      const payload = (await response.json()) as KoshRepository | { error?: string };
+      const payload = (await response.json().catch(() => ({}))) as KoshRepository | { error?: string };
       if (!response.ok) {
-        throw new Error("error" in payload && payload.error ? payload.error : "Repository creation failed.");
+        const payloadError = "error" in payload && payload.error ? payload.error : undefined;
+        throw new Error(
+          koshRequestError(response.status, "Repository creation failed.", payloadError)
+        );
       }
 
       setName("");
@@ -373,15 +389,15 @@ export function KoshWorkspace() {
         <section id="infrastructure" className={styles.infrastructure}>
           <div>
             <p className={styles.eyebrow}>INFRASTRUCTURE</p>
-            <h2>Storage remains replaceable.</h2>
+            <h2>Kosh Node keeps repository storage under your control.</h2>
             <p>
-              Git repositories use persistent Git-native storage. Database metadata uses the Workspace PostgreSQL layer.
-              Packages, release assets, Automation artifacts and recovery backups use the configured Kosh object-storage adapter, including Google Drive when enabled.
+              Git repositories use persistent Git-native storage on the Kosh Node. Database metadata uses PostgreSQL.
+              Kosh infrastructure remains provider-independent so the node can move without changing repository URLs.
             </p>
           </div>
           <dl>
-            <div><dt>Metadata</dt><dd>{persistence || "gateway decides"}</dd></div>
-            <div><dt>Git objects</dt><dd>{gitStorage || "persistent repository root"}</dd></div>
+            <div><dt>Metadata</dt><dd>{persistence || "Kosh PostgreSQL"}</dd></div>
+            <div><dt>Git objects</dt><dd>{gitStorage || "Kosh Node persistent storage"}</dd></div>
             <div><dt>Protocol</dt><dd>Git smart HTTP</dd></div>
           </dl>
         </section>
