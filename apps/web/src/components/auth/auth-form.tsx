@@ -47,6 +47,7 @@ export function AuthForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -151,6 +152,7 @@ export function AuthForm() {
     setMode(next);
     setStatus("");
     setAvailability(null);
+    setRecoveryOpen(false);
   }
 
   return (
@@ -328,14 +330,46 @@ export function AuthForm() {
             </label>
 
             {mode === "signin" && (
-              <label className={styles.remember}>
-                <input
-                  type="checkbox"
-                  checked={remember}
-                  onChange={(event) => setRemember(event.target.checked)}
-                />
-                <span>Keep me signed in on this device</span>
-              </label>
+              <>
+                <div className={styles.signInOptions}>
+                  <label className={styles.remember}>
+                    <input
+                      type="checkbox"
+                      checked={remember}
+                      onChange={(event) => setRemember(event.target.checked)}
+                    />
+                    <span>Keep me signed in on this device</span>
+                  </label>
+                  <button
+                    className={styles.forgotButton}
+                    type="button"
+                    aria-expanded={recoveryOpen}
+                    onClick={() => {
+                      setRecoveryOpen((value) => !value);
+                      setStatus("");
+                    }}
+                  >
+                    {recoveryOpen ? "Hide reset" : "Forgot password?"}
+                  </button>
+                </div>
+
+                {recoveryOpen && (
+                  <div className={styles.recoveryPanel}>
+                    <div>
+                      <strong>Reset your password</strong>
+                      <p>
+                        Use the secure one-time recovery link sent to your account email. Your old password is not required.
+                      </p>
+                    </div>
+                    <Link className={styles.recoveryLink} href="/reset-password">
+                      Open reset password
+                    </Link>
+                    <small>
+                      For security, reset tokens are never displayed on the sign-in page.
+                    </small>
+                  </div>
+                )}
+              </>
             )}
 
             {status && <div className={styles.error} role="alert">{status}</div>}
