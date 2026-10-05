@@ -2,8 +2,10 @@ import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolveKoshIdentity } from "./kosh-auth.js";
 import { getKoshCloudStore } from "./kosh-cloud-store.js";
+import { getKoshCloudOperations } from "./kosh-cloud-operations.js";
 
 const store = getKoshCloudStore();
+const operations = getKoshCloudOperations();
 type JsonBody = Record<string, unknown>;
 
 function sendJson(
@@ -142,6 +144,21 @@ async function requireNode(
   return node;
 }
 
+async function scheduleMany(ids: string[]) {
+  const scheduled = [];
+  for (const id of ids) {
+    const deployment = await store.scheduleDeployment(id);
+    if (deployment) scheduled.push(deployment);
+  }
+  return scheduled;
+}
+
+async function reconcileCloud() {
+  await store.listNodes();
+  const ids = await operations.reconcileOfflineAssignments();
+  return scheduleMany(ids);
+}
+
 function errorStatus(error: unknown) {
   return Number((error as { status?: number })?.status ?? 500);
 }
@@ -170,6 +187,7 @@ export async function handleKoshCloudRequest(
     if (request.method === "GET" && url.pathname === "/v1/kosh/cloud") {
       const identity = await requireAdmin(request, response, origin, allowedOrigins);
       if (!identity) return true;
+      await reconcileCloud();
       const [nodes, deployments] = await Promise.all([store.listNodes(), store.listDeployments()]);
       sendJson(
         response,
@@ -286,9 +304,37 @@ export async function handleKoshCloudRequest(
       return true;
     }
 
+    const drainNode = url.pathname.match(/^\/v1\/kosh\/cloud\/nodes\/([^/]+)\/drain$/);
+    if (request.method === "POST" && drainNode) {
+      const identity = await requireAdmin(request, response, origin, allowedOrigins);
+      if (!identity) return true;
+      const result = await operations.drainNode(drainNode[1]);
+      if (!result) {
+        sendJson(response, 404, { error: "node_not_found" }, origin, allowedOrigins);
+        return true;
+      }
+      const deployments = await scheduleMany(result.deploymentIds);
+      sendJson(response, 200, { node: result.node, rescheduled: deployments }, origin, allowedOrigins);
+      return true;
+    }
+
+    const resumeNode = url.pathname.match(/^\/v1\/kosh\/cloud\/nodes\/([^/]+)\/resume$/);
+    if (request.method === "POST" && resumeNode) {
+      const identity = await requireAdmin(request, response, origin, allowedOrigins);
+      if (!identity) return true;
+      const node = await operations.resumeNode(resumeNode[1]);
+      if (!node) {
+        sendJson(response, 404, { error: "node_not_found" }, origin, allowedOrigins);
+        return true;
+      }
+      sendJson(response, 200, { node }, origin, allowedOrigins);
+      return true;
+    }
+
     if (request.method === "GET" && url.pathname === "/v1/kosh/cloud/nodes") {
       const identity = await requireAdmin(request, response, origin, allowedOrigins);
       if (!identity) return true;
+      await reconcileCloud();
       sendJson(response, 200, { nodes: await store.listNodes() }, origin, allowedOrigins);
       return true;
     }
@@ -296,6 +342,7 @@ export async function handleKoshCloudRequest(
     if (request.method === "GET" && url.pathname === "/v1/kosh/cloud/deployments") {
       const identity = await requireAdmin(request, response, origin, allowedOrigins);
       if (!identity) return true;
+      await reconcileCloud();
       sendJson(
         response,
         200,
@@ -309,6 +356,7 @@ export async function handleKoshCloudRequest(
     if (request.method === "POST" && url.pathname === "/v1/kosh/cloud/deployments") {
       const identity = await requireAdmin(request, response, origin, allowedOrigins);
       if (!identity) return true;
+      await reconcileCloud();
       const body = await readJson(request);
       const name = cleanText(body.name, 120);
       const slug = cleanSlug(body.slug || name);
@@ -339,12 +387,48 @@ export async function handleKoshCloudRequest(
     if (request.method === "POST" && scheduleMatch) {
       const identity = await requireAdmin(request, response, origin, allowedOrigins);
       if (!identity) return true;
+      await reconcileCloud();
       const deployment = await store.scheduleDeployment(scheduleMatch[1]);
       if (!deployment) {
         sendJson(response, 404, { error: "pending_deployment_not_found" }, origin, allowedOrigins);
         return true;
       }
       sendJson(response, 200, { deployment }, origin, allowedOrigins);
+      return true;
+    }
+
+    const stopMatch = url.pathname.match(/^\/v1\/kosh\/cloud\/deployments\/([^/]+)\/stop$/);
+    if (request.method === "POST" && stopMatch) {
+      const identity = await requireAdmin(request, response, origin, allowedOrigins);
+      if (!identity) return true;
+      const deployment = await operations.stopDeployment(stopMatch[1]);
+      if (!deployment) {
+        sendJson(response, 404, { error: "deployment_not_found" }, origin, allowedOrigins);
+        return true;
+      }
+      sendJson(response, 200, { deployment }, origin, allowedOrigins);
+      return true;
+    }
+
+    const restartMatch = url.pathname.match(/^\/v1\/kosh\/cloud\/deployments\/([^/]+)\/restart$/);
+    if (request.method === "POST" && restartMatch) {
+      const identity = await requireAdmin(request, response, origin, allowedOrigins);
+      if (!identity) return true;
+      const pending = await operations.restartDeployment(restartMatch[1]);
+      if (!pending) {
+        sendJson(response, 404, { error: "deployment_not_found" }, origin, allowedOrigins);
+        return true;
+      }
+      const deployment = await store.scheduleDeployment(pending.id);
+      sendJson(response, 200, { deployment: deployment ?? pending }, origin, allowedOrigins);
+      return true;
+    }
+
+    if (request.method === "POST" && url.pathname === "/v1/kosh/cloud/reconcile") {
+      const identity = await requireAdmin(request, response, origin, allowedOrigins);
+      if (!identity) return true;
+      const rescheduled = await reconcileCloud();
+      sendJson(response, 200, { rescheduled }, origin, allowedOrigins);
       return true;
     }
 
