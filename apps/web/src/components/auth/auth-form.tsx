@@ -234,6 +234,63 @@ export function AuthForm() {
           </div>
 
           <form className={styles.form} onSubmit={submit}>
+            {mode === "signin" && !isPatraSurface && (
+              <>
+                <a
+                  href="/api/kosh/google/login?return_to=/kosh"
+                  style={{
+                    minHeight: 44,
+                    border: "1px solid rgba(23, 32, 51, 0.14)",
+                    borderRadius: 12,
+                    color: "#26344a",
+                    background: "#fff",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 10,
+                    textDecoration: "none",
+                    fontSize: 10,
+                    fontWeight: 850,
+                    boxShadow: "0 6px 18px rgba(23, 32, 51, 0.06)"
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      width: 22,
+                      height: 22,
+                      border: "1px solid #e1e5ec",
+                      borderRadius: "50%",
+                      display: "grid",
+                      placeItems: "center",
+                      color: "#4285f4",
+                      fontSize: 12,
+                      fontWeight: 900,
+                      background: "#fff"
+                    }}
+                  >
+                    G
+                  </span>
+                  Continue with Google
+                </a>
+                <div
+                  aria-hidden="true"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    color: "#98a2b3",
+                    fontSize: 8,
+                    fontWeight: 700
+                  }}
+                >
+                  <span style={{ height: 1, background: "#e7ebf1", flex: 1 }} />
+                  OR CONTINUE WITH EMAIL
+                  <span style={{ height: 1, background: "#e7ebf1", flex: 1 }} />
+                </div>
+              </>
+            )}
+
             {mode === "register" && (
               <label>
                 <span>Name</span>
@@ -388,7 +445,7 @@ export function AuthForm() {
           <p className={styles.footerText}>
             {isPatraSurface
               ? "Public Patra mailboxes use the @patra.tamishra.in namespace."
-              : "Tamishra Workspace uses its own account and session system."}
+              : "Tamishra Workspace supports native password sessions and verified Google sign-in."}
           </p>
         </div>
       </section>
