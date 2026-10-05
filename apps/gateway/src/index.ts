@@ -10,6 +10,10 @@ import { handleAssetsRequest } from "./assets.js";
 import { handleChatRequest } from "./chat.js";
 import { handleKoshRequest } from "./kosh.js";
 import { handleKoshCloudRequest } from "./kosh-cloud.js";
+import {
+  attachKoshCloudRelay,
+  handleKoshCloudRelayHttpRequest
+} from "./kosh-cloud-relay.js";
 import { handleKoshWikiRequest } from "./kosh-wiki.js";
 import { handleKoshPagesAdminRequest } from "./kosh-pages.js";
 import { handleKoshWebhookRequest } from "./kosh-webhooks.js";
@@ -29,9 +33,6 @@ import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
 import { getKoshStore } from "./kosh-store.js";
 import { runKoshNativeStorageSelfTest } from "./kosh-native-storage-selftest.js";
 
-// Older Kosh deployments used DATABASE_URL. Keep that binding compatible so
-// the restored native Git gateway can reuse the already-provisioned Postgres
-// connection without requiring a new database or duplicating credentials.
 if (!process.env.WORKSPACE_DATABASE_URL?.trim() && process.env.DATABASE_URL?.trim()) {
   process.env.WORKSPACE_DATABASE_URL = process.env.DATABASE_URL.trim();
 }
@@ -63,9 +64,7 @@ function validateProductionConfiguration() {
     throw new Error("WORKSPACE_SESSION_COOKIE_SECURE must not be false in production.");
   }
   const allowed = process.env.WORKSPACE_ALLOWED_ORIGINS?.trim();
-  if (!allowed) {
-    throw new Error("WORKSPACE_ALLOWED_ORIGINS is required in production.");
-  }
+  if (!allowed) throw new Error("WORKSPACE_ALLOWED_ORIGINS is required in production.");
   if (process.env.KOSH_PUBLIC_ORIGIN?.trim()) {
     requireProductionValue("KOSH_REPO_ROOT", 2);
     requireProductionValue("KOSH_GIT_TOKEN", 24);
@@ -112,23 +111,14 @@ const allowedOrigins = new Set(
     .filter(Boolean)
 );
 
-type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JsonValue[]
-  | { [key: string]: JsonValue };
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 function applySecurityHeaders(response: ServerResponse) {
   response.setHeader("x-content-type-options", "nosniff");
   response.setHeader("referrer-policy", "no-referrer");
   response.setHeader("x-frame-options", "DENY");
   response.setHeader("cross-origin-resource-policy", "same-site");
-  response.setHeader(
-    "permissions-policy",
-    "geolocation=(), payment=(), usb=(), serial=(), interest-cohort=()"
-  );
+  response.setHeader("permissions-policy", "geolocation=(), payment=(), usb=(), serial=(), interest-cohort=()");
 }
 
 function applyCors(response: ServerResponse, origin?: string) {
@@ -139,12 +129,7 @@ function applyCors(response: ServerResponse, origin?: string) {
   }
 }
 
-function json(
-  response: ServerResponse,
-  status: number,
-  body: JsonValue,
-  origin?: string
-) {
+function json(response: ServerResponse, status: number, body: JsonValue, origin?: string) {
   response.statusCode = status;
   response.setHeader("content-type", "application/json; charset=utf-8");
   response.setHeader("cache-control", "no-store");
@@ -164,31 +149,22 @@ async function handleKoshAdministrationGate(
   origin?: string
 ) {
   if (!koshAdminMutatingMethods.has(request.method ?? "")) return false;
-
   const match = url.pathname.match(
     /^\/v1\/kosh\/repos\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,63})\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,99})\/(?:webhooks|platform)(?:\/|$)/
   );
   if (!match) return false;
-
   const repository = await koshRepositoryStore.get(match[1], match[2]);
   if (!repository) {
     json(response, 404, { error: "repository_not_found" }, origin);
     return true;
   }
-
-  const authorization = await authorizeKoshRepositoryRequest(
-    request,
-    repository,
-    "repository.manage"
-  );
+  const authorization = await authorizeKoshRepositoryRequest(request, repository, "repository.manage");
   if (!authorization.decision.allowed || !authorization.identity) {
     json(
       response,
       authorization.identity ? 403 : 401,
       {
-        error: authorization.identity
-          ? "repository_permission_denied"
-          : "authentication_required",
+        error: authorization.identity ? "repository_permission_denied" : "authentication_required",
         permission: "repository.manage",
         role: authorization.decision.role
       },
@@ -221,36 +197,44 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   }
 
   if (request.method === "GET" && url.pathname === "/health") {
-    json(response, 200, {
-      service: "tamishra-workspace-gateway",
-      status: "ok",
-      version: process.env.WORKSPACE_RELEASE_VERSION ?? "0.9.0",
-      mode: process.env.WORKSPACE_CORE_ONLY === "true" ? "core" : "full",
-      persistence: process.env.WORKSPACE_DATABASE_URL ? "postgres" : "ephemeral",
-      koshCloud: process.env.KOSH_CLOUD_ENABLED?.trim().toLowerCase() === "true"
-    }, origin);
+    json(
+      response,
+      200,
+      {
+        service: "tamishra-workspace-gateway",
+        status: "ok",
+        version: process.env.WORKSPACE_RELEASE_VERSION ?? "0.9.0",
+        mode: process.env.WORKSPACE_CORE_ONLY === "true" ? "core" : "full",
+        persistence: process.env.WORKSPACE_DATABASE_URL ? "postgres" : "ephemeral",
+        koshCloud: process.env.KOSH_CLOUD_ENABLED?.trim().toLowerCase() === "true",
+        koshRelay: process.env.KOSH_CLOUD_ENABLED?.trim().toLowerCase() === "true"
+      },
+      origin
+    );
     return;
   }
 
   if (request.method === "GET" && url.pathname === "/ready") {
-    json(response, 200, {
-      service: "tamishra-workspace-gateway",
-      status: "ready",
-      production: isProduction
-    }, origin);
+    json(response, 200, { service: "tamishra-workspace-gateway", status: "ready", production: isProduction }, origin);
     return;
   }
 
   if (request.method === "GET" && url.pathname === "/v1/workspace") {
-    json(response, 200, {
-      product: "Tamishra Workspace",
-      standalone: true,
-      apps: ["docs", "sheets", "slides", "pdf", "chat", "mail", "meet", "notes", "forms", "files", "kosh"]
-    }, origin);
+    json(
+      response,
+      200,
+      {
+        product: "Tamishra Workspace",
+        standalone: true,
+        apps: ["docs", "sheets", "slides", "pdf", "chat", "mail", "meet", "notes", "forms", "files", "kosh"]
+      },
+      origin
+    );
     return;
   }
 
   if (await handleKoshOAuthRequest(request, response, url)) return;
+  if (await handleKoshCloudRelayHttpRequest(request, response, url)) return;
   if (await handleKoshCloudRequest(request, response, url, origin, allowedOrigins)) return;
   if (await handleKoshPublicApiRequest(request, response, url, origin, allowedOrigins)) return;
   if (await handleKoshReadinessRequest(request, response, url, origin, allowedOrigins)) return;
@@ -297,13 +281,12 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
 const server = createServer((request, response) => {
   void handle(request, response).catch((error) => {
     console.error("Workspace gateway request failed", error);
-    if (!response.headersSent) {
-      json(response, 500, { error: "internal_error" }, request.headers.origin);
-    } else {
-      response.end();
-    }
+    if (!response.headersSent) json(response, 500, { error: "internal_error" }, request.headers.origin);
+    else response.end();
   });
 });
+
+attachKoshCloudRelay(server);
 
 server.requestTimeout = 30_000;
 server.headersTimeout = 15_000;
@@ -329,13 +312,8 @@ process.once("SIGINT", () => shutdown("SIGINT"));
 
 async function start() {
   const selfTest = await runKoshNativeStorageSelfTest();
-  if (selfTest.enabled) {
-    console.log("Kosh native storage self-test PASS", selfTest);
-  }
-
-  server.listen(port, () => {
-    console.log(`Tamishra Workspace gateway listening on :${port}`);
-  });
+  if (selfTest.enabled) console.log("Kosh native storage self-test PASS", selfTest);
+  server.listen(port, () => console.log(`Tamishra Workspace gateway listening on :${port}`));
 }
 
 void start().catch((error) => {
