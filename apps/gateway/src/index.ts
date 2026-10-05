@@ -26,6 +26,13 @@ import { isKoshOperationGuardedRequest } from "./kosh-operation-guard-match.js";
 import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
 import { getKoshStore } from "./kosh-store.js";
 
+// Older Kosh deployments used DATABASE_URL. Keep that binding compatible so
+// the restored native Git gateway can reuse the already-provisioned Postgres
+// connection without requiring a new database or duplicating credentials.
+if (!process.env.WORKSPACE_DATABASE_URL?.trim() && process.env.DATABASE_URL?.trim()) {
+  process.env.WORKSPACE_DATABASE_URL = process.env.DATABASE_URL.trim();
+}
+
 const port = Number(process.env.WORKSPACE_GATEWAY_PORT ?? process.env.PORT ?? 4100);
 const isProduction = process.env.NODE_ENV === "production";
 const koshRepositoryStore = getKoshStore();
