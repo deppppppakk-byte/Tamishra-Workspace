@@ -3,12 +3,14 @@ import { mkdir, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import postgres from "postgres";
+import { createIdentityStore } from "./identity-store.js";
 import { getKoshAccessStore } from "./kosh-access-store.js";
 import { getKoshStore } from "./kosh-store.js";
 
 const execFileAsync = promisify(execFile);
 const store = getKoshStore();
 const accessStore = getKoshAccessStore();
+const identityStore = createIdentityStore();
 const repositoryRoot = resolve(process.env.KOSH_REPO_ROOT?.trim() || ".kosh/repos");
 
 function validSegment(value: string, maxLength: number) {
@@ -16,9 +18,7 @@ function validSegment(value: string, maxLength: number) {
 }
 
 function repositoryPath(namespace: string, slug: string) {
-  if (!validSegment(namespace, 64) || !validSegment(slug, 100)) {
-    throw new Error("invalid_bootstrap_repository");
-  }
+  if (!validSegment(namespace, 64) || !validSegment(slug, 100)) throw new Error("invalid_bootstrap_repository");
   const path = resolve(repositoryRoot, namespace, slug + ".git");
   const prefix = repositoryRoot.endsWith(sep) ? repositoryRoot : repositoryRoot + sep;
   if (!path.startsWith(prefix)) throw new Error("invalid_bootstrap_repository_path");
@@ -26,52 +26,28 @@ function repositoryPath(namespace: string, slug: string) {
 }
 
 async function exists(path: string) {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
+  try { await stat(path); return true; } catch { return false; }
 }
 
 export function configuredBootstrapRepositories() {
   return (process.env.KOSH_BOOTSTRAP_REPOSITORIES ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean)
+    .split(",").map((value) => value.trim()).filter(Boolean)
     .map((value) => {
       const slash = value.indexOf("/");
       const namespace = slash > 0 ? value.slice(0, slash) : "";
       const slug = slash > 0 ? value.slice(slash + 1) : "";
-      if (!validSegment(namespace, 64) || !validSegment(slug, 100)) {
-        throw new Error("invalid_bootstrap_repository:" + value);
-      }
+      if (!validSegment(namespace, 64) || !validSegment(slug, 100)) throw new Error("invalid_bootstrap_repository:" + value);
       return { namespace, slug, key: namespace + "/" + slug };
     });
-}
-
-export function isConfiguredBootstrapRepository(namespace: string, slug: string) {
-  return configuredBootstrapRepositories().some(
-    (item) => item.namespace === namespace && item.slug === slug
-  );
 }
 
 async function ensureBareRepository(namespace: string, slug: string) {
   const path = repositoryPath(namespace, slug);
   await mkdir(resolve(repositoryRoot, namespace), { recursive: true });
   if (!(await exists(resolve(path, "HEAD")))) {
-    await execFileAsync("git", ["init", "--bare", "--initial-branch=main", path], {
-      timeout: 30_000,
-      maxBuffer: 8 * 1024 * 1024,
-      encoding: "utf8"
-    });
+    await execFileAsync("git", ["init", "--bare", "--initial-branch=main", path], { timeout: 30_000, maxBuffer: 8 * 1024 * 1024, encoding: "utf8" });
   }
-  await execFileAsync("git", ["--git-dir", path, "config", "http.receivepack", "true"], {
-    timeout: 10_000,
-    maxBuffer: 1024 * 1024,
-    encoding: "utf8"
-  });
-  return path;
+  await execFileAsync("git", ["--git-dir", path, "config", "http.receivepack", "true"], { timeout: 10_000, maxBuffer: 1024 * 1024, encoding: "utf8" });
 }
 
 function cloneUrl(namespace: string, slug: string) {
@@ -79,12 +55,7 @@ function cloneUrl(namespace: string, slug: string) {
   return `${origin}/git/${namespace}/${slug}.git`;
 }
 
-type OwnerCandidate = {
-  organization_id: string;
-  user_id: string;
-  display_name: string;
-  role: "owner" | "admin";
-};
+type OwnerCandidate = { organization_id: string; user_id: string; display_name: string; role: "owner" | "admin" };
 
 async function uniqueNamespaceOwner(namespace: string, organizationId?: string | null) {
   const databaseUrl = process.env.WORKSPACE_DATABASE_URL?.trim();
@@ -92,100 +63,45 @@ async function uniqueNamespaceOwner(namespace: string, organizationId?: string |
   const sql = postgres(databaseUrl, { max: 1, prepare: false });
   try {
     const rows = organizationId
-      ? await sql<OwnerCandidate[]>`
-          SELECT o.id AS organization_id, u.id AS user_id, u.display_name, m.role
-          FROM workspace_organizations o
-          JOIN workspace_memberships m ON m.organization_id = o.id
-          JOIN workspace_users u ON u.id = m.user_id
-          WHERE o.id = ${organizationId}
-            AND m.disabled = FALSE
-            AND u.disabled = FALSE
-            AND m.role IN ('owner', 'admin')
-          ORDER BY CASE WHEN m.role = 'owner' THEN 0 ELSE 1 END, m.joined_at ASC
-        `
-      : await sql<OwnerCandidate[]>`
-          SELECT o.id AS organization_id, u.id AS user_id, u.display_name, m.role
-          FROM workspace_organizations o
-          JOIN workspace_memberships m ON m.organization_id = o.id
-          JOIN workspace_users u ON u.id = m.user_id
-          WHERE o.slug = ${namespace}
-            AND m.disabled = FALSE
-            AND u.disabled = FALSE
-            AND m.role IN ('owner', 'admin')
-          ORDER BY CASE WHEN m.role = 'owner' THEN 0 ELSE 1 END, m.joined_at ASC
-        `;
-
+      ? await sql<OwnerCandidate[]>`SELECT o.id AS organization_id, u.id AS user_id, u.display_name, m.role FROM workspace_organizations o JOIN workspace_memberships m ON m.organization_id=o.id JOIN workspace_users u ON u.id=m.user_id WHERE o.id=${organizationId} AND m.disabled=FALSE AND u.disabled=FALSE AND m.role IN ('owner','admin') ORDER BY CASE WHEN m.role='owner' THEN 0 ELSE 1 END, m.joined_at ASC`
+      : await sql<OwnerCandidate[]>`SELECT o.id AS organization_id, u.id AS user_id, u.display_name, m.role FROM workspace_organizations o JOIN workspace_memberships m ON m.organization_id=o.id JOIN workspace_users u ON u.id=m.user_id WHERE o.slug=${namespace} AND m.disabled=FALSE AND u.disabled=FALSE AND m.role IN ('owner','admin') ORDER BY CASE WHEN m.role='owner' THEN 0 ELSE 1 END, m.joined_at ASC`;
     const owners = rows.filter((row) => row.role === "owner");
     if (owners.length === 1) return owners[0];
     if (owners.length === 0 && rows.length === 1) return rows[0];
+    return null;
+  } catch (error) {
+    console.warn("Kosh bootstrap owner lookup skipped", { namespace, error: error instanceof Error ? error.message : String(error) });
     return null;
   } finally {
     await sql.end({ timeout: 5 }).catch(() => undefined);
   }
 }
 
-async function ensureRepositoryOwner(repository: {
-  id: string;
-  namespace: string;
-  slug: string;
-}) {
-  await accessStore.ready();
+async function ensureRepositoryOwner(repository: { id: string; namespace: string; slug: string }) {
   const grants = await accessStore.listRepositoryGrants(repository.id);
   if (grants.length > 0) return "existing-owner" as const;
-
   const existingBinding = await accessStore.getNamespaceBinding(repository.namespace);
-  const candidate = await uniqueNamespaceOwner(
-    repository.namespace,
-    existingBinding?.organizationId ?? null
-  );
+  const candidate = await uniqueNamespaceOwner(repository.namespace, existingBinding?.organizationId ?? null);
   if (!candidate) return "owner-pending" as const;
-
   if (!existingBinding) {
-    await accessStore.bindNamespace({
-      namespace: repository.namespace,
-      organizationId: candidate.organization_id,
-      createdByUserId: candidate.user_id,
-      createdByName: candidate.display_name
-    });
+    await accessStore.bindNamespace({ namespace: repository.namespace, organizationId: candidate.organization_id, createdByUserId: candidate.user_id, createdByName: candidate.display_name });
   }
-
-  await accessStore.putRepositoryGrant({
-    repositoryId: repository.id,
-    subjectType: "user",
-    subjectId: candidate.user_id,
-    role: "owner",
-    createdByUserId: candidate.user_id,
-    createdByName: candidate.display_name
-  });
+  await accessStore.putRepositoryGrant({ repositoryId: repository.id, subjectType: "user", subjectId: candidate.user_id, role: "owner", createdByUserId: candidate.user_id, createdByName: candidate.display_name });
   return "owner-assigned" as const;
 }
 
 export async function bootstrapConfiguredKoshRepositories() {
   const configured = configuredBootstrapRepositories();
   if (!configured.length) return [];
-
-  await Promise.all([store.ready(), accessStore.ready()]);
+  await Promise.all([store.ready(), accessStore.ready(), identityStore.ready()]);
   const ready: Array<{ repository: string; ownership: string }> = [];
   for (const item of configured) {
     let repository = await store.get(item.namespace, item.slug);
     await ensureBareRepository(item.namespace, item.slug);
     if (!repository) {
-      repository = await store.create({
-        namespace: item.namespace,
-        slug: item.slug,
-        name: item.slug,
-        description:
-          item.key === "tamishra/os"
-            ? "Tamishra OS source repository"
-            : `Kosh native repository ${item.key}`,
-        visibility: "private",
-        defaultBranch: "main",
-        state: "ready",
-        cloneHttpUrl: cloneUrl(item.namespace, item.slug)
-      });
+      repository = await store.create({ namespace: item.namespace, slug: item.slug, name: item.slug, description: item.key === "tamishra/os" ? "Tamishra OS source repository" : `Kosh native repository ${item.key}`, visibility: "private", defaultBranch: "main", state: "ready", cloneHttpUrl: cloneUrl(item.namespace, item.slug) });
     }
-    const ownership = await ensureRepositoryOwner(repository);
-    ready.push({ repository: repository.namespace + "/" + repository.slug, ownership });
+    ready.push({ repository: repository.namespace + "/" + repository.slug, ownership: await ensureRepositoryOwner(repository) });
   }
   return ready;
 }
