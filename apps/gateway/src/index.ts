@@ -25,6 +25,7 @@ import {
 import { isKoshOperationGuardedRequest } from "./kosh-operation-guard-match.js";
 import { authorizeKoshRepositoryRequest } from "./kosh-access.js";
 import { getKoshStore } from "./kosh-store.js";
+import { runKoshNativeStorageSelfTest } from "./kosh-native-storage-selftest.js";
 
 // Older Kosh deployments used DATABASE_URL. Keep that binding compatible so
 // the restored native Git gateway can reuse the already-provisioned Postgres
@@ -317,6 +318,18 @@ function shutdown(signal: string) {
 process.once("SIGTERM", () => shutdown("SIGTERM"));
 process.once("SIGINT", () => shutdown("SIGINT"));
 
-server.listen(port, () => {
-  console.log(`Tamishra Workspace gateway listening on :${port}`);
+async function start() {
+  const selfTest = await runKoshNativeStorageSelfTest();
+  if (selfTest.enabled) {
+    console.log("Kosh native storage self-test PASS", selfTest);
+  }
+
+  server.listen(port, () => {
+    console.log(`Tamishra Workspace gateway listening on :${port}`);
+  });
+}
+
+void start().catch((error) => {
+  console.error("Kosh gateway startup failed", error);
+  process.exit(1);
 });
