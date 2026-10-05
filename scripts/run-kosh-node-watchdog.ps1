@@ -6,6 +6,7 @@ Set-Location $repoRoot
 $envFile = Join-Path $repoRoot '.env.kosh-node'
 $configPath = Join-Path $env:USERPROFILE '.cloudflared/config.yml'
 $gateway = Join-Path $repoRoot 'apps/gateway/dist/index.js'
+$backupScript = Join-Path $PSScriptRoot 'backup-kosh-node.ps1'
 $logRoot = 'C:\Kosh\logs'
 
 if (-not (Test-Path $envFile)) { throw 'Missing .env.kosh-node. Run setup-kosh-node.ps1 first.' }
@@ -41,7 +42,17 @@ function Start-KoshTunnel {
   return Start-Process -FilePath 'cloudflared.exe' -ArgumentList @('tunnel','--config',$configPath,'run','kosh-node') -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
 }
 
+function Start-KoshBackup {
+  if (-not (Test-Path $backupScript)) { return $null }
+  $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+  $stdout = Join-Path $logRoot "backup-$stamp.out.log"
+  $stderr = Join-Path $logRoot "backup-$stamp.err.log"
+  return Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$backupScript) -WorkingDirectory $repoRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+}
+
 Write-Host 'Kosh Node watchdog started.'
+$lastBackup = [datetime]::MinValue
+$backupProcess = $null
 
 while ($true) {
   $gatewayProcess = $null
@@ -62,6 +73,20 @@ while ($true) {
         if ($response.StatusCode -ne 200) { throw 'unhealthy' }
       } catch {
         throw 'Gateway health check failed.'
+      }
+
+      if ($backupProcess -and $backupProcess.HasExited) {
+        if ($backupProcess.ExitCode -eq 0) { $lastBackup = Get-Date }
+        $backupProcess = $null
+      }
+
+      if (-not $backupProcess -and ((Get-Date) - $lastBackup).TotalHours -ge 6) {
+        $backupProcess = Start-KoshBackup
+        if ($backupProcess) {
+          Write-Host "Kosh repository backup started. PID=$($backupProcess.Id)"
+        } else {
+          $lastBackup = Get-Date
+        }
       }
     }
 
