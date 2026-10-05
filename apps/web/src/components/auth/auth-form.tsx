@@ -47,7 +47,7 @@ export function AuthForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
-  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [recoveryOpen, setRecoveryOpen] = useState(true);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -152,7 +152,7 @@ export function AuthForm() {
     setMode(next);
     setStatus("");
     setAvailability(null);
-    setRecoveryOpen(false);
+    setRecoveryOpen(next === "signin");
   }
 
   return (
