@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID, scrypt as nodeScrypt, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID, scrypt as nodeScrypt, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createIdentityStore } from "./identity-store.js";
 
@@ -10,6 +10,7 @@ const SCRYPT_P = 1;
 const SCRYPT_KEY_LENGTH = 64;
 const SCRYPT_MAXMEM = 64 * 1024 * 1024;
 const RESET_TOKEN_TTL_MS = 20 * 60 * 1000;
+const SIGNED_LINK_MAX_FUTURE_MS = 30 * 60 * 1000;
 
 type JsonObject = Record<string, unknown>;
 
@@ -108,13 +109,44 @@ function tokenHash(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function safeSecretMatches(request: IncomingMessage) {
-  const expected = process.env.WORKSPACE_RECOVERY_ADMIN_SECRET?.trim() ?? "";
-  const supplied = String(request.headers["x-workspace-recovery-secret"] ?? "").trim();
-  if (!expected || !supplied) return false;
-  const a = Buffer.from(expected);
-  const b = Buffer.from(supplied);
+function recoverySecret() {
+  return process.env.WORKSPACE_RECOVERY_ADMIN_SECRET?.trim() ?? "";
+}
+
+function safeTextEqual(left: string, right: string) {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function safeSecretMatches(request: IncomingMessage) {
+  const expected = recoverySecret();
+  const supplied = String(request.headers["x-workspace-recovery-secret"] ?? "").trim();
+  return Boolean(expected && supplied && safeTextEqual(expected, supplied));
+}
+
+function signedLinkSignature(email: string, expiresAtMs: number) {
+  const secret = recoverySecret();
+  if (!secret) return "";
+  return createHmac("sha256", secret)
+    .update(email + "\n" + String(expiresAtMs))
+    .digest("hex");
+}
+
+async function createResetToken(userId: string) {
+  const token = randomBytes(32).toString("base64url");
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + RESET_TOKEN_TTL_MS).toISOString();
+  await store.createIdentityToken({
+    id: randomUUID(),
+    userId,
+    purpose: "reset-password",
+    tokenHash: tokenHash(token),
+    createdAt: now.toISOString(),
+    expiresAt,
+    consumedAt: null
+  });
+  return { token, expiresAt };
 }
 
 function mutationOriginAllowed(
@@ -159,6 +191,47 @@ export async function handleIdentityRecoveryRequest(
     return true;
   }
 
+  if (request.method === "GET" && url.pathname === "/v1/auth/recovery/link") {
+    try {
+      const email = normalizeEmail(url.searchParams.get("email"));
+      const expiresAtMs = Number(url.searchParams.get("exp") ?? 0);
+      const signature = String(url.searchParams.get("sig") ?? "").trim();
+      const now = Date.now();
+      if (
+        !validEmail(email) ||
+        !Number.isFinite(expiresAtMs) ||
+        expiresAtMs <= now ||
+        expiresAtMs > now + SIGNED_LINK_MAX_FUTURE_MS ||
+        !signature
+      ) {
+        throw Object.assign(new Error("invalid_or_expired_recovery_link"), { status: 400 });
+      }
+      const expected = signedLinkSignature(email, expiresAtMs);
+      if (!expected || !safeTextEqual(signature, expected)) {
+        throw Object.assign(new Error("invalid_or_expired_recovery_link"), { status: 400 });
+      }
+
+      const user = await store.findUserByEmail(email);
+      if (!user || user.disabled) {
+        throw Object.assign(new Error("invalid_or_expired_recovery_link"), { status: 400 });
+      }
+
+      const reset = await createResetToken(user.id);
+      const publicOrigin = (
+        process.env.WORKSPACE_RECOVERY_PUBLIC_ORIGIN?.trim() ||
+        "https://tamishra.in/kosh"
+      ).replace(/\/$/, "");
+      const destination = publicOrigin + "/reset-password?token=" + encodeURIComponent(reset.token);
+      response.statusCode = 302;
+      response.setHeader("location", destination);
+      response.setHeader("cache-control", "no-store");
+      response.end();
+    } catch (error) {
+      sendJson(response, errorStatus(error), { error: errorCode(error) }, origin, allowedOrigins);
+    }
+    return true;
+  }
+
   if (request.method === "POST" && url.pathname === "/v1/auth/recovery/issue") {
     if (!safeSecretMatches(request)) {
       sendJson(response, 404, { error: "not_found" }, origin, allowedOrigins);
@@ -176,20 +249,8 @@ export async function handleIdentityRecoveryRequest(
         throw Object.assign(new Error("account_not_found"), { status: 404 });
       }
 
-      const token = randomBytes(32).toString("base64url");
-      const now = new Date();
-      const expiresAt = new Date(now.getTime() + RESET_TOKEN_TTL_MS).toISOString();
-      await store.createIdentityToken({
-        id: randomUUID(),
-        userId: user.id,
-        purpose: "reset-password",
-        tokenHash: tokenHash(token),
-        createdAt: now.toISOString(),
-        expiresAt,
-        consumedAt: null
-      });
-
-      sendJson(response, 201, { token, expiresAt }, origin, allowedOrigins);
+      const reset = await createResetToken(user.id);
+      sendJson(response, 201, reset, origin, allowedOrigins);
     } catch (error) {
       sendJson(response, errorStatus(error), { error: errorCode(error) }, origin, allowedOrigins);
     }
