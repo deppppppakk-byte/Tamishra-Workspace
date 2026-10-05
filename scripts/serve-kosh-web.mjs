@@ -7,6 +7,17 @@ const port = Number(process.env.PORT ?? 3000);
 const root = resolve(process.env.KOSH_WEB_ROOT ?? "apps/web/out");
 const gatewayOrigin = (process.env.KOSH_GATEWAY_ORIGIN ?? "https://tamishra-workspace-api.onrender.com").replace(/\/$/, "");
 
+function normalizeBasePath(value) {
+  let normalized = String(value ?? "/kosh").trim();
+  if (!normalized || normalized === "/") return "/";
+  if (!normalized.startsWith("/")) normalized = `/${normalized}`;
+  return normalized.replace(/\/+$/, "");
+}
+
+const basePath = normalizeBasePath(
+  process.env.KOSH_WEB_BASE_PATH ?? process.env.WORKSPACE_BASE_PATH ?? "/kosh"
+);
+
 const types = new Map([
   [".html", "text/html; charset=utf-8"],
   [".js", "text/javascript; charset=utf-8"],
@@ -34,21 +45,37 @@ function safeCandidate(pathname) {
 }
 
 function resolveFile(pathname) {
-  const direct = safeCandidate(pathname);
-  if (!direct) return null;
-  const candidates = [direct, `${direct}.html`, join(direct, "index.html")];
-  for (const candidate of candidates) {
-    if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
+  const variants = [pathname];
+  if (basePath !== "/") {
+    variants.push(`${basePath}${pathname === "/" ? "" : pathname}`);
+  }
+
+  for (const variant of variants) {
+    const direct = safeCandidate(variant);
+    if (!direct) continue;
+    const candidates = [direct, `${direct}.html`, join(direct, "index.html")];
+    for (const candidate of candidates) {
+      if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
+    }
   }
   return null;
 }
 
-function gatewayPath(url) {
-  if (url.pathname === "/api/workspace") return "/" + url.search;
-  if (url.pathname.startsWith("/api/workspace/")) {
-    return url.pathname.slice("/api/workspace".length) + url.search;
+function stripBasePath(pathname) {
+  if (basePath === "/") return pathname;
+  if (pathname === basePath || pathname === `${basePath}/`) return "/";
+  if (pathname.startsWith(`${basePath}/`)) {
+    return pathname.slice(basePath.length) || "/";
   }
-  return url.pathname + url.search;
+  return null;
+}
+
+function gatewayPath(pathname, search) {
+  if (pathname === "/api/workspace") return "/" + search;
+  if (pathname.startsWith("/api/workspace/")) {
+    return pathname.slice("/api/workspace".length) + search;
+  }
+  return pathname + search;
 }
 
 function shouldProxy(pathname) {
@@ -62,13 +89,15 @@ function shouldProxy(pathname) {
   );
 }
 
-function proxyToGateway(request, response, url) {
-  const target = new URL(gatewayPath(url), gatewayOrigin);
+function proxyToGateway(request, response, pathname, search) {
+  const target = new URL(gatewayPath(pathname, search), gatewayOrigin);
   const transport = target.protocol === "https:" ? httpsRequest : httpRequest;
   const headers = { ...request.headers };
+  const forwardedHost = headers["x-forwarded-host"] ?? request.headers.host ?? "tamishra.in";
   delete headers.host;
-  headers["x-forwarded-host"] = request.headers.host ?? "kosh.tamishra.in";
+  headers["x-forwarded-host"] = forwardedHost;
   headers["x-forwarded-proto"] = "https";
+  headers["x-forwarded-prefix"] = basePath;
 
   const upstream = transport(
     target,
@@ -101,31 +130,50 @@ function proxyToGateway(request, response, url) {
   request.pipe(upstream);
 }
 
+function redirect(response, location) {
+  response.writeHead(302, { location, "cache-control": "no-store" });
+  response.end();
+}
+
 const server = createServer((request, response) => {
   try {
     const url = new URL(request.url ?? "/", "http://kosh.local");
-
-    if (shouldProxy(url.pathname)) {
-      proxyToGateway(request, response, url);
-      return;
-    }
 
     if (url.pathname === "/health") {
       response.writeHead(200, {
         "content-type": "application/json; charset=utf-8",
         "cache-control": "no-store"
       });
-      response.end(JSON.stringify({ service: "kosh-web", status: "ok", gateway: gatewayOrigin }));
+      response.end(JSON.stringify({ service: "kosh-web", status: "ok", gateway: gatewayOrigin, basePath }));
       return;
     }
 
-    if (url.pathname === "/") {
-      response.writeHead(302, { location: "/kosh/", "cache-control": "no-store" });
-      response.end();
+    const pathname = stripBasePath(url.pathname);
+
+    if (pathname === null) {
+      if (url.pathname === "/") {
+        redirect(response, `${basePath}/`);
+        return;
+      }
+      redirect(response, `${basePath}${url.pathname}${url.search}`);
       return;
     }
 
-    const file = resolveFile(url.pathname);
+    if (pathname === "/health") {
+      response.writeHead(200, {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store"
+      });
+      response.end(JSON.stringify({ service: "kosh-web", status: "ok", gateway: gatewayOrigin, basePath }));
+      return;
+    }
+
+    if (shouldProxy(pathname)) {
+      proxyToGateway(request, response, pathname, url.search);
+      return;
+    }
+
+    const file = resolveFile(pathname);
     if (!file) {
       response.writeHead(404, {
         "content-type": "text/plain; charset=utf-8",
@@ -136,7 +184,7 @@ const server = createServer((request, response) => {
     }
 
     const extension = extname(file).toLowerCase();
-    const immutable = url.pathname.startsWith("/_next/static/");
+    const immutable = pathname.startsWith("/_next/static/");
     response.writeHead(200, {
       "content-type": types.get(extension) ?? "application/octet-stream",
       "x-content-type-options": "nosniff",
@@ -153,5 +201,5 @@ const server = createServer((request, response) => {
 });
 
 server.listen(port, "0.0.0.0", () => {
-  console.log(`Kosh web server listening on :${port}; gateway=${gatewayOrigin}`);
+  console.log(`Kosh web server listening on :${port}; basePath=${basePath}; gateway=${gatewayOrigin}`);
 });
