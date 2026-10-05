@@ -14,6 +14,7 @@ $repositoryRoot = Get-EnvValue 'KOSH_REPO_ROOT'
 if (-not $repositoryRoot) { $repositoryRoot = 'C:/Kosh/data/repos' }
 $repositoryRoot = [IO.Path]::GetFullPath($repositoryRoot)
 $backupRoot = 'C:\Kosh\backups'
+$failoverRoot = Get-EnvValue 'KOSH_FAILOVER_SYNC_ROOT'
 $retention = 14
 
 New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
@@ -55,9 +56,11 @@ foreach ($repo in $repos) {
 
   $hash = (Get-FileHash -Algorithm SHA256 -Path $bundle).Hash.ToLowerInvariant()
   $size = (Get-Item $bundle).Length
+  $relativeBundle = ('repositories/{0}/{1}/{2}.bundle' -f $namespace, $slug, $stamp)
   $manifest += [pscustomobject]@{
     repository = "$namespace/$slug"
     bundle = $bundle
+    relativeBundle = $relativeBundle
     sha256 = $hash
     bytes = $size
     createdAt = (Get-Date).ToUniversalTime().ToString('o')
@@ -76,3 +79,30 @@ Write-Host ''
 Write-Host "Kosh backup complete: $($manifest.Count) repository snapshot(s)." -ForegroundColor Green
 Write-Host "Backup root: $backupRoot"
 Write-Host "Manifest:    $manifestPath"
+
+if ($failoverRoot) {
+  try {
+    New-Item -ItemType Directory -Path $failoverRoot -Force | Out-Null
+    foreach ($item in $manifest) {
+      $destination = Join-Path $failoverRoot ($item.relativeBundle -replace '/', [IO.Path]::DirectorySeparatorChar)
+      $destinationDir = Split-Path -Parent $destination
+      New-Item -ItemType Directory -Path $destinationDir -Force | Out-Null
+      $temp = "$destination.partial"
+      Copy-Item -Path $item.bundle -Destination $temp -Force
+      $copiedHash = (Get-FileHash -Algorithm SHA256 -Path $temp).Hash.ToLowerInvariant()
+      if ($copiedHash -ne $item.sha256) {
+        Remove-Item $temp -Force -ErrorAction SilentlyContinue
+        throw "Standby copy checksum failed for $($item.repository)."
+      }
+      Move-Item -Path $temp -Destination $destination -Force
+    }
+
+    $failoverManifestTemp = Join-Path $failoverRoot 'latest-manifest.json.partial'
+    $failoverManifest = Join-Path $failoverRoot 'latest-manifest.json'
+    $manifest | ConvertTo-Json -Depth 4 | Set-Content -Path $failoverManifestTemp -Encoding utf8
+    Move-Item -Path $failoverManifestTemp -Destination $failoverManifest -Force
+    Write-Host "Standby replication: $failoverRoot" -ForegroundColor Green
+  } catch {
+    Write-Warning "Local backup succeeded but standby replication failed: $($_.Exception.Message)"
+  }
+}
