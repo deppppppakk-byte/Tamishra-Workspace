@@ -46,8 +46,7 @@ function relativeTime(value: string) {
   if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  return `${hours}h ago`;
+  return `${Math.round(minutes / 60)}h ago`;
 }
 
 export function KoshCloudWorkspace() {
@@ -57,6 +56,7 @@ export function KoshCloudWorkspace() {
   const [deployments, setDeployments] = useState<CloudDeployment[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [name, setName] = useState("");
   const [image, setImage] = useState("");
@@ -80,9 +80,7 @@ export function KoshCloudWorkspace() {
         throw new Error(payload.error || `Kosh Cloud request failed (${failed.status}).`);
       }
       const nodesPayload = (await nodesResponse.json()) as { nodes?: CloudNode[] };
-      const deploymentsPayload = (await deploymentsResponse.json()) as {
-        deployments?: CloudDeployment[];
-      };
+      const deploymentsPayload = (await deploymentsResponse.json()) as { deployments?: CloudDeployment[] };
       setNodes(nodesPayload.nodes ?? []);
       setDeployments(deploymentsPayload.deployments ?? []);
     } catch (reason) {
@@ -97,6 +95,25 @@ export function KoshCloudWorkspace() {
     const timer = window.setInterval(() => void load(), 15_000);
     return () => window.clearInterval(timer);
   }, [load]);
+
+  async function postAction(path: string, key: string) {
+    setBusy(key);
+    setError("");
+    try {
+      const response = await fetch(base + path, { method: "POST", credentials: "include" });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      if (response.status === 401) {
+        router.replace("/sign-in");
+        return;
+      }
+      if (!response.ok) throw new Error(payload.error || `Kosh Cloud action failed (${response.status}).`);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Kosh Cloud action failed.");
+    } finally {
+      setBusy("");
+    }
+  }
 
   async function createDeployment(event: FormEvent) {
     event.preventDefault();
@@ -125,21 +142,6 @@ export function KoshCloudWorkspace() {
     }
   }
 
-  async function schedule(deploymentId: string) {
-    setError("");
-    try {
-      const response = await fetch(
-        base + `/v1/kosh/cloud/deployments/${encodeURIComponent(deploymentId)}/schedule`,
-        { method: "POST", credentials: "include" }
-      );
-      const payload = (await response.json().catch(() => ({}))) as { error?: string };
-      if (!response.ok) throw new Error(payload.error || "Could not schedule deployment.");
-      await load();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not schedule deployment.");
-    }
-  }
-
   const online = nodes.filter((node) => node.state === "online").length;
   const totalSlots = nodes.reduce((sum, node) => sum + node.totalSlots, 0);
   const usedSlots = nodes.reduce((sum, node) => sum + node.usedSlots, 0);
@@ -154,9 +156,8 @@ export function KoshCloudWorkspace() {
           <p>Our own controller, scheduler and compute nodes.</p>
         </div>
         <div className={styles.headerActions}>
-          <button type="button" onClick={() => void load()} disabled={loading}>
-            Refresh
-          </button>
+          <button type="button" onClick={() => void postAction("/v1/kosh/cloud/reconcile", "reconcile")} disabled={busy === "reconcile"}>Reconcile</button>
+          <button type="button" onClick={() => void load()} disabled={loading}>Refresh</button>
           <Link href="/apps/kosh">Repositories</Link>
         </div>
       </header>
@@ -177,18 +178,28 @@ export function KoshCloudWorkspace() {
           </div>
           <div className={styles.tableWrap}>
             <table>
-              <thead><tr><th>Node</th><th>Region</th><th>Status</th><th>Capacity</th><th>Last heartbeat</th></tr></thead>
+              <thead><tr><th>Node</th><th>Region</th><th>Status</th><th>Capacity</th><th>Last heartbeat</th><th>Control</th></tr></thead>
               <tbody>
-                {nodes.map((node) => (
-                  <tr key={node.id}>
-                    <td><strong>{node.name}</strong><small>{node.architecture}</small></td>
-                    <td>{node.region}</td>
-                    <td><span className={`${styles.badge} ${styles[node.state]}`}>{node.state}</span></td>
-                    <td>{node.usedSlots} / {node.totalSlots}</td>
-                    <td>{relativeTime(node.lastSeenAt)}</td>
-                  </tr>
-                ))}
-                {!nodes.length ? <tr><td colSpan={5} className={styles.empty}>No Kosh Nodes enrolled yet.</td></tr> : null}
+                {nodes.map((node) => {
+                  const key = `node:${node.id}`;
+                  return (
+                    <tr key={node.id}>
+                      <td><strong>{node.name}</strong><small>{node.architecture}</small></td>
+                      <td>{node.region}</td>
+                      <td><span className={`${styles.badge} ${styles[node.state]}`}>{node.state}</span></td>
+                      <td>{node.usedSlots} / {node.totalSlots}</td>
+                      <td>{relativeTime(node.lastSeenAt)}</td>
+                      <td className={styles.actions}>
+                        {node.state === "online" ? (
+                          <button type="button" disabled={busy === key} onClick={() => void postAction(`/v1/kosh/cloud/nodes/${encodeURIComponent(node.id)}/drain`, key)}>Drain</button>
+                        ) : (
+                          <button type="button" disabled={busy === key} onClick={() => void postAction(`/v1/kosh/cloud/nodes/${encodeURIComponent(node.id)}/resume`, key)}>Resume</button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {!nodes.length ? <tr><td colSpan={6} className={styles.empty}>No Kosh Nodes enrolled yet.</td></tr> : null}
               </tbody>
             </table>
           </div>
@@ -213,19 +224,26 @@ export function KoshCloudWorkspace() {
         </div>
         <div className={styles.tableWrap}>
           <table>
-            <thead><tr><th>Service</th><th>Image</th><th>Status</th><th>Node</th><th>Generation</th><th>Route</th><th /></tr></thead>
+            <thead><tr><th>Service</th><th>Image</th><th>Status</th><th>Node</th><th>Generation</th><th>Route</th><th>Control</th></tr></thead>
             <tbody>
-              {deployments.map((deployment) => (
-                <tr key={deployment.id}>
-                  <td><strong>{deployment.name}</strong><small>{deployment.slug}</small></td>
-                  <td className={styles.mono}>{deployment.image}</td>
-                  <td><span className={styles.badge}>{deployment.state}</span></td>
-                  <td>{deployment.nodeId ? deployment.nodeId.slice(0, 8) : "—"}</td>
-                  <td>{deployment.assignmentGeneration}</td>
-                  <td>{deployment.routeUrl ? <a href={deployment.routeUrl} target="_blank" rel="noreferrer">Open</a> : "—"}</td>
-                  <td>{deployment.state === "pending" ? <button type="button" onClick={() => void schedule(deployment.id)}>Schedule</button> : null}</td>
-                </tr>
-              ))}
+              {deployments.map((deployment) => {
+                const key = `deployment:${deployment.id}`;
+                return (
+                  <tr key={deployment.id}>
+                    <td><strong>{deployment.name}</strong><small>{deployment.slug}</small></td>
+                    <td className={styles.mono}>{deployment.image}</td>
+                    <td><span className={styles.badge}>{deployment.state}</span>{deployment.message ? <small>{deployment.message}</small> : null}</td>
+                    <td>{deployment.nodeId ? deployment.nodeId.slice(0, 8) : "—"}</td>
+                    <td>{deployment.assignmentGeneration}</td>
+                    <td>{deployment.routeUrl ? <a href={deployment.routeUrl} target="_blank" rel="noreferrer">Open</a> : "—"}</td>
+                    <td className={styles.actions}>
+                      {deployment.state === "pending" ? <button type="button" disabled={busy === key} onClick={() => void postAction(`/v1/kosh/cloud/deployments/${encodeURIComponent(deployment.id)}/schedule`, key)}>Schedule</button> : null}
+                      {deployment.state !== "stopped" ? <button type="button" disabled={busy === key} onClick={() => void postAction(`/v1/kosh/cloud/deployments/${encodeURIComponent(deployment.id)}/stop`, key)}>Stop</button> : null}
+                      <button type="button" disabled={busy === key} onClick={() => void postAction(`/v1/kosh/cloud/deployments/${encodeURIComponent(deployment.id)}/restart`, key)}>Restart</button>
+                    </td>
+                  </tr>
+                );
+              })}
               {!deployments.length ? <tr><td colSpan={7} className={styles.empty}>No services deployed yet.</td></tr> : null}
             </tbody>
           </table>
