@@ -181,6 +181,13 @@
   background: white;
 }
 
+.signInOptions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .remember {
   display: flex;
   align-items: center;
@@ -191,6 +198,62 @@
 
 .remember input {
   accent-color: #315cf4;
+}
+
+.forgotButton {
+  border: 0;
+  padding: 4px 0;
+  color: #315cf4;
+  background: transparent;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.forgotButton:hover {
+  text-decoration: underline;
+}
+
+.recoveryPanel {
+  border: 1px solid rgba(49, 92, 244, 0.12);
+  border-radius: 14px;
+  padding: 13px;
+  background: rgba(49, 92, 244, 0.045);
+  display: grid;
+  gap: 10px;
+}
+
+.recoveryPanel strong {
+  color: #26344a;
+  font-size: 10px;
+}
+
+.recoveryPanel p {
+  margin: 4px 0 0;
+  color: #6f7b90;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.recoveryPanel small {
+  color: #8b96a8;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.recoveryLink {
+  min-height: 38px;
+  border-radius: 10px;
+  padding: 0 12px;
+  color: #fff;
+  background: #315cf4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  font-size: 9px;
+  font-weight: 850;
 }
 
 .error {
@@ -267,8 +330,11 @@
     padding: 18px;
     border-radius: 20px;
   }
-}
 
+  .signInOptions {
+    align-items: flex-start;
+  }
+}
 
 .addressField {
   min-height: 44px;
