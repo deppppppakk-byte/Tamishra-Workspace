@@ -2,6 +2,10 @@
   "cleanUrls": true,
   "rewrites": [
     {
+      "source": "/api/kosh/:path*",
+      "destination": "https://tamishra.in/api/kosh/:path*"
+    },
+    {
       "source": "/workspace",
       "destination": "/"
     },
