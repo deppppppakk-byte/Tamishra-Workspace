@@ -20,6 +20,8 @@
     "kosh:node:activate": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/activate-kosh-node.ps1",
     "kosh:node:verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-kosh-node.ps1",
     "kosh:node:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/status-kosh-node.ps1",
+    "kosh:node:backup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/backup-kosh-node.ps1",
+    "kosh:node:update": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/update-kosh-node.ps1",
     "kosh:node:autostart": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-kosh-node-autostart.ps1",
     "check:web": "npm run check --workspace @tamishra/web",
     "check:gateway": "npm run check:runtime-packages && npm run check --workspace @tamishra/gateway",
