@@ -39,6 +39,7 @@
 .headerActions {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .headerActions a,
@@ -61,7 +62,8 @@ table button {
 }
 
 .headerActions button:disabled,
-.form button:disabled {
+.form button:disabled,
+table button:disabled {
   opacity: 0.55;
   cursor: default;
 }
@@ -201,6 +203,19 @@ td small {
 .offline {
   background: #fce8e6;
   color: #c5221f;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.actions button {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
 }
 
 .form {
