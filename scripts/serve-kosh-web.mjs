@@ -173,7 +173,8 @@ const server = createServer((request, response) => {
       return;
     }
 
-    const file = resolveFile(pathname);
+    const staticPath = pathname === "/" ? "/kosh" : pathname;
+    const file = resolveFile(staticPath);
     if (!file) {
       response.writeHead(404, {
         "content-type": "text/plain; charset=utf-8",
@@ -184,7 +185,7 @@ const server = createServer((request, response) => {
     }
 
     const extension = extname(file).toLowerCase();
-    const immutable = pathname.startsWith("/_next/static/");
+    const immutable = staticPath.startsWith("/_next/static/");
     response.writeHead(200, {
       "content-type": types.get(extension) ?? "application/octet-stream",
       "x-content-type-options": "nosniff",
