@@ -15,6 +15,24 @@ function New-HexSecret([int]$bytes = 32) {
   return [Convert]::ToHexString($buffer).ToLowerInvariant()
 }
 
+function Set-EnvValue([string]$content, [string]$name, [string]$value) {
+  $escaped = [regex]::Escape($name)
+  if ($content -match "(?m)^$escaped=") {
+    return [regex]::Replace($content, "(?m)^$escaped=.*$", "$name=$value")
+  }
+  return ($content.TrimEnd() + "`r`n$name=$value`r`n")
+}
+
+function Ensure-Secret([string]$content, [string]$name) {
+  $escaped = [regex]::Escape($name)
+  $match = [regex]::Match($content, "(?m)^$escaped=(.*)$")
+  $current = if ($match.Success) { $match.Groups[1].Value.Trim() } else { '' }
+  if (-not $current -or $current -match '^CHANGE_ME') {
+    return Set-EnvValue $content $name (New-HexSecret 32)
+  }
+  return $content
+}
+
 Require-Command node
 Require-Command npm
 Require-Command git
@@ -31,28 +49,45 @@ if (-not (Test-Path $envFile)) {
 }
 
 $content = Get-Content $envFile -Raw
-$content = [regex]::Replace($content, '(?m)^WORKSPACE_IP_HASH_SECRET=.*$', "WORKSPACE_IP_HASH_SECRET=$(New-HexSecret 32)")
-$content = [regex]::Replace($content, '(?m)^KOSH_GIT_TOKEN=.*$', "KOSH_GIT_TOKEN=$(New-HexSecret 32)")
-$content = [regex]::Replace($content, '(?m)^KOSH_RUNNER_TOKEN=.*$', "KOSH_RUNNER_TOKEN=$(New-HexSecret 32)")
+$content = Ensure-Secret $content 'WORKSPACE_IP_HASH_SECRET'
+$content = Ensure-Secret $content 'KOSH_GIT_TOKEN'
+$content = Ensure-Secret $content 'KOSH_RUNNER_TOKEN'
+
+$databaseMatch = [regex]::Match($content, '(?m)^WORKSPACE_DATABASE_URL=(.*)$')
+$databaseValue = if ($databaseMatch.Success) { $databaseMatch.Groups[1].Value.Trim() } else { '' }
+if (-not $databaseValue -or $databaseValue -match '^CHANGE_ME') {
+  if ($env:WORKSPACE_DATABASE_URL) {
+    $databaseValue = $env:WORKSPACE_DATABASE_URL.Trim()
+  } else {
+    Write-Host ''
+    Write-Host 'Kosh needs its PostgreSQL/Neon connection URL.' -ForegroundColor Yellow
+    Write-Host 'Paste it only into this local PowerShell prompt; do not send it in chat.' -ForegroundColor Yellow
+    $secure = Read-Host 'WORKSPACE_DATABASE_URL' -AsSecureString
+    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try {
+      $databaseValue = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+    } finally {
+      [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+    }
+  }
+  if (-not $databaseValue) { throw 'WORKSPACE_DATABASE_URL is required.' }
+  $content = Set-EnvValue $content 'WORKSPACE_DATABASE_URL' $databaseValue
+}
+
 Set-Content -Path $envFile -Value $content -Encoding utf8
 
 New-Item -ItemType Directory -Path 'C:\Kosh\data\repos' -Force | Out-Null
-
-$databaseLine = (Get-Content $envFile | Where-Object { $_ -like 'WORKSPACE_DATABASE_URL=*' } | Select-Object -First 1)
-if (-not $databaseLine -or $databaseLine -match 'CHANGE_ME') {
-  Write-Host ''
-  Write-Host 'Kosh Node files and secrets are prepared.' -ForegroundColor Green
-  Write-Host 'Set WORKSPACE_DATABASE_URL in .env.kosh-node to the PostgreSQL/Neon URL used by Kosh, then run this script again.' -ForegroundColor Yellow
-  exit 2
-}
+New-Item -ItemType Directory -Path 'C:\Kosh\logs' -Force | Out-Null
 
 Write-Host 'Installing exact workspace dependencies...'
 npm ci
+if ($LASTEXITCODE -ne 0) { throw 'npm ci failed.' }
 
 Write-Host 'Building Kosh gateway...'
 npm run kosh:node:build
+if ($LASTEXITCODE -ne 0) { throw 'Kosh Node build failed.' }
 
 Write-Host ''
-Write-Host 'Kosh Node is built.' -ForegroundColor Green
-Write-Host 'Start it with: npm run kosh:node:start'
+Write-Host 'Kosh Node is built and configured.' -ForegroundColor Green
+Write-Host 'Repository root: C:\Kosh\data\repos'
 Write-Host 'Local health endpoint: http://127.0.0.1:4100/health'
