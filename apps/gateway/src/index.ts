@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { handleMeetingRequest } from "./meetings.js";
 import { handleIdentityRequest } from "./identity.js";
+import { handleIdentityRecoveryRequest } from "./identity-recovery.js";
 import { handlePatraRequest } from "./patra.js";
 import { handleDocsRequest } from "./docs.js";
 import { handleFilesRequest } from "./files.js";
@@ -278,6 +279,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   if (await handleContentRequest(request, response, url, origin, allowedOrigins)) return;
   if (await handleAssetsRequest(request, response, url, origin, allowedOrigins)) return;
   if (await handlePatraRequest(request, response, url, origin, allowedOrigins)) return;
+  if (await handleIdentityRecoveryRequest(request, response, url, origin, allowedOrigins)) return;
   if (await handleIdentityRequest(request, response, url, origin, allowedOrigins)) return;
   if (await handleChatRequest(request, response, url, origin, allowedOrigins)) return;
   if (await handleMeetingRequest(request, response, url, origin, allowedOrigins)) return;
