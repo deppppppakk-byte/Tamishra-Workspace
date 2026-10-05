@@ -7,18 +7,61 @@ import { workspaceApi } from "../../lib/workspace-api";
 
 function ResetPasswordForm() {
   const searchParams = useSearchParams();
-  const token = useMemo(() => searchParams.get("token")?.trim() ?? "", [searchParams]);
+  const queryToken = useMemo(() => searchParams.get("token")?.trim() ?? "", [searchParams]);
+  const [recoveryLink, setRecoveryLink] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [done, setDone] = useState(false);
 
+  function tokenFromInput(value: string) {
+    const normalized = value.trim();
+    if (!normalized) return "";
+    try {
+      const parsed = new URL(normalized);
+      return parsed.searchParams.get("token")?.trim() ?? "";
+    } catch {
+      return normalized;
+    }
+  }
+
+  function continueRecovery(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const value = recoveryLink.trim();
+    if (!value) {
+      setStatus("Paste the password-reset link from your recovery email.");
+      return;
+    }
+
+    try {
+      const parsed = new URL(value);
+      if (parsed.pathname.includes("/v1/auth/recovery/link")) {
+        window.location.assign(value);
+        return;
+      }
+      const pastedToken = parsed.searchParams.get("token")?.trim() ?? "";
+      if (pastedToken) {
+        window.location.assign(`/kosh/reset-password?token=${encodeURIComponent(pastedToken)}`);
+        return;
+      }
+    } catch {
+      if (value.length >= 32) {
+        window.location.assign(`/kosh/reset-password?token=${encodeURIComponent(value)}`);
+        return;
+      }
+    }
+
+    setStatus("That recovery link is not valid. Open the latest Kosh reset email and paste its full link here.");
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
+
+    const token = queryToken || tokenFromInput(recoveryLink);
     if (!token) {
-      setStatus("This reset link is incomplete. Request a new password reset link.");
+      setStatus("A valid recovery token is required. Open the reset link from your email first.");
       return;
     }
     if (password.length < 10) {
@@ -48,10 +91,10 @@ function ResetPasswordForm() {
           : "";
       setStatus(
         code === "invalid_or_expired_reset_token"
-          ? "This reset link has expired or has already been used."
+          ? "This reset link has expired or has already been used. Use the latest recovery email."
           : code === "password_too_short"
             ? "Use at least 10 characters for the new password."
-            : "Unable to reset the password. Please request a new reset link."
+            : "Unable to reset the password. Please use a fresh recovery link."
       );
     } finally {
       setBusy(false);
@@ -74,8 +117,36 @@ function ResetPasswordForm() {
               Continue to sign in
             </Link>
           </div>
+        ) : !queryToken ? (
+          <form onSubmit={continueRecovery} style={{ display: "grid", gap: 16 }}>
+            <div style={{ padding: 13, borderRadius: 12, background: "#f3f6ff", color: "#44506a", lineHeight: 1.5 }}>
+              For security, Kosh needs the one-time reset link sent to your account email before it can change your password.
+            </div>
+            <label style={{ display: "grid", gap: 7 }}>
+              <span style={{ fontWeight: 650 }}>Recovery link</span>
+              <input
+                type="text"
+                value={recoveryLink}
+                onChange={(event) => setRecoveryLink(event.target.value)}
+                placeholder="Paste the full reset link from your email"
+                autoComplete="off"
+                required
+                style={{ width: "100%", boxSizing: "border-box", padding: "12px 13px", border: "1px solid #cfd6e2", borderRadius: 11, fontSize: 14 }}
+              />
+            </label>
+            {status && <div role="alert" style={{ padding: 12, borderRadius: 10, background: "#fff3f3", color: "#9b2525" }}>{status}</div>}
+            <button type="submit" style={{ border: 0, borderRadius: 12, padding: "13px 16px", background: "#172033", color: "white", fontWeight: 750, fontSize: 15, cursor: "pointer" }}>
+              Continue from recovery link
+            </button>
+            <Link href="/sign-in" style={{ textAlign: "center", color: "#315cf4", fontWeight: 700, textDecoration: "none" }}>
+              Back to sign in
+            </Link>
+          </form>
         ) : (
           <form onSubmit={submit} style={{ display: "grid", gap: 16 }}>
+            <div style={{ padding: 12, borderRadius: 10, background: "#f0f7f3", color: "#295a3d" }}>
+              Recovery link verified. Enter your new password below.
+            </div>
             <label style={{ display: "grid", gap: 7 }}>
               <span style={{ fontWeight: 650 }}>New password</span>
               <input
@@ -105,7 +176,7 @@ function ResetPasswordForm() {
 
             {status && <div role="alert" style={{ padding: 12, borderRadius: 10, background: "#fff3f3", color: "#9b2525" }}>{status}</div>}
 
-            <button type="submit" disabled={busy || !token} style={{ border: 0, borderRadius: 12, padding: "13px 16px", background: "#172033", color: "white", fontWeight: 750, fontSize: 15, cursor: busy ? "wait" : "pointer", opacity: !token ? .55 : 1 }}>
+            <button type="submit" disabled={busy} style={{ border: 0, borderRadius: 12, padding: "13px 16px", background: "#172033", color: "white", fontWeight: 750, fontSize: 15, cursor: busy ? "wait" : "pointer" }}>
               {busy ? "Resetting…" : "Reset password"}
             </button>
           </form>
