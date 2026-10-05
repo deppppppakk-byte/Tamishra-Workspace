@@ -14,7 +14,6 @@ on:
       - ".env.kosh-online.example"
       - ".env.kosh-node-agent.example"
       - "package.json"
-      - "package-lock.json"
       - ".github/workflows/kosh-online-ci.yml"
   pull_request:
     paths:
@@ -28,7 +27,6 @@ on:
       - ".env.kosh-online.example"
       - ".env.kosh-node-agent.example"
       - "package.json"
-      - "package-lock.json"
       - ".github/workflows/kosh-online-ci.yml"
 
 permissions:
@@ -48,9 +46,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-      - name: Install exact dependencies
-        run: npm ci
+      - name: Install dependencies
+        run: npm install
       - name: Provider independence
         run: npm run check:provider-independence
       - name: Kosh systems contract
