@@ -9,6 +9,7 @@ import { handleContentRequest } from "./content.js";
 import { handleAssetsRequest } from "./assets.js";
 import { handleChatRequest } from "./chat.js";
 import { handleKoshRequest } from "./kosh.js";
+import { handleKoshCloudRequest } from "./kosh-cloud.js";
 import { handleKoshWikiRequest } from "./kosh-wiki.js";
 import { handleKoshPagesAdminRequest } from "./kosh-pages.js";
 import { handleKoshWebhookRequest } from "./kosh-webhooks.js";
@@ -69,6 +70,10 @@ function validateProductionConfiguration() {
     requireProductionValue("KOSH_REPO_ROOT", 2);
     requireProductionValue("KOSH_GIT_TOKEN", 24);
     requireProductionValue("KOSH_RUNNER_TOKEN", 24);
+  }
+  if (process.env.KOSH_CLOUD_ENABLED?.trim().toLowerCase() === "true") {
+    requireProductionValue("WORKSPACE_DATABASE_URL", 12);
+    requireProductionValue("KOSH_CLOUD_NODE_ENROLLMENT_SECRET", 32);
   }
   if (process.env.KOSH_SSH_PUBLIC_HOST?.trim()) {
     requireProductionValue("KOSH_SSH_SERVICE_TOKEN", 24);
@@ -207,7 +212,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       response.setHeader("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
       response.setHeader(
         "access-control-allow-headers",
-        "content-type,authorization,idempotency-key,x-patra-company-provisioning-secret,x-kosh-oauth-resource,x-kosh-plugin-assertion"
+        "content-type,authorization,idempotency-key,x-patra-company-provisioning-secret,x-kosh-oauth-resource,x-kosh-plugin-assertion,x-kosh-cloud-enrollment"
       );
       response.setHeader("vary", "origin");
     }
@@ -221,7 +226,8 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
       status: "ok",
       version: process.env.WORKSPACE_RELEASE_VERSION ?? "0.9.0",
       mode: process.env.WORKSPACE_CORE_ONLY === "true" ? "core" : "full",
-      persistence: process.env.WORKSPACE_DATABASE_URL ? "postgres" : "ephemeral"
+      persistence: process.env.WORKSPACE_DATABASE_URL ? "postgres" : "ephemeral",
+      koshCloud: process.env.KOSH_CLOUD_ENABLED?.trim().toLowerCase() === "true"
     }, origin);
     return;
   }
@@ -245,6 +251,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
   }
 
   if (await handleKoshOAuthRequest(request, response, url)) return;
+  if (await handleKoshCloudRequest(request, response, url, origin, allowedOrigins)) return;
   if (await handleKoshPublicApiRequest(request, response, url, origin, allowedOrigins)) return;
   if (await handleKoshReadinessRequest(request, response, url, origin, allowedOrigins)) return;
   if (await handleKoshProductionRequest(request, response, url, origin, allowedOrigins)) return;
