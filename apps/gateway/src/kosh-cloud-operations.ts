@@ -2,7 +2,6 @@ import postgres from "postgres";
 import type { KoshCloudDeployment, KoshCloudNode } from "./kosh-cloud-store.js";
 
 type Sql = ReturnType<typeof postgres>;
-
 type Row = Record<string, unknown>;
 
 function iso(value: unknown) {
@@ -177,21 +176,25 @@ export class KoshCloudOperations {
   async reconcileOfflineAssignments() {
     const sql = this.requireSql();
     return sql.begin(async (tx) => {
-      const staleNodes = await tx`
+      await tx`
         UPDATE kosh_cloud_nodes
         SET state='offline', used_slots=0, updated_at=NOW()
         WHERE state='online'
           AND last_seen_at < NOW() - INTERVAL '75 seconds'
-        RETURNING id
       `;
-      const nodeIds = staleNodes.map((row) => String(row.id));
-      if (!nodeIds.length) return [] as string[];
+      await tx`
+        UPDATE kosh_cloud_nodes
+        SET used_slots=0, updated_at=NOW()
+        WHERE state='offline' AND used_slots <> 0
+      `;
 
       const deployments = await tx`
         UPDATE kosh_cloud_deployments
         SET state='pending', node_id=NULL, route_url=NULL,
             message='Assigned node became unavailable; Kosh Cloud is rescheduling', updated_at=NOW()
-        WHERE node_id = ANY(${nodeIds})
+        WHERE node_id IN (
+          SELECT id FROM kosh_cloud_nodes WHERE state='offline'
+        )
           AND state IN ('assigned','starting','running','stopping')
         RETURNING id
       `;
