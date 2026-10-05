@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { workspaceApi } from "../../lib/workspace-api";
 
-export default function ResetPasswordPage() {
+function ResetPasswordForm() {
   const searchParams = useSearchParams();
   const token = useMemo(() => searchParams.get("token")?.trim() ?? "", [searchParams]);
   const [password, setPassword] = useState("");
@@ -112,5 +112,19 @@ export default function ResetPasswordPage() {
         )}
       </section>
     </main>
+  );
+}
+
+export default function ResetPasswordPage() {
+  return (
+    <Suspense
+      fallback={
+        <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24 }}>
+          Loading password reset…
+        </main>
+      }
+    >
+      <ResetPasswordForm />
+    </Suspense>
   );
 }
