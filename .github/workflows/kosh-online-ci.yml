@@ -5,24 +5,28 @@ on:
     branches: [main]
     paths:
       - "apps/gateway/**"
+      - "apps/kosh-node-agent/**"
       - "packages/identity/**"
       - "packages/permissions/**"
       - "scripts/assert-provider-independence.mjs"
       - "scripts/assert-kosh-systems.mjs"
       - ".env.kosh-node.example"
       - ".env.kosh-online.example"
+      - ".env.kosh-node-agent.example"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/kosh-online-ci.yml"
   pull_request:
     paths:
       - "apps/gateway/**"
+      - "apps/kosh-node-agent/**"
       - "packages/identity/**"
       - "packages/permissions/**"
       - "scripts/assert-provider-independence.mjs"
       - "scripts/assert-kosh-systems.mjs"
       - ".env.kosh-node.example"
       - ".env.kosh-online.example"
+      - ".env.kosh-node-agent.example"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/kosh-online-ci.yml"
@@ -36,7 +40,7 @@ concurrency:
 
 jobs:
   gateway:
-    name: Gateway online-native gate
+    name: Kosh Cloud controller and node gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -53,5 +57,9 @@ jobs:
         run: npm run check:kosh-systems
       - name: Gateway typecheck
         run: npm run check:gateway
+      - name: Kosh Node Agent typecheck
+        run: npm run check:kosh-node-agent
       - name: Gateway production build
         run: npm run build:gateway
+      - name: Kosh Node Agent build
+        run: npm run build:kosh-node-agent
