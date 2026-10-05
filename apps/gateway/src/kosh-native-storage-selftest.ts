@@ -4,6 +4,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import postgres from "postgres";
+import { bootstrapConfiguredKoshRepositories } from "./kosh-bootstrap.js";
 import { ensureKoshRepositoryPersistence } from "./kosh-repository-persistence.js";
 
 const execFileAsync = promisify(execFile);
@@ -15,7 +16,8 @@ function enabled() {
 
 export async function runKoshNativeStorageSelfTest() {
   if (!enabled()) {
-    return { enabled: false, ok: true, detail: "disabled" } as const;
+    const bootstrap = await bootstrapConfiguredKoshRepositories();
+    return { enabled: false, ok: true, detail: "disabled", bootstrap } as const;
   }
 
   const databaseUrl = process.env.WORKSPACE_DATABASE_URL?.trim();
@@ -129,12 +131,14 @@ export async function runKoshNativeStorageSelfTest() {
       throw new Error("kosh_selftest_snapshot_evidence_missing");
     }
 
+    const bootstrap = await bootstrapConfiguredKoshRepositories();
     return {
       enabled: true,
       ok: true,
       detail: "native_git_postgres_restore_verified",
       commit: restoredSha.slice(0, 12),
-      snapshotBytes: Number(rows[0].size_bytes)
+      snapshotBytes: Number(rows[0].size_bytes),
+      bootstrap
     } as const;
   } finally {
     await sql`
