@@ -61,6 +61,7 @@ export function KoshCloudWorkspace() {
   const [name, setName] = useState("");
   const [image, setImage] = useState("");
   const [port, setPort] = useState("3000");
+  const [exposure, setExposure] = useState<"private" | "public">("private");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -96,11 +97,16 @@ export function KoshCloudWorkspace() {
     return () => window.clearInterval(timer);
   }, [load]);
 
-  async function postAction(path: string, key: string) {
+  async function postAction(path: string, key: string, body?: unknown) {
     setBusy(key);
     setError("");
     try {
-      const response = await fetch(base + path, { method: "POST", credentials: "include" });
+      const response = await fetch(base + path, {
+        method: "POST",
+        credentials: "include",
+        headers: body === undefined ? undefined : { "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body)
+      });
       const payload = (await response.json().catch(() => ({}))) as { error?: string };
       if (response.status === 401) {
         router.replace("/sign-in");
@@ -126,14 +132,34 @@ export function KoshCloudWorkspace() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: name.trim(), image: image.trim(), containerPort: Number(port) })
       });
-      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        deployment?: { id?: string };
+      };
       if (response.status === 401) {
         router.replace("/sign-in");
         return;
       }
       if (!response.ok) throw new Error(payload.error || "Deployment creation failed.");
+      const deploymentId = payload.deployment?.id;
+      if (deploymentId) {
+        const exposureResponse = await fetch(
+          base + `/v1/kosh/cloud/deployments/${encodeURIComponent(deploymentId)}/exposure`,
+          {
+            method: "POST",
+            credentials: "include",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ exposure })
+          }
+        );
+        if (!exposureResponse.ok) {
+          const exposurePayload = (await exposureResponse.json().catch(() => ({}))) as { error?: string };
+          throw new Error(exposurePayload.error || "Deployment created, but exposure policy could not be saved.");
+        }
+      }
       setName("");
       setImage("");
+      setExposure("private");
       await load();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Deployment creation failed.");
@@ -153,7 +179,7 @@ export function KoshCloudWorkspace() {
         <div>
           <div className={styles.eyebrow}>Kosh by Tamishra</div>
           <h1>Kosh Cloud</h1>
-          <p>Our own controller, scheduler and compute nodes.</p>
+          <p>Our own controller, scheduler, relay and compute nodes.</p>
         </div>
         <div className={styles.headerActions}>
           <button type="button" onClick={() => void postAction("/v1/kosh/cloud/reconcile", "reconcile")} disabled={busy === "reconcile"}>Reconcile</button>
@@ -207,12 +233,13 @@ export function KoshCloudWorkspace() {
 
         <section className={styles.panel}>
           <div className={styles.panelTitle}>
-            <div><h2>Deploy a service</h2><p>Kosh schedules the image onto an available node.</p></div>
+            <div><h2>Deploy a service</h2><p>Kosh schedules the image and exposes it through Kosh Relay.</p></div>
           </div>
           <form className={styles.form} onSubmit={createDeployment}>
             <label>Service name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="kosh-gateway" required /></label>
             <label>Container image<input value={image} onChange={(event) => setImage(event.target.value)} placeholder="registry.example.com/kosh:latest" required /></label>
             <label>Container port<input value={port} onChange={(event) => setPort(event.target.value)} inputMode="numeric" required /></label>
+            <label>Exposure<select value={exposure} onChange={(event) => setExposure(event.target.value as "private" | "public")}><option value="private">Private — Workspace admins only</option><option value="public">Public — anyone with the Kosh URL</option></select></label>
             <button type="submit" disabled={creating}>{creating ? "Scheduling…" : "Deploy"}</button>
           </form>
         </section>
@@ -220,14 +247,15 @@ export function KoshCloudWorkspace() {
 
       <section className={styles.panel}>
         <div className={styles.panelTitle}>
-          <div><h2>Deployments</h2><p>Every assignment is fenced with a generation number.</p></div>
+          <div><h2>Deployments</h2><p>Stable relay URLs survive node changes and failover.</p></div>
         </div>
         <div className={styles.tableWrap}>
           <table>
-            <thead><tr><th>Service</th><th>Image</th><th>Status</th><th>Node</th><th>Generation</th><th>Route</th><th>Control</th></tr></thead>
+            <thead><tr><th>Service</th><th>Image</th><th>Status</th><th>Node</th><th>Generation</th><th>Kosh route</th><th>Control</th></tr></thead>
             <tbody>
               {deployments.map((deployment) => {
                 const key = `deployment:${deployment.id}`;
+                const relayUrl = `${base}/v1/kosh/cloud/apps/${encodeURIComponent(deployment.slug)}/`;
                 return (
                   <tr key={deployment.id}>
                     <td><strong>{deployment.name}</strong><small>{deployment.slug}</small></td>
@@ -235,11 +263,13 @@ export function KoshCloudWorkspace() {
                     <td><span className={styles.badge}>{deployment.state}</span>{deployment.message ? <small>{deployment.message}</small> : null}</td>
                     <td>{deployment.nodeId ? deployment.nodeId.slice(0, 8) : "—"}</td>
                     <td>{deployment.assignmentGeneration}</td>
-                    <td>{deployment.routeUrl ? <a href={deployment.routeUrl} target="_blank" rel="noreferrer">Open</a> : "—"}</td>
+                    <td>{deployment.state === "running" ? <a href={relayUrl} target="_blank" rel="noreferrer">Open</a> : "—"}</td>
                     <td className={styles.actions}>
                       {deployment.state === "pending" ? <button type="button" disabled={busy === key} onClick={() => void postAction(`/v1/kosh/cloud/deployments/${encodeURIComponent(deployment.id)}/schedule`, key)}>Schedule</button> : null}
                       {deployment.state !== "stopped" ? <button type="button" disabled={busy === key} onClick={() => void postAction(`/v1/kosh/cloud/deployments/${encodeURIComponent(deployment.id)}/stop`, key)}>Stop</button> : null}
                       <button type="button" disabled={busy === key} onClick={() => void postAction(`/v1/kosh/cloud/deployments/${encodeURIComponent(deployment.id)}/restart`, key)}>Restart</button>
+                      <button type="button" disabled={busy === key} onClick={() => void postAction(`/v1/kosh/cloud/deployments/${encodeURIComponent(deployment.id)}/exposure`, key, { exposure: "private" })}>Private</button>
+                      <button type="button" disabled={busy === key} onClick={() => void postAction(`/v1/kosh/cloud/deployments/${encodeURIComponent(deployment.id)}/exposure`, key, { exposure: "public" })}>Public</button>
                     </td>
                   </tr>
                 );
