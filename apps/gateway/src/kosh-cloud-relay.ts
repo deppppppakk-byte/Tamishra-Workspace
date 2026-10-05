@@ -32,6 +32,7 @@ type RelayDeployment = {
   node_id: string | null;
   assignment_generation: string | number;
   state: string;
+  exposure: "private" | "public";
 };
 
 function cloudEnabled() {
@@ -110,6 +111,26 @@ async function readBody(request: IncomingMessage) {
   return chunks.length ? Buffer.concat(chunks) : Buffer.alloc(0);
 }
 
+async function readSmallJson(request: IncomingMessage) {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buffer.length;
+    if (total > 8 * 1024) throw Object.assign(new Error("payload_too_large"), { status: 413 });
+    chunks.push(buffer);
+  }
+  if (!chunks.length) return {} as Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    throw Object.assign(new Error("invalid_json"), { status: 400 });
+  }
+}
+
 async function requireCloudAdmin(request: IncomingMessage) {
   const identity = await resolveKoshIdentity(request, "repo:read");
   if (!identity) return false;
@@ -121,6 +142,7 @@ async function requireCloudAdmin(request: IncomingMessage) {
 }
 
 let relaySql: ReturnType<typeof postgres> | null = null;
+let exposureReady: Promise<void> | null = null;
 function getRelaySql() {
   const databaseUrl = process.env.WORKSPACE_DATABASE_URL?.trim();
   if (!databaseUrl) {
@@ -130,12 +152,52 @@ function getRelaySql() {
   return relaySql;
 }
 
+async function ensureExposureSchema() {
+  if (!exposureReady) {
+    const database = getRelaySql();
+    exposureReady = database`
+      ALTER TABLE kosh_cloud_deployments
+      ADD COLUMN IF NOT EXISTS exposure TEXT NOT NULL DEFAULT 'private'
+    `.then(() => undefined).catch((error) => {
+      exposureReady = null;
+      throw error;
+    });
+  }
+  await exposureReady;
+}
+
 async function findDeployment(slug: string) {
+  await ensureExposureSchema();
   const database = getRelaySql();
   const rows = await database<RelayDeployment[]>`
-    SELECT id, slug, node_id, assignment_generation, state
+    SELECT id, slug, node_id, assignment_generation, state,
+           CASE WHEN exposure='public' THEN 'public' ELSE 'private' END AS exposure
     FROM kosh_cloud_deployments
     WHERE slug=${slug}
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
+}
+
+async function setExposure(deploymentId: string, exposure: "private" | "public") {
+  await ensureExposureSchema();
+  const database = getRelaySql();
+  const rows = await database<{ id: string; slug: string; exposure: string }[]>`
+    UPDATE kosh_cloud_deployments
+    SET exposure=${exposure}, updated_at=NOW()
+    WHERE id=${deploymentId}
+    RETURNING id, slug, exposure
+  `;
+  return rows[0] ?? null;
+}
+
+async function getExposure(deploymentId: string) {
+  await ensureExposureSchema();
+  const database = getRelaySql();
+  const rows = await database<{ id: string; slug: string; exposure: string }[]>`
+    SELECT id, slug, CASE WHEN exposure='public' THEN 'public' ELSE 'private' END AS exposure
+    FROM kosh_cloud_deployments
+    WHERE id=${deploymentId}
     LIMIT 1
   `;
   return rows[0] ?? null;
@@ -253,35 +315,79 @@ function relayRequest(nodeId: string, payload: Record<string, unknown>) {
   });
 }
 
+function sendJson(response: ServerResponse, status: number, body: unknown) {
+  response.statusCode = status;
+  response.setHeader("content-type", "application/json; charset=utf-8");
+  response.setHeader("cache-control", "no-store");
+  response.setHeader("x-content-type-options", "nosniff");
+  response.end(JSON.stringify(body));
+}
+
 export async function handleKoshCloudRelayHttpRequest(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL
 ) {
-  const match = url.pathname.match(
+  const exposureMatch = url.pathname.match(
+    /^\/v1\/kosh\/cloud\/deployments\/([^/]+)\/exposure$/
+  );
+  const appMatch = url.pathname.match(
     /^\/v1\/kosh\/cloud\/apps\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,99})(\/.*)?$/
   );
-  if (!match) return false;
-
-  response.setHeader("cache-control", "no-store");
-  response.setHeader("x-content-type-options", "nosniff");
+  if (!exposureMatch && !appMatch) return false;
 
   if (!cloudEnabled()) {
-    response.statusCode = 503;
-    response.end("Kosh Cloud is disabled.");
+    sendJson(response, 503, { error: "kosh_cloud_disabled" });
     return true;
   }
-  if (!(await requireCloudAdmin(request))) {
-    response.statusCode = 401;
-    response.end("Kosh Cloud authentication required.");
+
+  if (exposureMatch) {
+    if (!(await requireCloudAdmin(request))) {
+      sendJson(response, 401, { error: "cloud_admin_required" });
+      return true;
+    }
+    try {
+      if (request.method === "GET") {
+        const deployment = await getExposure(exposureMatch[1]);
+        if (!deployment) sendJson(response, 404, { error: "deployment_not_found" });
+        else sendJson(response, 200, { deployment });
+        return true;
+      }
+      if (request.method === "POST" || request.method === "PATCH") {
+        const body = await readSmallJson(request);
+        const exposure = String(body.exposure ?? "").trim().toLowerCase();
+        if (exposure !== "private" && exposure !== "public") {
+          sendJson(response, 400, { error: "invalid_deployment_exposure" });
+          return true;
+        }
+        const deployment = await setExposure(exposureMatch[1], exposure);
+        if (!deployment) sendJson(response, 404, { error: "deployment_not_found" });
+        else sendJson(response, 200, { deployment });
+        return true;
+      }
+      sendJson(response, 405, { error: "method_not_allowed" });
+    } catch (error) {
+      sendJson(response, Number((error as { status?: number }).status ?? 500), {
+        error: error instanceof Error ? error.message : "deployment_exposure_failed"
+      });
+    }
     return true;
   }
+
+  const match = appMatch!;
+  response.setHeader("cache-control", "no-store");
+  response.setHeader("x-content-type-options", "nosniff");
 
   try {
     const deployment = await findDeployment(match[1]);
     if (!deployment) {
       response.statusCode = 404;
       response.end("Kosh deployment not found.");
+      return true;
+    }
+    if (deployment.exposure !== "public" && !(await requireCloudAdmin(request))) {
+      response.statusCode = 401;
+      response.end("Kosh Cloud authentication required.");
       return true;
     }
     if (deployment.state !== "running" || !deployment.node_id) {
@@ -305,6 +411,7 @@ export async function handleKoshCloudRelayHttpRequest(
       response.setHeader(name, value);
     }
     response.setHeader("x-kosh-relay", "v1");
+    response.setHeader("x-kosh-exposure", deployment.exposure);
     const output = relayResponse.bodyBase64
       ? Buffer.from(relayResponse.bodyBase64, "base64")
       : Buffer.alloc(0);
