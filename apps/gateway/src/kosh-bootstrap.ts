@@ -12,6 +12,7 @@ const store = getKoshStore();
 const accessStore = getKoshAccessStore();
 const identityStore = createIdentityStore();
 const repositoryRoot = resolve(process.env.KOSH_REPO_ROOT?.trim() || ".kosh/repos");
+let ownerRetryTimer: ReturnType<typeof setInterval> | null = null;
 
 function validSegment(value: string, maxLength: number) {
   return value.length <= maxLength && /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(value);
@@ -87,7 +88,32 @@ async function ensureRepositoryOwner(repository: { id: string; namespace: string
     await accessStore.bindNamespace({ namespace: repository.namespace, organizationId: candidate.organization_id, createdByUserId: candidate.user_id, createdByName: candidate.display_name });
   }
   await accessStore.putRepositoryGrant({ repositoryId: repository.id, subjectType: "user", subjectId: candidate.user_id, role: "owner", createdByUserId: candidate.user_id, createdByName: candidate.display_name });
+  console.log("Kosh bootstrap repository owner assigned", { repository: repository.namespace + "/" + repository.slug });
   return "owner-assigned" as const;
+}
+
+async function retryPendingOwners() {
+  let pending = 0;
+  for (const item of configuredBootstrapRepositories()) {
+    const repository = await store.get(item.namespace, item.slug);
+    if (!repository) continue;
+    const state = await ensureRepositoryOwner(repository);
+    if (state === "owner-pending") pending += 1;
+  }
+  if (pending === 0 && ownerRetryTimer) {
+    clearInterval(ownerRetryTimer);
+    ownerRetryTimer = null;
+  }
+}
+
+function watchPendingOwners() {
+  if (ownerRetryTimer) return;
+  ownerRetryTimer = setInterval(() => {
+    void retryPendingOwners().catch((error) => {
+      console.warn("Kosh bootstrap owner retry failed", error instanceof Error ? error.message : String(error));
+    });
+  }, 30_000);
+  ownerRetryTimer.unref?.();
 }
 
 export async function bootstrapConfiguredKoshRepositories() {
@@ -95,13 +121,17 @@ export async function bootstrapConfiguredKoshRepositories() {
   if (!configured.length) return [];
   await Promise.all([store.ready(), accessStore.ready(), identityStore.ready()]);
   const ready: Array<{ repository: string; ownership: string }> = [];
+  let pending = false;
   for (const item of configured) {
     let repository = await store.get(item.namespace, item.slug);
     await ensureBareRepository(item.namespace, item.slug);
     if (!repository) {
       repository = await store.create({ namespace: item.namespace, slug: item.slug, name: item.slug, description: item.key === "tamishra/os" ? "Tamishra OS source repository" : `Kosh native repository ${item.key}`, visibility: "private", defaultBranch: "main", state: "ready", cloneHttpUrl: cloneUrl(item.namespace, item.slug) });
     }
-    ready.push({ repository: repository.namespace + "/" + repository.slug, ownership: await ensureRepositoryOwner(repository) });
+    const ownership = await ensureRepositoryOwner(repository);
+    if (ownership === "owner-pending") pending = true;
+    ready.push({ repository: repository.namespace + "/" + repository.slug, ownership });
   }
+  if (pending) watchPendingOwners();
   return ready;
 }
