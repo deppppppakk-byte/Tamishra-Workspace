@@ -4,7 +4,7 @@ import { request as httpRequest } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import WebSocket from "ws";
+import WebSocket, { type RawData } from "ws";
 
 const execFileAsync = promisify(execFile);
 const controller = (process.env.KOSH_CLOUD_CONTROLLER_URL ?? "http://127.0.0.1:4100/v1/kosh/cloud")
@@ -14,7 +14,7 @@ const stateRoot = process.env.KOSH_NODE_STATE_DIR?.trim() || join(homedir(), ".k
 const statePath = join(stateRoot, "identity.json");
 const maxBodyBytes = Math.max(
   1024 * 1024,
-  Math.min(64 * 1024 * 1024, (Number(process.env.KOSH_CLOUD_RELAY_MAX_BODY_MB ?? 8) || 8) * 1024 * 1024)
+  Math.min(64 * 1024 * 1024, Math.floor((Number(process.env.KOSH_CLOUD_RELAY_MAX_BODY_MB ?? 8) || 8) * 1024 * 1024))
 );
 const maxInflight = Math.max(1, Math.min(64, Number(process.env.KOSH_CLOUD_RELAY_MAX_INFLIGHT ?? 16) || 16));
 
@@ -128,7 +128,7 @@ async function proxyRequest(message: RelayRequest): Promise<RelayResponse> {
         headers: {
           ...(message.headers ?? {}),
           host: `127.0.0.1:${port}`,
-          "content-length": body.length ? String(body.length) : undefined
+          ...(body.length ? { "content-length": String(body.length) } : {})
         }
       },
       (upstream) => {
@@ -167,7 +167,7 @@ function send(websocket: WebSocket, response: RelayResponse) {
   if (websocket.readyState === WebSocket.OPEN) websocket.send(JSON.stringify(response));
 }
 
-function handleMessage(websocket: WebSocket, raw: WebSocket.RawData) {
+function handleMessage(websocket: WebSocket, raw: RawData) {
   let message: RelayRequest;
   try {
     message = JSON.parse(raw.toString()) as RelayRequest;
