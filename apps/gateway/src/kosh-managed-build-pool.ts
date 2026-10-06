@@ -8,8 +8,10 @@ const runnerStore = getKoshRunnerControlStore();
 const automation = automationStore();
 
 type BuildPoolKind = "windows" | "android";
-
 type Identity = NonNullable<Awaited<ReturnType<typeof resolveKoshIdentity>>>;
+
+let reconcileTimer: ReturnType<typeof setInterval> | null = null;
+let reconciling = false;
 
 function json(response: ServerResponse, status: number, body: unknown, origin: string | undefined, allowed: ReadonlySet<string>) {
   response.statusCode = status;
@@ -98,6 +100,38 @@ export async function getKoshManagedBuildPoolStatus() {
   };
 }
 
+export async function reconcileKoshManagedBuildPool() {
+  if (reconciling) return { skipped: "already_running" as const };
+  reconciling = true;
+  try {
+    const requeued = await automation.requeueExpiredJobs();
+    return {
+      skipped: null,
+      status: await getKoshManagedBuildPoolStatus(),
+      recoveredJobs: requeued.map((job) => job.id)
+    };
+  } finally {
+    reconciling = false;
+  }
+}
+
+function startAutomaticReconcile() {
+  if (reconcileTimer) return;
+  if (process.env.KOSH_MANAGED_BUILD_RECONCILE_ENABLED?.trim().toLowerCase() === "false") return;
+  const intervalMs = Math.max(
+    10_000,
+    Math.min(5 * 60_000, Number(process.env.KOSH_MANAGED_BUILD_RECONCILE_MS) || 30_000)
+  );
+  reconcileTimer = setInterval(() => {
+    void reconcileKoshManagedBuildPool().catch((error) => {
+      console.error("Kosh managed build pool reconcile failed", error);
+    });
+  }, intervalMs);
+  reconcileTimer.unref?.();
+}
+
+startAutomaticReconcile();
+
 export async function handleKoshManagedBuildPoolRequest(
   request: IncomingMessage,
   response: ServerResponse,
@@ -143,11 +177,10 @@ export async function handleKoshManagedBuildPoolRequest(
       json(response, 403, { error: "origin_not_allowed" }, origin, allowedOrigins);
       return true;
     }
-    const requeued = await automation.requeueExpiredJobs();
+    const result = await reconcileKoshManagedBuildPool();
     json(response, 202, {
-      status: await getKoshManagedBuildPoolStatus(),
-      recoveredJobs: requeued.map((job) => job.id),
-      note: "Queued builds are preserved until current managed capacity is available. Outdated workers are drained before receiving new work."
+      ...result,
+      note: "Queued builds are preserved until current managed capacity is available. Outdated workers are identified for draining and replacement."
     }, origin, allowedOrigins);
     return true;
   }
