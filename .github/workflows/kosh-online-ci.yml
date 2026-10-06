@@ -70,6 +70,28 @@ jobs:
           node-version: "22"
       - name: Install dependencies
         run: npm install
+      - name: Builder PowerShell syntax
+        shell: pwsh
+        run: |
+          $files = @(
+            "scripts/setup-kosh-windows-builder.ps1",
+            "scripts/start-kosh-windows-builder.ps1",
+            "scripts/setup-kosh-android-builder.ps1",
+            "scripts/start-kosh-android-builder.ps1"
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file: $($_.Message)" }
+              throw "PowerShell syntax validation failed for $file"
+            }
+          }
       - name: Provider independence
         run: npm run check:provider-independence
       - name: Kosh systems contract
