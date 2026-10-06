@@ -36,6 +36,22 @@ export function KoshBuildHub() {
 
         <article className={styles.panel}>
           <div className={styles.panelTitle}>
+            <div><strong>Production Readiness</strong><span>Live blocker and certification checks.</span></div>
+          </div>
+          <p className={styles.hint}>Check managed build capacity, repository history, EXE/APK/AAB packages and stable releases. Kosh only shows READY when the real production requirements pass.</p>
+          <Link className={styles.primary} href="/apps/kosh/build/readiness">Open Production Readiness</Link>
+        </article>
+
+        <article className={styles.panel}>
+          <div className={styles.panelTitle}>
+            <div><strong>Import Repository</strong><span>Move Git history into Kosh from the browser.</span></div>
+          </div>
+          <p className={styles.hint}>Import an approved HTTPS Git source into the selected Kosh repository. Private source credentials are referenced from Kosh Secrets.</p>
+          <Link className={styles.primary} href={query ? `/apps/kosh/migrate?${query}` : "/apps/kosh/migrate"}>Open Repository Import</Link>
+        </article>
+
+        <article className={styles.panel}>
+          <div className={styles.panelTitle}>
             <div><strong>Windows Advanced</strong><span>EXE, DLL and Windows release packages.</span></div>
           </div>
           <p className={styles.hint}>Choose a specific CMake/MSVC, .NET, Go, Rust, Flutter Windows, Electron or kavYN 2D build preset.</p>
