@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest } from "node:http";
 import { homedir, hostname, arch } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -22,7 +22,7 @@ const proxyHost = process.env.KOSH_NODE_PROXY_HOST?.trim() || "127.0.0.1";
 const stateRoot = process.env.KOSH_NODE_STATE_DIR?.trim() || join(homedir(), ".kosh", "node-agent");
 const statePath = join(stateRoot, "identity.json");
 
-const capabilities = ["docker", "http-containers", "git"];
+const capabilities = ["docker", "http-containers", "git", "kosh-source-build"];
 
 type NodeIdentity = { nodeId: string; nodeToken: string };
 type Assignment = {
@@ -34,6 +34,23 @@ type Assignment = {
   state: "assigned" | "starting" | "running" | "stopping";
   nodeId: string;
   assignmentGeneration: number;
+};
+
+type SourceCheckout = {
+  source: {
+    namespace: string;
+    repositorySlug: string;
+    cloneHttpUrl: string;
+    commitSha: string;
+    dockerfilePath: string;
+    contextPath: string;
+    healthPath: string;
+    revision: number;
+  };
+  checkoutCredential: {
+    token: string;
+    expiresAt: string;
+  };
 };
 
 type ApiResult<T> = T & { error?: string };
@@ -48,7 +65,7 @@ let identity: NodeIdentity | null = null;
 let stopping = false;
 
 function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
 async function docker(args: string[], timeout = 120_000) {
@@ -225,6 +242,84 @@ async function report(
   });
 }
 
+async function sourceCheckout(assignment: Assignment) {
+  const current = await ensureIdentity();
+  return api<SourceCheckout>(
+    `/nodes/${encodeURIComponent(current.nodeId)}/deployments/${encodeURIComponent(assignment.id)}/source?generation=${assignment.assignmentGeneration}`,
+    { nodeToken: current.nodeToken }
+  );
+}
+
+function pathInside(root: string, requested: string) {
+  const output = resolve(root, requested);
+  const prefix = root.endsWith(sep) ? root : root + sep;
+  if (output !== root && !output.startsWith(prefix)) throw new Error("deploy_build_path_outside_workspace");
+  return output;
+}
+
+function localImageTag(assignment: Assignment) {
+  return `kosh-local/${assignment.id.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-")}:g${assignment.assignmentGeneration}`;
+}
+
+async function buildSourceImage(assignment: Assignment, checkout: SourceCheckout) {
+  const buildRoot = join(stateRoot, "builds");
+  const workspace = join(buildRoot, `${assignment.id}-${assignment.assignmentGeneration}`);
+  await mkdir(buildRoot, { recursive: true });
+  await rm(workspace, { recursive: true, force: true });
+
+  const authHeader = "Authorization: Basic " + Buffer.from(`kosh-runner:${checkout.checkoutCredential.token}`).toString("base64");
+  const cloneEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "http.extraHeader",
+    GIT_CONFIG_VALUE_0: authHeader
+  };
+
+  try {
+    await execFileAsync("git", ["clone", "--no-checkout", "--filter=blob:none", checkout.source.cloneHttpUrl, workspace], {
+      env: cloneEnv,
+      timeout: 5 * 60_000,
+      maxBuffer: 16 * 1024 * 1024,
+      encoding: "utf8"
+    });
+    await execFileAsync("git", ["checkout", "--detach", checkout.source.commitSha], {
+      cwd: workspace,
+      env: cloneEnv,
+      timeout: 2 * 60_000,
+      maxBuffer: 16 * 1024 * 1024,
+      encoding: "utf8"
+    });
+
+    const dockerfile = pathInside(workspace, checkout.source.dockerfilePath);
+    const context = pathInside(workspace, checkout.source.contextPath);
+    const image = localImageTag(assignment);
+    await docker(["build", "--pull", "-f", dockerfile, "-t", image, context], 20 * 60_000);
+    return image;
+  } finally {
+    await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+async function waitForHealth(port: number, path: string, timeoutMs = 90_000) {
+  const deadline = Date.now() + timeoutMs;
+  let last = "health_check_timeout";
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+        redirect: "manual",
+        signal: AbortSignal.timeout(3_000)
+      });
+      if (response.status >= 200 && response.status < 400) return;
+      last = `health_http_${response.status}`;
+    } catch (error) {
+      last = error instanceof Error ? error.message : "health_request_failed";
+    }
+    await sleep(2_000);
+  }
+  throw new Error(last);
+}
+
 async function ensureRunning(assignment: Assignment) {
   let containerId = await findContainer(assignment);
   if (containerId && (await isContainerRunning(containerId))) {
@@ -243,7 +338,17 @@ async function ensureRunning(assignment: Assignment) {
   await report(assignment, "starting", null);
   try {
     if (containerId) await docker(["rm", "-f", containerId], 30_000).catch(() => undefined);
-    await docker(["pull", assignment.image], 5 * 60_000);
+
+    let image = assignment.image;
+    let healthPath: string | null = null;
+    if (assignment.image.startsWith("kosh-source://")) {
+      const checkout = await sourceCheckout(assignment);
+      healthPath = checkout.source.healthPath || "/";
+      image = await buildSourceImage(assignment, checkout);
+    } else {
+      await docker(["pull", assignment.image], 5 * 60_000);
+    }
+
     containerId = await docker(
       [
         "run",
@@ -260,11 +365,12 @@ async function ensureRunning(assignment: Assignment) {
         `kosh.assignment.generation=${assignment.assignmentGeneration}`,
         "-p",
         `127.0.0.1::${assignment.containerPort}`,
-        assignment.image
+        image
       ],
       120_000
     );
     const port = await hostPort(containerId, assignment.containerPort);
+    if (healthPath) await waitForHealth(port, healthPath);
     routes.set(assignment.id, { port, generation: assignment.assignmentGeneration });
     await report(
       assignment,
@@ -274,10 +380,12 @@ async function ensureRunning(assignment: Assignment) {
     console.log("Kosh deployment running", {
       deployment: assignment.slug,
       generation: assignment.assignmentGeneration,
-      localPort: port
+      localPort: port,
+      sourceBuild: assignment.image.startsWith("kosh-source://")
     });
   } catch (error) {
     routes.delete(assignment.id);
+    if (containerId) await docker(["rm", "-f", containerId], 45_000).catch(() => undefined);
     await report(
       assignment,
       "failed",
