@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { resolveKoshIdentity } from "./kosh-auth.js";
 import { getKoshCloudStore } from "./kosh-cloud-store.js";
+import { koshDeployDomainStatus, koshDeployHostname, koshDeployPublicUrl } from "./kosh-deploy-domain.js";
 import { failKoshDeployRevision } from "./kosh-deploy-failure.js";
 import { getKoshDeployStore } from "./kosh-deploy-store.js";
 import { getKoshStore } from "./kosh-store.js";
@@ -124,6 +125,8 @@ async function presentService(service: Awaited<ReturnType<typeof deploy.getServi
   const revisions = await deploy.listRevisions(service.id);
   return {
     ...service,
+    hostname: koshDeployHostname(service.slug),
+    publicUrl: koshDeployPublicUrl(service.slug),
     activeRevision: revisions.find((item) => item.id === service.activeRevisionId) ?? null,
     pendingRevision: revisions.find((item) => item.id === service.pendingRevisionId) ?? null,
     revisions
@@ -184,7 +187,8 @@ async function createDeployRevision(identity: Identity, body: JsonBody, rollback
     const scheduled = await cloud.scheduleDeployment(cloudDeployment.id);
     return {
       service: await presentService(await deploy.getService(serviceSlug)),
-      deployment: scheduled ?? cloudDeployment
+      deployment: scheduled ?? cloudDeployment,
+      domain: koshDeployDomainStatus()
     };
   } catch (error) {
     await failKoshDeployRevision(created.revision.id).catch(() => undefined);
@@ -209,7 +213,11 @@ export async function handleKoshDeployRequest(
       const services = await deploy.listServices();
       const output = [];
       for (const service of services) output.push(await presentService(service));
-      json(response, 200, { product: "Kosh Deploy", services: output }, origin, allowedOrigins);
+      json(response, 200, {
+        product: "Kosh Deploy",
+        domain: koshDeployDomainStatus(),
+        services: output
+      }, origin, allowedOrigins);
       return true;
     }
 
@@ -229,7 +237,10 @@ export async function handleKoshDeployRequest(
       if (!identity) return true;
       const service = await deploy.getService(revisionsMatch[1]);
       if (!service) throw Object.assign(new Error("deploy_service_not_found"), { status: 404 });
-      json(response, 200, { service: await presentService(service) }, origin, allowedOrigins);
+      json(response, 200, {
+        domain: koshDeployDomainStatus(),
+        service: await presentService(service)
+      }, origin, allowedOrigins);
       return true;
     }
 
