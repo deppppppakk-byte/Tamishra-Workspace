@@ -71,7 +71,10 @@ export async function koshStorageLimits(repositoryId: string) {
     policyId: policy?.id ?? null,
     maxTotalBytes: boundedNumber(policy?.payload.maxTotalBytes, fallbackTotal, 1024 ** 3, 10 * 1024 ** 4),
     maxArtifactBytes: boundedNumber(policy?.payload.maxArtifactBytes, 1024 ** 3, 1024 ** 2, 10 * 1024 ** 3),
-    maxPackageBytes: boundedNumber(policy?.payload.maxPackageBytes, 64 * 1024 ** 2, 1024 ** 2, 2 * 1024 ** 3),
+    // Desktop installers and CAD/engineering binaries routinely exceed 64 MB.
+    // Keep individual Kosh packages at 512 MB by default, with a policy ceiling
+    // of 2 GB when a repository explicitly opts in.
+    maxPackageBytes: boundedNumber(policy?.payload.maxPackageBytes, 512 * 1024 ** 2, 1024 ** 2, 2 * 1024 ** 3),
     maxReleaseBytes: boundedNumber(policy?.payload.maxReleaseBytes, 2 * 1024 ** 3, 1024 ** 2, 20 * 1024 ** 3),
     maxBackupBytes: boundedNumber(policy?.payload.maxBackupBytes, 2 * 1024 ** 3, 16 * 1024 ** 2, 16 * 1024 ** 3)
   };
