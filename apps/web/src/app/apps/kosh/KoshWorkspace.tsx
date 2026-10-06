@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   koshModules,
@@ -42,7 +41,6 @@ function koshRequestError(status: number, fallback: string, error?: string) {
 }
 
 export function KoshWorkspace() {
-  const router = useRouter();
   const [repositories, setRepositories] = useState<KoshRepository[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -59,8 +57,9 @@ export function KoshWorkspace() {
   const base = useMemo(apiBase, []);
 
   const requireSignIn = useCallback(() => {
-    router.replace("/sign-in");
-  }, [router]);
+    const returnTo = window.location.pathname + window.location.search;
+    window.location.assign("/kosh/sign-in?return_to=" + encodeURIComponent(returnTo));
+  }, []);
 
   const loadGatewayHealth = useCallback(async () => {
     try {
