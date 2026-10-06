@@ -17,18 +17,26 @@ type RepositoryListResponse = {
   gitStorage?: string;
 };
 
+type GatewayHealth = {
+  service?: string;
+  status?: string;
+  version?: string;
+  mode?: string;
+  persistence?: string;
+};
+
 function apiBase() {
   const configured =
     process.env.NEXT_PUBLIC_WORKSPACE_API_BASE?.trim() ||
     process.env.NEXT_PUBLIC_WORKSPACE_GATEWAY_ORIGIN?.trim() ||
-    "http://localhost:4100";
+    "/api/workspace";
 
   return configured.replace(/\/$/, "");
 }
 
 function koshRequestError(status: number, fallback: string, error?: string) {
   if (status === 502 || status === 503 || status === 504) {
-    return "Kosh Node is offline. Start the Kosh Node host PC, then retry.";
+    return "Kosh online gateway is temporarily unavailable. Retry in a moment.";
   }
   return error || fallback;
 }
@@ -42,6 +50,7 @@ export function KoshWorkspace() {
   const [error, setError] = useState("");
   const [persistence, setPersistence] = useState("");
   const [gitStorage, setGitStorage] = useState("");
+  const [gateway, setGateway] = useState<GatewayHealth | null>(null);
   const [namespace, setNamespace] = useState("tamishra");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -52,6 +61,20 @@ export function KoshWorkspace() {
   const requireSignIn = useCallback(() => {
     router.replace("/sign-in");
   }, [router]);
+
+  const loadGatewayHealth = useCallback(async () => {
+    try {
+      const response = await fetch(base + "/health", {
+        credentials: "include",
+        cache: "no-store"
+      });
+      if (!response.ok) return;
+      const payload = (await response.json()) as GatewayHealth;
+      setGateway(payload);
+    } catch {
+      setGateway(null);
+    }
+  }, [base]);
 
   const loadRepositories = useCallback(async () => {
     setLoading(true);
@@ -80,15 +103,19 @@ export function KoshWorkspace() {
       setPersistence(payload.persistence ?? "");
       setGitStorage(payload.gitStorage ?? "");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not connect to Kosh Node.");
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not connect to the Kosh online gateway."
+      );
     } finally {
       setLoading(false);
     }
   }, [base, requireSignIn]);
 
   useEffect(() => {
-    void loadRepositories();
-  }, [loadRepositories]);
+    void Promise.all([loadGatewayHealth(), loadRepositories()]);
+  }, [loadGatewayHealth, loadRepositories]);
 
   async function createRepository(event: FormEvent) {
     event.preventDefault();
@@ -113,9 +140,12 @@ export function KoshWorkspace() {
         return;
       }
 
-      const payload = (await response.json().catch(() => ({}))) as KoshRepository | { error?: string };
+      const payload = (await response.json().catch(() => ({}))) as
+        | KoshRepository
+        | { error?: string };
       if (!response.ok) {
-        const payloadError = "error" in payload && payload.error ? payload.error : undefined;
+        const payloadError =
+          "error" in payload && payload.error ? payload.error : undefined;
         throw new Error(
           koshRequestError(response.status, "Repository creation failed.", payloadError)
         );
@@ -141,6 +171,7 @@ export function KoshWorkspace() {
   }
 
   const activeModules = koshModules.filter((module) => module.status === "active").length;
+  const gatewayOnline = gateway?.status === "ok";
 
   return (
     <main className={styles.shell}>
@@ -165,8 +196,8 @@ export function KoshWorkspace() {
         </nav>
 
         <div className={styles.sidebarNote}>
-          <strong>Independent core</strong>
-          <p>Standard Git stays compatible. Hosting, metadata, reviews, automation and storage belong to Kosh.</p>
+          <strong>Online-native Kosh</strong>
+          <p>Git stays compatible while Kosh provides repository hosting, reviews, automation, releases and platform operations.</p>
         </div>
       </aside>
 
@@ -183,25 +214,43 @@ export function KoshWorkspace() {
 
         <section id="overview" className={styles.hero}>
           <div>
-            <span className={styles.badge}>Git-compatible foundation</span>
+            <span className={styles.badge}>Online Git-compatible platform</span>
             <h2>A development platform built the Kosh way.</h2>
             <p>
-              Kosh connects repository work through Flow, connects systems through
-              Mesh, and turns live health plus impact into action through Pulse.
+              Kosh connects repository work through Flow, systems through Mesh,
+              and live health plus impact through Pulse — all from the online gateway.
             </p>
           </div>
           <div className={styles.heroStats}>
             <div><strong>{loading ? "—" : repositories.length}</strong><span>repositories</span></div>
             <div><strong>{activeModules}</strong><span>active core modules</span></div>
-            <div><strong>Git</strong><span>standard protocol</span></div>
+            <div><strong>{gatewayOnline ? "Online" : "Checking"}</strong><span>gateway</span></div>
           </div>
         </section>
+
+        {gatewayOnline && (
+          <section className={styles.infrastructure}>
+            <div>
+              <p className={styles.eyebrow}>KOSH ONLINE</p>
+              <h2>Gateway connected.</h2>
+              <p>
+                Kosh is running through Tamishra&apos;s online gateway on Vercel.
+                No local host PC is required to open or manage repositories.
+              </p>
+            </div>
+            <dl>
+              <div><dt>Status</dt><dd>Online</dd></div>
+              <div><dt>Gateway</dt><dd>{gateway?.version || "0.9.0"}</dd></div>
+              <div><dt>Mode</dt><dd>{gateway?.mode || "core"}</dd></div>
+            </dl>
+          </section>
+        )}
 
         {error && (
           <div className={styles.error}>
             <strong>Kosh status</strong>
             <span>{error}</span>
-            <button onClick={() => void loadRepositories()}>Retry</button>
+            <button onClick={() => void Promise.all([loadGatewayHealth(), loadRepositories()])}>Retry</button>
           </div>
         )}
 
@@ -278,94 +327,19 @@ export function KoshWorkspace() {
                     </div>
                   )}
                   <div className={styles.repoMeta}>
-                    <Link
-                      className={styles.back}
-                      href={
-                        "/apps/kosh/repository?namespace=" +
-                        encodeURIComponent(repository.namespace) +
-                        "&slug=" +
-                        encodeURIComponent(repository.slug)
-                      }
-                    >
-                      Open repository →
-                    </Link>
-                    <Link
-                      className={styles.back}
-                      href={
-                        "/apps/kosh/wiki?namespace=" +
-                        encodeURIComponent(repository.namespace) +
-                        "&slug=" +
-                        encodeURIComponent(repository.slug)
-                      }
-                    >
-                      Wiki →
-                    </Link>
-                    <Link
-                      className={styles.back}
-                      href={
-                        "/apps/kosh/pages?namespace=" +
-                        encodeURIComponent(repository.namespace) +
-                        "&slug=" +
-                        encodeURIComponent(repository.slug)
-                      }
-                    >
-                      Pages →
-                    </Link>
-                    <Link
-                      className={styles.back}
-                      href={
-                        "/apps/kosh/webhooks?namespace=" +
-                        encodeURIComponent(repository.namespace) +
-                        "&slug=" +
-                        encodeURIComponent(repository.slug)
-                      }
-                    >
-                      Integrations →
-                    </Link>
-                    <Link
-                      className={styles.back}
-                      href={
-                        "/apps/kosh/systems?namespace=" +
-                        encodeURIComponent(repository.namespace) +
-                        "&slug=" +
-                        encodeURIComponent(repository.slug)
-                      }
-                    >
-                      Systems →
-                    </Link>
-                    <Link
-                      className={styles.back}
-                      href={
-                        "/apps/kosh/readiness?namespace=" +
-                        encodeURIComponent(repository.namespace) +
-                        "&slug=" +
-                        encodeURIComponent(repository.slug)
-                      }
-                    >
-                      Readiness →
-                    </Link>
-                    <Link
-                      className={styles.back}
-                      href={
-                        "/apps/kosh/operations?namespace=" +
-                        encodeURIComponent(repository.namespace) +
-                        "&slug=" +
-                        encodeURIComponent(repository.slug)
-                      }
-                    >
-                      Operations →
-                    </Link>
+                    <Link className={styles.back} href={`/apps/kosh/repository?namespace=${encodeURIComponent(repository.namespace)}&slug=${encodeURIComponent(repository.slug)}`}>Open repository →</Link>
+                    <Link className={styles.back} href={`/apps/kosh/wiki?namespace=${encodeURIComponent(repository.namespace)}&slug=${encodeURIComponent(repository.slug)}`}>Wiki →</Link>
+                    <Link className={styles.back} href={`/apps/kosh/pages?namespace=${encodeURIComponent(repository.namespace)}&slug=${encodeURIComponent(repository.slug)}`}>Pages →</Link>
+                    <Link className={styles.back} href={`/apps/kosh/systems?namespace=${encodeURIComponent(repository.namespace)}&slug=${encodeURIComponent(repository.slug)}`}>Systems →</Link>
                   </div>
-                  <small>
-                    git clone {repository.cloneSshUrl || repository.cloneHttpUrl}
-                  </small>
+                  <small>git clone {repository.cloneSshUrl || repository.cloneHttpUrl}</small>
                 </article>
               ))}
             </div>
           ) : (
             <div className={styles.empty}>
               <strong>No repositories yet.</strong>
-              <p>Create the first real Kosh repository. No demo projects are inserted automatically.</p>
+              <p>Create the first Kosh repository on the online gateway.</p>
               <button className={styles.primary} onClick={() => setCreateOpen(true)}>Create first repository</button>
             </div>
           )}
@@ -389,15 +363,16 @@ export function KoshWorkspace() {
         <section id="infrastructure" className={styles.infrastructure}>
           <div>
             <p className={styles.eyebrow}>INFRASTRUCTURE</p>
-            <h2>Kosh Node keeps repository storage under your control.</h2>
+            <h2>Kosh is online-native.</h2>
             <p>
-              Git repositories use persistent Git-native storage on the Kosh Node. Database metadata uses PostgreSQL.
-              Kosh infrastructure remains provider-independent so the node can move without changing repository URLs.
+              The browser talks to the Tamishra domain, which routes Kosh requests to the managed online gateway.
+              Git remains standard while Kosh controls repository metadata, access, reviews, automation and platform services.
             </p>
           </div>
           <dl>
-            <div><dt>Metadata</dt><dd>{persistence || "Kosh PostgreSQL"}</dd></div>
-            <div><dt>Git objects</dt><dd>{gitStorage || "Kosh Node persistent storage"}</dd></div>
+            <div><dt>Gateway</dt><dd>{gatewayOnline ? "Online" : "Connecting"}</dd></div>
+            <div><dt>Metadata</dt><dd>{persistence || gateway?.persistence || "Kosh metadata store"}</dd></div>
+            <div><dt>Git objects</dt><dd>{gitStorage || "Kosh repository storage"}</dd></div>
             <div><dt>Protocol</dt><dd>Git smart HTTP</dd></div>
           </dl>
         </section>
