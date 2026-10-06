@@ -45,7 +45,7 @@
 .headerActions a,
 .headerActions button,
 .form button,
-table button {
+.tableWrap button {
   min-height: 38px;
   border: 1px solid #dadce0;
   border-radius: 8px;
@@ -63,7 +63,7 @@ table button {
 
 .headerActions button:disabled,
 .form button:disabled,
-table button:disabled {
+.tableWrap button:disabled {
   opacity: 0.55;
   cursor: default;
 }
@@ -146,33 +146,33 @@ table button:disabled {
   overflow-x: auto;
 }
 
-table {
+.tableWrap table {
   width: 100%;
   border-collapse: collapse;
   font-size: 14px;
 }
 
-th,
-td {
+.tableWrap th,
+.tableWrap td {
   padding: 13px 16px;
   border-bottom: 1px solid #edf0f2;
   text-align: left;
   vertical-align: middle;
 }
 
-th {
+.tableWrap th {
   color: #5f6368;
   font-size: 12px;
   font-weight: 600;
   background: #fbfcfd;
 }
 
-td strong,
-td small {
+.tableWrap td strong,
+.tableWrap td small {
   display: block;
 }
 
-td small {
+.tableWrap td small {
   margin-top: 3px;
   color: #80868b;
 }
