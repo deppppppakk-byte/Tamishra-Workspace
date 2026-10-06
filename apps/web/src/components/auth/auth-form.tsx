@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { workspaceApi, type WorkspaceSessionResponse } from "../../lib/workspace-api";
 import styles from "./auth.module.css";
 
@@ -36,8 +36,21 @@ const errorText: Record<string, string> = {
   origin_not_allowed: "This sign-in request was rejected by the Workspace security policy."
 };
 
+function safeRedirectPath(raw: string | null) {
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return "/";
+  try {
+    const parsed = new URL(raw, "https://tamishra.in");
+    return parsed.origin === "https://tamishra.in"
+      ? `${parsed.pathname}${parsed.search}${parsed.hash}`
+      : "/";
+  } catch {
+    return "/";
+  }
+}
+
 export function AuthForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const isPatraSurface = process.env.NEXT_PUBLIC_WORKSPACE_SURFACE === "patra";
   const [mode, setMode] = useState<Mode>("signin");
   const [displayName, setDisplayName] = useState("");
@@ -50,6 +63,11 @@ export function AuthForm() {
   const [recoveryOpen, setRecoveryOpen] = useState(true);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const redirectPath = useMemo(
+    () => safeRedirectPath(searchParams.get("redirect_url")),
+    [searchParams]
+  );
 
   const proposedPatraAddress = useMemo(() => {
     const username = patraUsername.trim().toLowerCase();
@@ -133,7 +151,7 @@ export function AuthForm() {
         setStatus(mailbox.mailbox.address + " is ready.");
       }
 
-      router.push("/");
+      router.push(redirectPath);
       router.refresh();
     } catch (error) {
       const code =
@@ -173,7 +191,7 @@ export function AuthForm() {
           <p className={styles.intro}>
             {isPatraSurface
               ? "Create a Tamishra identity and choose your personal @patra.tamishra.in address in one registration flow."
-              : "Tamishra-native identity for Patra, Meet, Docs, Sheets, Slides, Notes, Forms, Chat and Files."}
+              : "Tamishra-native identity for Patra, Meet, Docs, Sheets, Slides, Notes, Forms, Chat, Files and Kosh."}
           </p>
         </div>
         <div className={styles.securityNote}>
@@ -226,7 +244,7 @@ export function AuthForm() {
               {mode === "signin"
                 ? isPatraSurface
                   ? "Continue to your Patra inbox."
-                  : "Continue to your Workspace apps and files."
+                  : "Continue to your Workspace apps and Kosh."
                 : isPatraSurface
                   ? "Choose your Patra address and create your Tamishra identity together."
                   : "A personal Workspace organization will be created automatically."}
@@ -234,63 +252,6 @@ export function AuthForm() {
           </div>
 
           <form className={styles.form} onSubmit={submit}>
-            {mode === "signin" && !isPatraSurface && (
-              <>
-                <a
-                  href="/api/kosh/google/login?return_to=/workspace/apps/kosh"
-                  style={{
-                    minHeight: 44,
-                    border: "1px solid rgba(23, 32, 51, 0.14)",
-                    borderRadius: 12,
-                    color: "#26344a",
-                    background: "#fff",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 10,
-                    textDecoration: "none",
-                    fontSize: 10,
-                    fontWeight: 850,
-                    boxShadow: "0 6px 18px rgba(23, 32, 51, 0.06)"
-                  }}
-                >
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      width: 22,
-                      height: 22,
-                      border: "1px solid #e1e5ec",
-                      borderRadius: "50%",
-                      display: "grid",
-                      placeItems: "center",
-                      color: "#4285f4",
-                      fontSize: 12,
-                      fontWeight: 900,
-                      background: "#fff"
-                    }}
-                  >
-                    G
-                  </span>
-                  Continue with Google
-                </a>
-                <div
-                  aria-hidden="true"
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    color: "#98a2b3",
-                    fontSize: 8,
-                    fontWeight: 700
-                  }}
-                >
-                  <span style={{ height: 1, background: "#e7ebf1", flex: 1 }} />
-                  OR CONTINUE WITH EMAIL
-                  <span style={{ height: 1, background: "#e7ebf1", flex: 1 }} />
-                </div>
-              </>
-            )}
-
             {mode === "register" && (
               <label>
                 <span>Name</span>
@@ -445,7 +406,7 @@ export function AuthForm() {
           <p className={styles.footerText}>
             {isPatraSurface
               ? "Public Patra mailboxes use the @patra.tamishra.in namespace."
-              : "Tamishra Workspace supports native password sessions and verified Google sign-in."}
+              : "One Tamishra Workspace account now signs you into Kosh and the rest of Workspace."}
           </p>
         </div>
       </section>
