@@ -237,7 +237,7 @@ export function AuthForm() {
             {mode === "signin" && !isPatraSurface && (
               <>
                 <a
-                  href="/api/kosh/google/login?return_to=/kosh"
+                  href="/api/kosh/google/login?return_to=/workspace/apps/kosh"
                   style={{
                     minHeight: 44,
                     border: "1px solid rgba(23, 32, 51, 0.14)",
