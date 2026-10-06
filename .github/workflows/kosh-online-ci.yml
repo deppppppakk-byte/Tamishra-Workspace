@@ -5,12 +5,18 @@ on:
     branches: [main]
     paths:
       - "apps/gateway/**"
+      - "apps/kosh-runner/**"
       - "apps/kosh-node-agent/**"
       - "apps/web/src/app/apps/kosh/cloud/**"
+      - "apps/web/src/app/apps/kosh/build/**"
       - "packages/identity/**"
       - "packages/permissions/**"
+      - "scripts/setup-kosh-windows-builder.ps1"
+      - "scripts/start-kosh-windows-builder.ps1"
       - "scripts/assert-provider-independence.mjs"
       - "scripts/assert-kosh-systems.mjs"
+      - "INSTALL-KOSH-WINDOWS-BUILDER.cmd"
+      - "START-KOSH-WINDOWS-BUILDER.cmd"
       - ".env.kosh-node.example"
       - ".env.kosh-online.example"
       - ".env.kosh-node-agent.example"
@@ -19,12 +25,18 @@ on:
   pull_request:
     paths:
       - "apps/gateway/**"
+      - "apps/kosh-runner/**"
       - "apps/kosh-node-agent/**"
       - "apps/web/src/app/apps/kosh/cloud/**"
+      - "apps/web/src/app/apps/kosh/build/**"
       - "packages/identity/**"
       - "packages/permissions/**"
+      - "scripts/setup-kosh-windows-builder.ps1"
+      - "scripts/start-kosh-windows-builder.ps1"
       - "scripts/assert-provider-independence.mjs"
       - "scripts/assert-kosh-systems.mjs"
+      - "INSTALL-KOSH-WINDOWS-BUILDER.cmd"
+      - "START-KOSH-WINDOWS-BUILDER.cmd"
       - ".env.kosh-node.example"
       - ".env.kosh-online.example"
       - ".env.kosh-node-agent.example"
@@ -40,9 +52,9 @@ concurrency:
 
 jobs:
   gateway:
-    name: Kosh Cloud controller node relay and UI gate
+    name: Kosh controller build relay Windows runner and UI gate
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -56,11 +68,15 @@ jobs:
         run: npm run check:kosh-systems
       - name: Gateway typecheck
         run: npm run check:gateway
+      - name: Kosh Windows Runner typecheck
+        run: npm run check:kosh-runner
       - name: Kosh Node Agent typecheck
         run: npm run check:kosh-node-agent
-      - name: Kosh Cloud dashboard typecheck
+      - name: Kosh Cloud and Windows Build UI typecheck
         run: npm run check:web
       - name: Gateway production build
         run: npm run build:gateway
+      - name: Kosh Windows Runner build
+        run: npm run build:kosh-runner
       - name: Kosh Node Agent build
         run: npm run build:kosh-node-agent
