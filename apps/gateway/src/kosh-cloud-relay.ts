@@ -4,8 +4,10 @@ import postgres from "postgres";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { resolveKoshIdentity } from "./kosh-auth.js";
 import { getKoshCloudStore } from "./kosh-cloud-store.js";
+import { getKoshDeployStore } from "./kosh-deploy-store.js";
 
 const store = getKoshCloudStore();
+const deployStore = getKoshDeployStore();
 const relaySockets = new Map<string, WebSocket>();
 const pending = new Map<
   string,
@@ -179,6 +181,19 @@ async function findDeployment(slug: string) {
   return rows[0] ?? null;
 }
 
+async function findStableDeployTarget(slug: string): Promise<RelayDeployment | null> {
+  const target = await deployStore.activeTarget(slug);
+  if (!target) return null;
+  return {
+    id: target.deploymentId,
+    slug: target.slug,
+    node_id: target.nodeId,
+    assignment_generation: target.assignmentGeneration,
+    state: target.state,
+    exposure: target.exposure
+  };
+}
+
 async function setExposure(deploymentId: string, exposure: "private" | "public") {
   await ensureExposureSchema();
   const database = getRelaySql();
@@ -299,13 +314,13 @@ function relayRequest(nodeId: string, payload: Record<string, unknown>) {
   }
   const requestId = randomUUID();
   const envelope = { ...payload, type: "http-request", requestId };
-  return new Promise<RelayHttpResponse>((resolve, reject) => {
+  return new Promise<RelayHttpResponse>((resolvePromise, reject) => {
     const timer = setTimeout(() => {
       pending.delete(requestId);
       reject(Object.assign(new Error("kosh_relay_timeout"), { status: 504 }));
     }, relayTimeoutMs());
     timer.unref?.();
-    pending.set(requestId, { nodeId, resolve, reject, timer });
+    pending.set(requestId, { nodeId, resolve: resolvePromise, reject, timer });
     websocket.send(JSON.stringify(envelope), (error) => {
       if (!error) return;
       clearTimeout(timer);
@@ -331,10 +346,13 @@ export async function handleKoshCloudRelayHttpRequest(
   const exposureMatch = url.pathname.match(
     /^\/v1\/kosh\/cloud\/deployments\/([^/]+)\/exposure$/
   );
-  const appMatch = url.pathname.match(
+  const cloudAppMatch = url.pathname.match(
     /^\/v1\/kosh\/cloud\/apps\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,99})(\/.*)?$/
   );
-  if (!exposureMatch && !appMatch) return false;
+  const deployAppMatch = url.pathname.match(
+    /^\/v1\/kosh\/deploy\/apps\/([a-zA-Z0-9][a-zA-Z0-9._-]{0,99})(\/.*)?$/
+  );
+  if (!exposureMatch && !cloudAppMatch && !deployAppMatch) return false;
 
   if (!cloudEnabled()) {
     sendJson(response, 503, { error: "kosh_cloud_disabled" });
@@ -374,15 +392,17 @@ export async function handleKoshCloudRelayHttpRequest(
     return true;
   }
 
-  const match = appMatch!;
+  const match = deployAppMatch ?? cloudAppMatch!;
   response.setHeader("cache-control", "no-store");
   response.setHeader("x-content-type-options", "nosniff");
 
   try {
-    const deployment = await findDeployment(match[1]);
+    const deployment = deployAppMatch
+      ? await findStableDeployTarget(match[1])
+      : await findDeployment(match[1]);
     if (!deployment) {
       response.statusCode = 404;
-      response.end("Kosh deployment not found.");
+      response.end(deployAppMatch ? "Kosh Deploy service not found." : "Kosh deployment not found.");
       return true;
     }
     if (deployment.exposure !== "public" && !(await requireCloudAdmin(request))) {
@@ -410,7 +430,7 @@ export async function handleKoshCloudRelayHttpRequest(
     for (const [name, value] of safeResponseHeaders(relayResponse.headers)) {
       response.setHeader(name, value);
     }
-    response.setHeader("x-kosh-relay", "v1");
+    response.setHeader("x-kosh-relay", deployAppMatch ? "deploy-v1" : "v1");
     response.setHeader("x-kosh-exposure", deployment.exposure);
     const output = relayResponse.bodyBase64
       ? Buffer.from(relayResponse.bodyBase64, "base64")
