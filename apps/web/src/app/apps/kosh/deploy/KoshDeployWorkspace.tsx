@@ -17,6 +17,15 @@ type Revision = {
   createdAt: string;
 };
 
+type DomainStatus = {
+  baseDomain: string;
+  wildcardHostname: string;
+  edgeReady: boolean;
+  tlsManaged: boolean;
+  dnsReady: boolean;
+  httpsReady: boolean;
+};
+
 type Service = {
   id: string;
   slug: string;
@@ -28,6 +37,8 @@ type Service = {
   contextPath: string;
   healthPath: string;
   exposure: "private" | "public";
+  hostname: string | null;
+  publicUrl: string | null;
   activeRevisionId: string | null;
   pendingRevisionId: string | null;
   activeRevision: Revision | null;
@@ -57,6 +68,7 @@ export function KoshDeployWorkspace() {
   const router = useRouter();
   const base = useMemo(apiBase, []);
   const [services, setServices] = useState<Service[]>([]);
+  const [domain, setDomain] = useState<DomainStatus | null>(null);
   const [namespace, setNamespace] = useState("tamishra");
   const [repositorySlug, setRepositorySlug] = useState("kavyn-2d");
   const [refName, setRefName] = useState("main");
@@ -96,9 +108,14 @@ export function KoshDeployWorkspace() {
         router.replace("/sign-in");
         return;
       }
-      const payload = (await response.json().catch(() => ({}))) as { services?: Service[]; error?: string };
+      const payload = (await response.json().catch(() => ({}))) as {
+        services?: Service[];
+        domain?: DomainStatus;
+        error?: string;
+      };
       if (!response.ok) throw new Error(payload.error || `Kosh Deploy request failed (${response.status}).`);
       setServices(payload.services ?? []);
+      setDomain(payload.domain ?? null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load Kosh Deploy.");
     } finally {
@@ -189,6 +206,20 @@ export function KoshDeployWorkspace() {
 
       <section className={styles.panel}>
         <div className={styles.panelTitle}>
+          <div>
+            <strong>Tamishra app domain</strong>
+            <span>{domain?.wildcardHostname ?? "*.apps.tamishra.in"}</span>
+          </div>
+          <span className={styles.badge}>{domain?.httpsReady ? "HTTPS ready" : domain?.dnsReady ? "TLS pending" : "DNS/TLS pending"}</span>
+        </div>
+        <p>
+          Every DNS-safe service slug automatically receives a stable host such as <strong>workspace.apps.tamishra.in</strong>.
+          Kosh only marks HTTPS ready after the wildcard edge and certificate are actually active.
+        </p>
+      </section>
+
+      <section className={styles.panel}>
+        <div className={styles.panelTitle}>
           <div><strong>New deployment</strong><span>No Vercel or external container registry required for Kosh source deploys.</span></div>
         </div>
         <form className={styles.form} onSubmit={deployService}>
@@ -208,7 +239,8 @@ export function KoshDeployWorkspace() {
 
       <section className={styles.services}>
         {services.map((service) => {
-          const url = `${base}/v1/kosh/deploy/apps/${encodeURIComponent(service.slug)}/`;
+          const internalUrl = `${base}/v1/kosh/deploy/apps/${encodeURIComponent(service.slug)}/`;
+          const url = domain?.httpsReady && service.publicUrl ? service.publicUrl : internalUrl;
           return (
             <article className={styles.service} key={service.id}>
               <div className={styles.serviceHead}>
@@ -221,11 +253,12 @@ export function KoshDeployWorkspace() {
               <div className={styles.meta}>
                 <span>Active: {service.activeRevision ? `r${service.activeRevision.revision} · ${shortSha(service.activeRevision.commitSha)}` : "—"}</span>
                 <span>Pending: {service.pendingRevision ? `r${service.pendingRevision.revision} · ${shortSha(service.pendingRevision.commitSha)}` : "—"}</span>
+                <span>Host: {service.hostname ?? "Slug is not DNS-safe"}</span>
                 <span>Health: {service.healthPath}</span>
                 <span>Port: {service.containerPort}</span>
               </div>
               <div className={styles.actions}>
-                {service.activeRevision ? <a className={styles.primary} href={url} target="_blank" rel="noreferrer">Open stable URL</a> : null}
+                {service.activeRevision ? <a className={styles.primary} href={url} target="_blank" rel="noreferrer">{domain?.httpsReady && service.publicUrl ? "Open Tamishra URL" : "Open internal URL"}</a> : null}
                 <button type="button" onClick={() => {
                   setNamespace(service.namespace);
                   setRepositorySlug(service.repositorySlug);
