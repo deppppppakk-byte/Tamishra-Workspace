@@ -4,6 +4,7 @@ import { handleKoshOpsFairnessRequest } from "./kosh-ops-fairness.js";
 import { handleKoshOpsFleetRequest } from "./kosh-ops-fleet.js";
 import { handleKoshOpsFleetControllerRequest } from "./kosh-ops-fleet-controller.js";
 import { handleKoshOpsPoolScalingRequest } from "./kosh-ops-pool-scaling-api.js";
+import { handleKoshManagedBuildPoolRequest } from "./kosh-managed-build-pool.js";
 import { handleKoshPagesDomainRequest } from "./kosh-pages-domains.js";
 import { handleKoshProductionOperationsRequest } from "./kosh-production-operations.js";
 import { handleKoshSecretRotationRequest } from "./kosh-secret-rotation.js";
@@ -15,6 +16,15 @@ export async function handleKoshProductionRequest(
   origin: string | undefined,
   allowedOrigins: ReadonlySet<string>
 ) {
+  if (
+    await handleKoshManagedBuildPoolRequest(
+      request,
+      response,
+      url,
+      origin,
+      allowedOrigins
+    )
+  ) return true;
   if (
     await handleKoshOperationsMetricsRequest(
       request,
