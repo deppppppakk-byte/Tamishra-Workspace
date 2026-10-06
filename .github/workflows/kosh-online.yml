@@ -13,7 +13,6 @@ on:
       - ".dockerignore"
       - ".env.kosh-online.example"
       - "package.json"
-      - "package-lock.json"
       - ".github/workflows/kosh-online.yml"
   pull_request:
     paths:
@@ -26,14 +25,13 @@ on:
       - ".dockerignore"
       - ".env.kosh-online.example"
       - "package.json"
-      - "package-lock.json"
       - ".github/workflows/kosh-online.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: kosh-online-${{ github.ref }}
+  group: kosh-online-gateway-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -45,9 +43,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
 
-      - run: npm ci
+      - run: npm install
 
       - name: Typecheck gateway runtime
         run: npm run check:gateway
