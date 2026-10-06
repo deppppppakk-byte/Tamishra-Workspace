@@ -172,7 +172,7 @@ const labels = [
   .slice(0, 64);
 const activeJobs = new Set<string>();
 const activeEnvironments = new Set<string>();
-const runnerVersion = "0.2.0";
+const runnerVersion = "0.3.0";
 
 if (!runnerToken && process.env.NODE_ENV === "production") {
   throw new Error("KOSH_RUNNER_TOKEN is required in production.");
@@ -232,6 +232,34 @@ async function requestJson<T>(
     throw new Error(payload.error || "Kosh runner request failed.");
   }
   return payload;
+}
+
+async function requestBinary<T>(
+  path: string,
+  bytes: Buffer,
+  extraHeaders: Record<string, string>
+): Promise<T> {
+  const response = await fetch(gateway + path, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer " + runnerToken,
+      "content-type": "application/octet-stream",
+      "content-length": String(bytes.length),
+      ...extraHeaders
+    },
+    body: new Uint8Array(bytes)
+  });
+  const text = await response.text();
+  let payload: (T & { error?: string }) | null = null;
+  try {
+    payload = text ? JSON.parse(text) as T & { error?: string } : null;
+  } catch {
+    payload = null;
+  }
+  if (!response.ok) {
+    throw new Error(payload?.error || text || "Kosh binary upload failed.");
+  }
+  return (payload ?? {}) as T;
 }
 
 function secretValues(context: ClaimedJob) {
@@ -869,30 +897,31 @@ async function uploadPackages(
         version +
         " from " +
         sourcePath +
-        ".\n"
+        " using Kosh binary transport.\n"
     );
 
-    await requestJson(
+    const metadataEncoded = Buffer.from(
+      JSON.stringify(metadata),
+      "utf8"
+    ).toString("base64url");
+
+    await requestBinary(
       "/v1/kosh/automation/runner/jobs/" +
         encodeURIComponent(context.job.id) +
-        "/packages",
+        "/packages/binary",
+      bytes,
       {
-        method: "POST",
-        body: JSON.stringify({
-          key: packageKey,
-          name: String(entry.name ?? "").trim() || packageKey,
-          version,
-          filename,
-          format: String(entry.format ?? "").trim() || "generic",
-          mediaType:
-            String(entry.mediaType ?? "").trim() ||
-            "application/octet-stream",
-          channel: String(entry.channel ?? "").trim() || null,
-          metadata,
-          base64: bytes.toString("base64")
-        })
-      },
-      leaseHeaders(context)
+        ...leaseHeaders(context),
+        "x-kosh-package-key": packageKey,
+        "x-kosh-package-name": String(entry.name ?? "").trim() || packageKey,
+        "x-kosh-package-version": version,
+        "x-kosh-package-filename": filename,
+        "x-kosh-package-format": String(entry.format ?? "").trim() || "generic",
+        "x-kosh-package-media-type":
+          String(entry.mediaType ?? "").trim() || "application/octet-stream",
+        "x-kosh-package-channel": String(entry.channel ?? "").trim(),
+        "x-kosh-package-metadata": metadataEncoded
+      }
     );
   }
 }
