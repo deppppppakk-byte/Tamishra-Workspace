@@ -10,6 +10,7 @@ const execFileAsync = promisify(execFile);
 const controller = (process.env.KOSH_CLOUD_CONTROLLER_URL ?? "http://127.0.0.1:4100/v1/kosh/cloud")
   .trim()
   .replace(/\/+$/, "");
+const gatewayOrigin = controller.replace(/\/v1\/kosh\/cloud$/i, "");
 const enrollmentSecret = process.env.KOSH_CLOUD_NODE_ENROLLMENT_SECRET?.trim() ?? "";
 const nodeName = process.env.KOSH_NODE_NAME?.trim() || hostname();
 const nodeRegion = process.env.KOSH_NODE_REGION?.trim() || "local";
@@ -22,7 +23,7 @@ const proxyHost = process.env.KOSH_NODE_PROXY_HOST?.trim() || "127.0.0.1";
 const stateRoot = process.env.KOSH_NODE_STATE_DIR?.trim() || join(homedir(), ".kosh", "node-agent");
 const statePath = join(stateRoot, "identity.json");
 
-const capabilities = ["docker", "http-containers", "git", "kosh-source-build"];
+const capabilities = ["docker", "http-containers", "git", "kosh-source-build", "kosh-runtime-secrets"];
 
 type NodeIdentity = { nodeId: string; nodeToken: string };
 type Assignment = {
@@ -51,6 +52,11 @@ type SourceCheckout = {
     token: string;
     expiresAt: string;
   };
+};
+
+type RuntimeEnvironment = {
+  environmentName: string;
+  environment: Record<string, string>;
 };
 
 type ApiResult<T> = T & { error?: string };
@@ -250,6 +256,39 @@ async function sourceCheckout(assignment: Assignment) {
   );
 }
 
+async function runtimeEnvironment(assignment: Assignment) {
+  const current = await ensureIdentity();
+  const endpoint =
+    `${gatewayOrigin}/v1/kosh/deploy/runtime/${encodeURIComponent(assignment.id)}` +
+    `?nodeId=${encodeURIComponent(current.nodeId)}` +
+    `&generation=${assignment.assignmentGeneration}`;
+  const response = await fetch(endpoint, {
+    headers: { authorization: `Bearer ${current.nodeToken}` },
+    signal: AbortSignal.timeout(15_000)
+  });
+  const text = await response.text();
+  let payload: ApiResult<RuntimeEnvironment>;
+  try {
+    payload = (text ? JSON.parse(text) : {}) as ApiResult<RuntimeEnvironment>;
+  } catch {
+    payload = {} as ApiResult<RuntimeEnvironment>;
+  }
+  if (!response.ok) {
+    throw Object.assign(new Error(payload.error || `deploy_runtime_http_${response.status}`), {
+      status: response.status
+    });
+  }
+  const environment = payload.environment && typeof payload.environment === "object" && !Array.isArray(payload.environment)
+    ? payload.environment
+    : {};
+  for (const [key, value] of Object.entries(environment)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(key) || typeof value !== "string" || /[\r\n\0]/.test(value)) {
+      throw new Error("deploy_runtime_environment_invalid");
+    }
+  }
+  return environment;
+}
+
 function pathInside(root: string, requested: string) {
   const output = resolve(root, requested);
   const prefix = root.endsWith(sep) ? root : root + sep;
@@ -301,6 +340,18 @@ async function buildSourceImage(assignment: Assignment, checkout: SourceCheckout
   }
 }
 
+async function writeRuntimeEnvironmentFile(assignment: Assignment, environment: Record<string, string>) {
+  const entries = Object.entries(environment);
+  if (!entries.length) return null;
+  const directory = join(stateRoot, "runtime");
+  await mkdir(directory, { recursive: true });
+  const path = join(directory, `${assignment.id}-${assignment.assignmentGeneration}.env`);
+  const content = entries.map(([key, value]) => `${key}=${value}`).join("\n") + "\n";
+  await writeFile(path, content, { mode: 0o600 });
+  await chmod(path, 0o600).catch(() => undefined);
+  return path;
+}
+
 async function waitForHealth(port: number, path: string, timeoutMs = 90_000) {
   const deadline = Date.now() + timeoutMs;
   let last = "health_check_timeout";
@@ -336,39 +387,47 @@ async function ensureRunning(assignment: Assignment) {
   }
 
   await report(assignment, "starting", null);
+  let runtimeFile: string | null = null;
   try {
     if (containerId) await docker(["rm", "-f", containerId], 30_000).catch(() => undefined);
 
     let image = assignment.image;
     let healthPath: string | null = null;
+    let environment: Record<string, string> = {};
     if (assignment.image.startsWith("kosh-source://")) {
       const checkout = await sourceCheckout(assignment);
       healthPath = checkout.source.healthPath || "/";
+      environment = await runtimeEnvironment(assignment);
       image = await buildSourceImage(assignment, checkout);
     } else {
       await docker(["pull", assignment.image], 5 * 60_000);
     }
 
-    containerId = await docker(
-      [
-        "run",
-        "-d",
-        "--name",
-        containerName(assignment),
-        "--restart",
-        "unless-stopped",
-        "--label",
-        "kosh.managed=true",
-        "--label",
-        `kosh.deployment.id=${assignment.id}`,
-        "--label",
-        `kosh.assignment.generation=${assignment.assignmentGeneration}`,
-        "-p",
-        `127.0.0.1::${assignment.containerPort}`,
-        image
-      ],
-      120_000
-    );
+    runtimeFile = await writeRuntimeEnvironmentFile(assignment, environment);
+    const runArgs = [
+      "run",
+      "-d",
+      "--name",
+      containerName(assignment),
+      "--restart",
+      "unless-stopped",
+      "--label",
+      "kosh.managed=true",
+      "--label",
+      `kosh.deployment.id=${assignment.id}`,
+      "--label",
+      `kosh.assignment.generation=${assignment.assignmentGeneration}`,
+      "-p",
+      `127.0.0.1::${assignment.containerPort}`
+    ];
+    if (runtimeFile) runArgs.push("--env-file", runtimeFile);
+    runArgs.push(image);
+
+    containerId = await docker(runArgs, 120_000);
+    if (runtimeFile) {
+      await rm(runtimeFile, { force: true }).catch(() => undefined);
+      runtimeFile = null;
+    }
     const port = await hostPort(containerId, assignment.containerPort);
     if (healthPath) await waitForHealth(port, healthPath);
     routes.set(assignment.id, { port, generation: assignment.assignmentGeneration });
@@ -381,9 +440,11 @@ async function ensureRunning(assignment: Assignment) {
       deployment: assignment.slug,
       generation: assignment.assignmentGeneration,
       localPort: port,
-      sourceBuild: assignment.image.startsWith("kosh-source://")
+      sourceBuild: assignment.image.startsWith("kosh-source://"),
+      runtimeEnvironmentCount: Object.keys(environment).length
     });
   } catch (error) {
+    if (runtimeFile) await rm(runtimeFile, { force: true }).catch(() => undefined);
     routes.delete(assignment.id);
     if (containerId) await docker(["rm", "-f", containerId], 45_000).catch(() => undefined);
     await report(
