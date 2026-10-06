@@ -9,6 +9,7 @@ on:
       - "apps/kosh-node-agent/**"
       - "apps/web/src/app/apps/kosh/cloud/**"
       - "apps/web/src/app/apps/kosh/build/**"
+      - "apps/web/src/app/apps/kosh/deploy/**"
       - "packages/identity/**"
       - "packages/permissions/**"
       - "scripts/setup-kosh-windows-builder.ps1"
@@ -38,6 +39,7 @@ on:
       - "apps/kosh-node-agent/**"
       - "apps/web/src/app/apps/kosh/cloud/**"
       - "apps/web/src/app/apps/kosh/build/**"
+      - "apps/web/src/app/apps/kosh/deploy/**"
       - "packages/identity/**"
       - "packages/permissions/**"
       - "scripts/setup-kosh-windows-builder.ps1"
@@ -70,7 +72,7 @@ concurrency:
 
 jobs:
   gateway:
-    name: Kosh controller build relay desktop Android runner and UI gate
+    name: Kosh controller build deploy relay desktop Android runner and UI gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -115,7 +117,7 @@ jobs:
         run: npm run check:kosh-runner
       - name: Kosh Node Agent typecheck
         run: npm run check:kosh-node-agent
-      - name: Kosh Cloud Windows and Android Build UI typecheck
+      - name: Kosh Cloud Deploy Windows and Android UI typecheck
         run: npm run check:web
       - name: Gateway production build
         run: npm run build:gateway
