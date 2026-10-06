@@ -3,9 +3,15 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolveKoshIdentity } from "./kosh-auth.js";
 import { getKoshCloudStore } from "./kosh-cloud-store.js";
 import { getKoshCloudOperations } from "./kosh-cloud-operations.js";
+import { getKoshDeployStore } from "./kosh-deploy-store.js";
+import { getKoshRunnerControlStore } from "./kosh-runner-control-store.js";
+import { getKoshStore } from "./kosh-store.js";
 
 const store = getKoshCloudStore();
 const operations = getKoshCloudOperations();
+const deploy = getKoshDeployStore();
+const runnerControl = getKoshRunnerControlStore();
+const repositories = getKoshStore();
 type JsonBody = Record<string, unknown>;
 
 function sendJson(
@@ -273,6 +279,46 @@ export async function handleKoshCloudRequest(
       return true;
     }
 
+    const nodeSource = url.pathname.match(/^\/v1\/kosh\/cloud\/nodes\/([^/]+)\/deployments\/([^/]+)\/source$/);
+    if (request.method === "GET" && nodeSource) {
+      const node = await requireNode(request, response, nodeSource[1], origin, allowedOrigins);
+      if (!node) return true;
+      const generation = Math.floor(Number(url.searchParams.get("generation")));
+      if (!Number.isSafeInteger(generation) || generation < 1) {
+        throw Object.assign(new Error("assignment_generation_required"), { status: 400 });
+      }
+      const assignments = await store.assignmentsForNode(node.id);
+      const assignment = assignments.find((item) => item.id === nodeSource[2] && item.assignmentGeneration === generation);
+      if (!assignment) throw Object.assign(new Error("deployment_assignment_not_found"), { status: 404 });
+      const source = await deploy.sourceForCloudDeployment(assignment.id);
+      if (!source) throw Object.assign(new Error("deployment_source_not_found"), { status: 404 });
+      const repository = await repositories.get(source.namespace, source.repositorySlug);
+      if (!repository || repository.id !== source.repositoryId) {
+        throw Object.assign(new Error("deployment_repository_not_found"), { status: 404 });
+      }
+      const jobId = `deploy:${assignment.id}:${generation}`;
+      const checkoutCredential = await runnerControl.issueCredential({
+        jobId,
+        repositoryId: repository.id,
+        scope: "repository.read",
+        ttlSeconds: 1800
+      });
+      sendJson(response, 200, {
+        source: {
+          namespace: repository.namespace,
+          repositorySlug: repository.slug,
+          cloneHttpUrl: repository.cloneHttpUrl,
+          commitSha: source.commitSha,
+          dockerfilePath: source.dockerfilePath,
+          contextPath: source.contextPath,
+          healthPath: source.healthPath,
+          revision: source.revision
+        },
+        checkoutCredential
+      }, origin, allowedOrigins);
+      return true;
+    }
+
     const nodeDeploymentStatus = url.pathname.match(
       /^\/v1\/kosh\/cloud\/nodes\/([^/]+)\/deployments\/([^/]+)\/status$/
     );
@@ -300,7 +346,20 @@ export async function handleKoshCloudRequest(
         sendJson(response, 404, { error: "deployment_not_found" }, origin, allowedOrigins);
         return true;
       }
-      sendJson(response, 200, { deployment }, origin, allowedOrigins);
+
+      let deployTransition: Awaited<ReturnType<typeof deploy.onCloudDeploymentState>> = null;
+      if (state === "running" || state === "failed" || state === "stopped") {
+        deployTransition = await deploy.onCloudDeploymentState(
+          deployment.id,
+          state as "running" | "failed" | "stopped"
+        );
+        await runnerControl.revokeJobCredentials(`deploy:${deployment.id}:${generation}`);
+        if (deployTransition?.promoted && deployTransition.oldCloudDeploymentId) {
+          await operations.stopDeployment(deployTransition.oldCloudDeploymentId).catch(() => undefined);
+        }
+      }
+
+      sendJson(response, 200, { deployment, deployTransition }, origin, allowedOrigins);
       return true;
     }
 
