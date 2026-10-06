@@ -21,7 +21,7 @@ export function KoshBuildHub() {
           <Link href={query ? `/apps/kosh/repository?${query}` : "/apps/kosh"}>← Repository</Link>
           <p>KOSH BUILD</p>
           <h1>Build Center</h1>
-          <span>Compile native desktop and Android release packages using Kosh-owned runners.</span>
+          <span>Compile native desktop and Android release packages using Kosh-owned runners, then promote verified builds through Kosh Releases.</span>
         </div>
       </header>
 
@@ -40,6 +40,14 @@ export function KoshBuildHub() {
           </div>
           <p className={styles.hint}>Capacitor, Flutter, native Gradle and React Native, with optional Kosh-managed release signing.</p>
           <Link className={styles.primary} href={query ? `/apps/kosh/build/android?${query}` : "/apps/kosh/build/android"}>Open Android Builds</Link>
+        </article>
+
+        <article className={styles.panel}>
+          <div className={styles.panelTitle}>
+            <div><strong>Android Releases</strong><span>Promote verified APK/AAB builds into versioned release channels.</span></div>
+          </div>
+          <p className={styles.hint}>Select a Kosh Android package set, create an immutable Git tag, attach checksummed APK/AAB files, and publish to stable, beta or another release channel.</p>
+          <Link className={styles.primary} href={query ? `/apps/kosh/build/android/release?${query}` : "/apps/kosh/build/android/release"}>Open Android Release Center</Link>
         </article>
       </section>
     </main>
