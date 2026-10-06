@@ -14,6 +14,7 @@ import {
   attachKoshCloudRelay,
   handleKoshCloudRelayHttpRequest
 } from "./kosh-cloud-relay.js";
+import { koshDeployDomainStatus, rewriteKoshDeployHost } from "./kosh-deploy-domain.js";
 import { handleKoshWikiRequest } from "./kosh-wiki.js";
 import { handleKoshPagesAdminRequest } from "./kosh-pages.js";
 import { handleKoshWebhookRequest } from "./kosh-webhooks.js";
@@ -178,7 +179,8 @@ async function handleKoshAdministrationGate(
 async function handle(request: IncomingMessage, response: ServerResponse) {
   applySecurityHeaders(response);
   const origin = request.headers.origin;
-  const url = new URL(request.url ?? "/", "http://workspace.local");
+  let url = new URL(request.url ?? "/", "http://workspace.local");
+  url = rewriteKoshDeployHost(request, url);
 
   if (request.method === "OPTIONS") {
     response.statusCode = 204;
@@ -207,7 +209,8 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
         mode: process.env.WORKSPACE_CORE_ONLY === "true" ? "core" : "full",
         persistence: process.env.WORKSPACE_DATABASE_URL ? "postgres" : "ephemeral",
         koshCloud: process.env.KOSH_CLOUD_ENABLED?.trim().toLowerCase() === "true",
-        koshRelay: process.env.KOSH_CLOUD_ENABLED?.trim().toLowerCase() === "true"
+        koshRelay: process.env.KOSH_CLOUD_ENABLED?.trim().toLowerCase() === "true",
+        koshDeployDomain: koshDeployDomainStatus()
       },
       origin
     );
