@@ -8,6 +8,7 @@ import { koshDeployDomainStatus, koshDeployHostname, koshDeployPublicUrl } from 
 import { failKoshDeployRevision } from "./kosh-deploy-failure.js";
 import { getKoshDeployRuntimeConfigStore } from "./kosh-deploy-runtime-config.js";
 import { getKoshDeployStore } from "./kosh-deploy-store.js";
+import { getKoshPlatformStore } from "./kosh-platform-store.js";
 import { getKoshStore } from "./kosh-store.js";
 
 const execFileAsync = promisify(execFile);
@@ -15,6 +16,7 @@ const repositories = getKoshStore();
 const cloud = getKoshCloudStore();
 const deploy = getKoshDeployStore();
 const deployRuntime = getKoshDeployRuntimeConfigStore();
+const platformStore = getKoshPlatformStore();
 const repositoryRoot = resolve(process.env.KOSH_REPO_ROOT?.trim() || ".kosh/repos");
 
 type JsonBody = Record<string, unknown>;
@@ -64,6 +66,11 @@ function clean(value: unknown, max = 200) {
 
 function cleanSlug(value: unknown) {
   return clean(value, 100).toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function bearer(request: IncomingMessage) {
+  const value = String(request.headers.authorization ?? "").trim();
+  return value.toLowerCase().startsWith("bearer ") ? value.slice(7).trim() : "";
 }
 
 function safeRelativePath(value: unknown, fallback: string) {
@@ -190,6 +197,28 @@ async function presentService(service: Awaited<ReturnType<typeof deploy.getServi
   };
 }
 
+async function resolveRuntimeEnvironment(revisionId: string, repositoryId: string) {
+  const config = await deployRuntime.get(revisionId);
+  if (!config) return { environmentName: "production", environment: {} as Record<string, string> };
+  if (config.repositoryId !== repositoryId) {
+    throw Object.assign(new Error("deploy_runtime_repository_mismatch"), { status: 409 });
+  }
+  const environment: Record<string, string> = { ...config.variables };
+  for (const [envKey, secretName] of Object.entries(config.secretBindings)) {
+    const value =
+      await platformStore.resolveSecret(repositoryId, config.environmentName, secretName) ??
+      await platformStore.resolveSecret(repositoryId, null, secretName);
+    if (value === null) {
+      throw Object.assign(new Error(`deployment_secret_missing:${secretName}`), { status: 409 });
+    }
+    if (value.includes("\0")) {
+      throw Object.assign(new Error(`deployment_secret_invalid:${secretName}`), { status: 409 });
+    }
+    environment[envKey] = value;
+  }
+  return { environmentName: config.environmentName, environment };
+}
+
 async function createDeployRevision(identity: Identity, body: JsonBody, rollbackOfRevision: number | null = null) {
   const namespace = clean(body.namespace, 64);
   const repositorySlug = clean(body.repositorySlug ?? body.slug, 100);
@@ -273,7 +302,28 @@ export async function handleKoshDeployRequest(
 ) {
   if (!url.pathname.startsWith("/v1/kosh/deploy")) return false;
   try {
-    await Promise.all([deploy.ready(), deployRuntime.ready()]);
+    await Promise.all([deploy.ready(), deployRuntime.ready(), platformStore.ready()]);
+
+    const runtimeMatch = url.pathname.match(/^\/v1\/kosh\/deploy\/runtime\/([^/]+)$/);
+    if (request.method === "GET" && runtimeMatch) {
+      const nodeId = clean(url.searchParams.get("nodeId"), 200);
+      const generation = Math.floor(Number(url.searchParams.get("generation")));
+      if (!nodeId || !Number.isSafeInteger(generation) || generation < 1) {
+        throw Object.assign(new Error("deployment_runtime_assignment_required"), { status: 400 });
+      }
+      const node = await cloud.authenticateNode(nodeId, bearer(request));
+      if (!node) throw Object.assign(new Error("node_authentication_required"), { status: 401 });
+      const assignments = await cloud.assignmentsForNode(node.id);
+      const assignment = assignments.find(
+        (item) => item.id === runtimeMatch[1] && item.assignmentGeneration === generation
+      );
+      if (!assignment) throw Object.assign(new Error("deployment_assignment_not_found"), { status: 404 });
+      const source = await deploy.sourceForCloudDeployment(assignment.id);
+      if (!source) throw Object.assign(new Error("deployment_source_not_found"), { status: 404 });
+      const runtime = await resolveRuntimeEnvironment(source.revisionId, source.repositoryId);
+      json(response, 200, runtime, origin, allowedOrigins);
+      return true;
+    }
 
     if (request.method === "GET" && url.pathname === "/v1/kosh/deploy/services") {
       const identity = await requireAdmin(request, response, origin, allowedOrigins);
