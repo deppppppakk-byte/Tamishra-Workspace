@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { resolveKoshIdentity } from "./kosh-auth.js";
 import { getKoshCloudStore } from "./kosh-cloud-store.js";
+import { failKoshDeployRevision } from "./kosh-deploy-failure.js";
 import { getKoshDeployStore } from "./kosh-deploy-store.js";
 import { getKoshStore } from "./kosh-store.js";
 
@@ -169,21 +170,26 @@ async function createDeployRevision(identity: Identity, body: JsonBody, rollback
     rollbackOfRevision
   });
 
-  const revisionCloudSlug = cloudSlug(serviceSlug, created.revision.revision);
-  const image = `kosh-source://${created.service.id}/${created.revision.id}`;
-  const cloudDeployment = await cloud.createDeployment({
-    slug: revisionCloudSlug,
-    name: `${name} r${created.revision.revision}`,
-    image,
-    containerPort,
-    createdByUserId: identity.user.id
-  });
-  await deploy.attachCloudDeployment(created.revision.id, cloudDeployment.id, revisionCloudSlug);
-  const scheduled = await cloud.scheduleDeployment(cloudDeployment.id);
-  return {
-    service: await presentService(await deploy.getService(serviceSlug)),
-    deployment: scheduled ?? cloudDeployment
-  };
+  try {
+    const revisionCloudSlug = cloudSlug(serviceSlug, created.revision.revision);
+    const image = `kosh-source://${created.service.id}/${created.revision.id}`;
+    const cloudDeployment = await cloud.createDeployment({
+      slug: revisionCloudSlug,
+      name: `${name} r${created.revision.revision}`,
+      image,
+      containerPort,
+      createdByUserId: identity.user.id
+    });
+    await deploy.attachCloudDeployment(created.revision.id, cloudDeployment.id, revisionCloudSlug);
+    const scheduled = await cloud.scheduleDeployment(cloudDeployment.id);
+    return {
+      service: await presentService(await deploy.getService(serviceSlug)),
+      deployment: scheduled ?? cloudDeployment
+    };
+  } catch (error) {
+    await failKoshDeployRevision(created.revision.id).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function handleKoshDeployRequest(
