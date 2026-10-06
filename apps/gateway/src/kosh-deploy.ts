@@ -6,6 +6,7 @@ import { resolveKoshIdentity } from "./kosh-auth.js";
 import { getKoshCloudStore } from "./kosh-cloud-store.js";
 import { koshDeployDomainStatus, koshDeployHostname, koshDeployPublicUrl } from "./kosh-deploy-domain.js";
 import { failKoshDeployRevision } from "./kosh-deploy-failure.js";
+import { getKoshDeployRuntimeConfigStore } from "./kosh-deploy-runtime-config.js";
 import { getKoshDeployStore } from "./kosh-deploy-store.js";
 import { getKoshStore } from "./kosh-store.js";
 
@@ -13,11 +14,18 @@ const execFileAsync = promisify(execFile);
 const repositories = getKoshStore();
 const cloud = getKoshCloudStore();
 const deploy = getKoshDeployStore();
+const deployRuntime = getKoshDeployRuntimeConfigStore();
 const repositoryRoot = resolve(process.env.KOSH_REPO_ROOT?.trim() || ".kosh/repos");
 
 type JsonBody = Record<string, unknown>;
 
 type Identity = NonNullable<Awaited<ReturnType<typeof resolveKoshIdentity>>>;
+
+type RuntimeConfigInput = {
+  environmentName: string;
+  variables: Record<string, string>;
+  secretBindings: Record<string, string>;
+};
 
 function json(response: ServerResponse, status: number, body: unknown, origin?: string, allowedOrigins?: ReadonlySet<string>) {
   response.statusCode = status;
@@ -78,6 +86,46 @@ function validRef(value: string) {
   return /^[a-zA-Z0-9][a-zA-Z0-9._\/-]{0,199}$/.test(value) && !value.includes("..") && !value.includes("@{") && !value.includes("//");
 }
 
+function cleanRuntimeMap(value: unknown, kind: "variable" | "secret") {
+  if (value === undefined || value === null) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw Object.assign(new Error(`invalid_deploy_${kind}_map`), { status: 400 });
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length > 64) throw Object.assign(new Error("too_many_deploy_environment_entries"), { status: 400 });
+  const output: Record<string, string> = {};
+  let total = 0;
+  for (const [rawKey, rawValue] of entries) {
+    const key = rawKey.trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(key)) {
+      throw Object.assign(new Error("invalid_deploy_environment_key"), { status: 400 });
+    }
+    const item = kind === "secret" ? String(rawValue ?? "").trim() : String(rawValue ?? "");
+    if (kind === "secret" && !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(item)) {
+      throw Object.assign(new Error("invalid_deploy_secret_name"), { status: 400 });
+    }
+    if (kind === "variable" && item.includes("\0")) {
+      throw Object.assign(new Error("invalid_deploy_environment_value"), { status: 400 });
+    }
+    total += key.length + item.length;
+    if (total > 64 * 1024) throw Object.assign(new Error("deploy_environment_too_large"), { status: 413 });
+    output[key] = item;
+  }
+  return output;
+}
+
+function runtimeConfigFromBody(body: JsonBody): RuntimeConfigInput {
+  const environmentName = clean(body.environmentName, 80) || "production";
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/.test(environmentName)) {
+    throw Object.assign(new Error("invalid_deploy_environment_name"), { status: 400 });
+  }
+  return {
+    environmentName,
+    variables: cleanRuntimeMap(body.variables, "variable"),
+    secretBindings: cleanRuntimeMap(body.secretBindings, "secret")
+  };
+}
+
 function isAdmin(identity: Identity) {
   const configured = new Set((process.env.KOSH_PLATFORM_ADMIN_USER_IDS ?? "").split(",").map((item) => item.trim()).filter(Boolean));
   if (configured.size) return configured.has(identity.user.id);
@@ -123,10 +171,19 @@ function cloudSlug(serviceSlug: string, revision: number) {
 async function presentService(service: Awaited<ReturnType<typeof deploy.getService>>) {
   if (!service) return null;
   const revisions = await deploy.listRevisions(service.id);
+  const configRevisionId = service.pendingRevisionId ?? service.activeRevisionId ?? revisions[0]?.id ?? null;
+  const runtimeConfig = configRevisionId ? await deployRuntime.get(configRevisionId) : null;
   return {
     ...service,
     hostname: koshDeployHostname(service.slug),
     publicUrl: koshDeployPublicUrl(service.slug),
+    runtimeConfig: runtimeConfig
+      ? {
+          environmentName: runtimeConfig.environmentName,
+          variables: runtimeConfig.variables,
+          secretBindings: runtimeConfig.secretBindings
+        }
+      : { environmentName: "production", variables: {}, secretBindings: {} },
     activeRevision: revisions.find((item) => item.id === service.activeRevisionId) ?? null,
     pendingRevision: revisions.find((item) => item.id === service.pendingRevisionId) ?? null,
     revisions
@@ -155,6 +212,7 @@ async function createDeployRevision(identity: Identity, body: JsonBody, rollback
   const dockerfilePath = safeRelativePath(body.dockerfilePath, "Dockerfile");
   const contextPath = safeRelativePath(body.contextPath, ".");
   const healthPath = cleanHealthPath(body.healthPath);
+  const runtimeConfig = runtimeConfigFromBody(body);
 
   const created = await deploy.createRevision({
     slug: serviceSlug,
@@ -174,6 +232,16 @@ async function createDeployRevision(identity: Identity, body: JsonBody, rollback
   });
 
   try {
+    await deployRuntime.put({
+      revisionId: created.revision.id,
+      serviceId: created.service.id,
+      repositoryId: repository.id,
+      environmentName: runtimeConfig.environmentName,
+      variables: runtimeConfig.variables,
+      secretBindings: runtimeConfig.secretBindings,
+      createdByUserId: identity.user.id
+    });
+
     const revisionCloudSlug = cloudSlug(serviceSlug, created.revision.revision);
     const image = `kosh-source://${created.service.id}/${created.revision.id}`;
     const cloudDeployment = await cloud.createDeployment({
@@ -205,7 +273,7 @@ export async function handleKoshDeployRequest(
 ) {
   if (!url.pathname.startsWith("/v1/kosh/deploy")) return false;
   try {
-    await deploy.ready();
+    await Promise.all([deploy.ready(), deployRuntime.ready()]);
 
     if (request.method === "GET" && url.pathname === "/v1/kosh/deploy/services") {
       const identity = await requireAdmin(request, response, origin, allowedOrigins);
@@ -256,6 +324,7 @@ export async function handleKoshDeployRequest(
       const revisions = await deploy.listRevisions(service.id);
       const target = revisions.find((item) => item.revision === targetNumber);
       if (!target) throw Object.assign(new Error("deploy_revision_not_found"), { status: 404 });
+      const targetRuntime = await deployRuntime.get(target.id);
       const result = await createDeployRevision(identity, {
         namespace: service.namespace,
         repositorySlug: service.repositorySlug,
@@ -267,7 +336,10 @@ export async function handleKoshDeployRequest(
         dockerfilePath: service.dockerfilePath,
         contextPath: service.contextPath,
         healthPath: service.healthPath,
-        exposure: service.exposure
+        exposure: service.exposure,
+        environmentName: targetRuntime?.environmentName ?? "production",
+        variables: targetRuntime?.variables ?? {},
+        secretBindings: targetRuntime?.secretBindings ?? {}
       }, target.revision);
       json(response, 202, result, origin, allowedOrigins);
       return true;
