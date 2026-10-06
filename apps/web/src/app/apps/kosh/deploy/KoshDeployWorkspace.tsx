@@ -17,6 +17,12 @@ type Revision = {
   createdAt: string;
 };
 
+type RuntimeConfig = {
+  environmentName: string;
+  variables: Record<string, string>;
+  secretBindings: Record<string, string>;
+};
+
 type DomainStatus = {
   baseDomain: string;
   wildcardHostname: string;
@@ -39,6 +45,7 @@ type Service = {
   exposure: "private" | "public";
   hostname: string | null;
   publicUrl: string | null;
+  runtimeConfig: RuntimeConfig;
   activeRevisionId: string | null;
   pendingRevisionId: string | null;
   activeRevision: Revision | null;
@@ -64,6 +71,24 @@ function time(value: string) {
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
 }
 
+function parsePairs(text: string, label: string) {
+  const output: Record<string, string> = {};
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (const line of lines) {
+    const index = line.indexOf("=");
+    if (index < 1) throw new Error(`${label} must use KEY=value, one per line.`);
+    const key = line.slice(0, index).trim();
+    const value = line.slice(index + 1);
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(key)) throw new Error(`Invalid environment key: ${key}`);
+    output[key] = value;
+  }
+  return output;
+}
+
+function pairsText(value: Record<string, string> | undefined) {
+  return Object.entries(value ?? {}).map(([key, item]) => `${key}=${item}`).join("\n");
+}
+
 export function KoshDeployWorkspace() {
   const router = useRouter();
   const base = useMemo(apiBase, []);
@@ -79,6 +104,9 @@ export function KoshDeployWorkspace() {
   const [contextPath, setContextPath] = useState(".");
   const [healthPath, setHealthPath] = useState("/");
   const [exposure, setExposure] = useState<"private" | "public">("private");
+  const [environmentName, setEnvironmentName] = useState("production");
+  const [variablesText, setVariablesText] = useState("");
+  const [secretBindingsText, setSecretBindingsText] = useState("");
   const [loading, setLoading] = useState(true);
   const [deploying, setDeploying] = useState(false);
   const [busy, setBusy] = useState("");
@@ -134,6 +162,8 @@ export function KoshDeployWorkspace() {
     setDeploying(true);
     setError("");
     try {
+      const variables = parsePairs(variablesText, "Environment variables");
+      const secretBindings = parsePairs(secretBindingsText, "Secret bindings");
       const response = await fetch(base + "/v1/kosh/deploy/services", {
         method: "POST",
         credentials: "include",
@@ -148,7 +178,10 @@ export function KoshDeployWorkspace() {
           dockerfilePath: dockerfilePath.trim(),
           contextPath: contextPath.trim(),
           healthPath: healthPath.trim(),
-          exposure
+          exposure,
+          environmentName: environmentName.trim() || "production",
+          variables,
+          secretBindings
         })
       });
       if (response.status === 401) {
@@ -197,7 +230,7 @@ export function KoshDeployWorkspace() {
           <Link href={`/apps/kosh/repository?namespace=${encodeURIComponent(namespace)}&slug=${encodeURIComponent(repositorySlug)}`}>← Repository</Link>
           <p>KOSH DEPLOY</p>
           <h1>Deploy Center</h1>
-          <span>Deploy directly from a Kosh Git revision. Kosh builds the Docker image on its own node, health-checks it, switches traffic only after it is healthy, and keeps rollback history.</span>
+          <span>Deploy directly from a Kosh Git revision. Kosh builds the image, injects runtime configuration, health-checks it, switches traffic only after it is healthy, and keeps rollback history.</span>
         </div>
         <button type="button" onClick={() => void load()} disabled={loading}>Refresh</button>
       </header>
@@ -212,10 +245,7 @@ export function KoshDeployWorkspace() {
           </div>
           <span className={styles.badge}>{domain?.httpsReady ? "HTTPS ready" : domain?.dnsReady ? "TLS pending" : "DNS/TLS pending"}</span>
         </div>
-        <p>
-          Every DNS-safe service slug automatically receives a stable host such as <strong>workspace.apps.tamishra.in</strong>.
-          Kosh only marks HTTPS ready after the wildcard edge and certificate are actually active.
-        </p>
+        <p>Every DNS-safe service slug automatically receives a stable host such as <strong>workspace.apps.tamishra.in</strong>. Kosh only marks HTTPS ready after the wildcard edge and certificate are actually active.</p>
       </section>
 
       <section className={styles.panel}>
@@ -233,6 +263,13 @@ export function KoshDeployWorkspace() {
           <label>Build context<input value={contextPath} onChange={(event) => setContextPath(event.target.value)} required /></label>
           <label>Health path<input value={healthPath} onChange={(event) => setHealthPath(event.target.value)} required /></label>
           <label>Exposure<select value={exposure} onChange={(event) => setExposure(event.target.value as "private" | "public")}><option value="private">Private</option><option value="public">Public</option></select></label>
+          <label>Environment<input value={environmentName} onChange={(event) => setEnvironmentName(event.target.value)} placeholder="production" /></label>
+          <label className={styles.wide}>Environment variables<textarea value={variablesText} onChange={(event) => setVariablesText(event.target.value)} placeholder={"NODE_ENV=production\nPUBLIC_API_URL=https://api.example.com"} rows={4} /><small>Non-secret values only. One KEY=value per line.</small></label>
+          <label className={styles.wide}>Kosh Secret bindings<textarea value={secretBindingsText} onChange={(event) => setSecretBindingsText(event.target.value)} placeholder={"DATABASE_URL=DATABASE_URL_PROD\nAPI_KEY=SERVICE_API_KEY"} rows={4} /><small>Left side is the container variable; right side is the encrypted Kosh Secret name.</small></label>
+          <div className={styles.secretActions}>
+            <Link href={`/apps/kosh/platform?namespace=${encodeURIComponent(namespace)}&slug=${encodeURIComponent(repositorySlug)}`}>Manage Kosh Secrets</Link>
+            <span>Secret plaintext is never stored in the deployment revision.</span>
+          </div>
           <button className={styles.primary} type="submit" disabled={deploying}>{deploying ? "Deploying…" : "Deploy from Kosh"}</button>
         </form>
       </section>
@@ -254,6 +291,8 @@ export function KoshDeployWorkspace() {
                 <span>Active: {service.activeRevision ? `r${service.activeRevision.revision} · ${shortSha(service.activeRevision.commitSha)}` : "—"}</span>
                 <span>Pending: {service.pendingRevision ? `r${service.pendingRevision.revision} · ${shortSha(service.pendingRevision.commitSha)}` : "—"}</span>
                 <span>Host: {service.hostname ?? "Slug is not DNS-safe"}</span>
+                <span>Environment: {service.runtimeConfig?.environmentName ?? "production"}</span>
+                <span>Secrets: {Object.keys(service.runtimeConfig?.secretBindings ?? {}).length}</span>
                 <span>Health: {service.healthPath}</span>
                 <span>Port: {service.containerPort}</span>
               </div>
@@ -269,6 +308,9 @@ export function KoshDeployWorkspace() {
                   setContextPath(service.contextPath);
                   setHealthPath(service.healthPath);
                   setExposure(service.exposure);
+                  setEnvironmentName(service.runtimeConfig?.environmentName ?? "production");
+                  setVariablesText(pairsText(service.runtimeConfig?.variables));
+                  setSecretBindingsText(pairsText(service.runtimeConfig?.secretBindings));
                   window.scrollTo({ top: 0, behavior: "smooth" });
                 }}>Redeploy</button>
               </div>
