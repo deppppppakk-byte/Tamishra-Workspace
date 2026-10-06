@@ -15,12 +15,17 @@ on:
       - "scripts/start-kosh-windows-builder.ps1"
       - "scripts/setup-kosh-android-builder.ps1"
       - "scripts/start-kosh-android-builder.ps1"
+      - "scripts/setup-kosh-cloud-controller.ps1"
+      - "scripts/start-kosh-cloud-controller.ps1"
+      - "scripts/check-kosh-production-readiness.ps1"
       - "scripts/assert-provider-independence.mjs"
       - "scripts/assert-kosh-systems.mjs"
       - "INSTALL-KOSH-WINDOWS-BUILDER.cmd"
       - "START-KOSH-WINDOWS-BUILDER.cmd"
       - "SETUP-KOSH-ANDROID-BUILDER.cmd"
       - "START-KOSH-ANDROID-BUILDER.cmd"
+      - "SETUP-KOSH-CLOUD-CONTROLLER.cmd"
+      - "CHECK-KOSH-PRODUCTION.cmd"
       - ".env.kosh-node.example"
       - ".env.kosh-online.example"
       - ".env.kosh-node-agent.example"
@@ -39,12 +44,17 @@ on:
       - "scripts/start-kosh-windows-builder.ps1"
       - "scripts/setup-kosh-android-builder.ps1"
       - "scripts/start-kosh-android-builder.ps1"
+      - "scripts/setup-kosh-cloud-controller.ps1"
+      - "scripts/start-kosh-cloud-controller.ps1"
+      - "scripts/check-kosh-production-readiness.ps1"
       - "scripts/assert-provider-independence.mjs"
       - "scripts/assert-kosh-systems.mjs"
       - "INSTALL-KOSH-WINDOWS-BUILDER.cmd"
       - "START-KOSH-WINDOWS-BUILDER.cmd"
       - "SETUP-KOSH-ANDROID-BUILDER.cmd"
       - "START-KOSH-ANDROID-BUILDER.cmd"
+      - "SETUP-KOSH-CLOUD-CONTROLLER.cmd"
+      - "CHECK-KOSH-PRODUCTION.cmd"
       - ".env.kosh-node.example"
       - ".env.kosh-online.example"
       - ".env.kosh-node-agent.example"
@@ -77,7 +87,10 @@ jobs:
             "scripts/setup-kosh-windows-builder.ps1",
             "scripts/start-kosh-windows-builder.ps1",
             "scripts/setup-kosh-android-builder.ps1",
-            "scripts/start-kosh-android-builder.ps1"
+            "scripts/start-kosh-android-builder.ps1",
+            "scripts/setup-kosh-cloud-controller.ps1",
+            "scripts/start-kosh-cloud-controller.ps1",
+            "scripts/check-kosh-production-readiness.ps1"
           )
           foreach ($file in $files) {
             $tokens = $null
