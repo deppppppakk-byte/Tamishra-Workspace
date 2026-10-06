@@ -21,24 +21,32 @@ export function KoshBuildHub() {
           <Link href={query ? `/apps/kosh/repository?${query}` : "/apps/kosh"}>← Repository</Link>
           <p>KOSH BUILD</p>
           <h1>Build Center</h1>
-          <span>Compile native desktop and Android release packages using Kosh-owned runners, then promote verified builds through Kosh Releases.</span>
+          <span>Build Windows EXE, Android APK and AAB directly from the browser. Kosh manages the queue and assigns build capacity automatically.</span>
         </div>
       </header>
 
       <section className={styles.grid}>
         <article className={styles.panel}>
           <div className={styles.panelTitle}>
-            <div><strong>Windows</strong><span>EXE, DLL and Windows release packages.</span></div>
+            <div><strong>Quick Build</strong><span>Recommended browser-only build flow.</span></div>
           </div>
-          <p className={styles.hint}>CMake/MSVC, .NET, Go, Rust, Flutter Windows, Electron and the dedicated kavYN 2D packaging pipeline.</p>
+          <p className={styles.hint}>Choose EXE or APK/AAB and press Build. Kosh detects the project toolchain, queues the work, assigns managed build capacity and returns downloadable files.</p>
+          <Link className={styles.primary} href={query ? `/apps/kosh/build/quick?${query}` : "/apps/kosh/build/quick"}>Open Quick Build</Link>
+        </article>
+
+        <article className={styles.panel}>
+          <div className={styles.panelTitle}>
+            <div><strong>Windows Advanced</strong><span>EXE, DLL and Windows release packages.</span></div>
+          </div>
+          <p className={styles.hint}>Choose a specific CMake/MSVC, .NET, Go, Rust, Flutter Windows, Electron or kavYN 2D build preset.</p>
           <Link className={styles.primary} href={query ? `/apps/kosh/build/windows?${query}` : "/apps/kosh/build/windows"}>Open Windows Builds</Link>
         </article>
 
         <article className={styles.panel}>
           <div className={styles.panelTitle}>
-            <div><strong>Android</strong><span>APK and AAB release packages.</span></div>
+            <div><strong>Android Advanced</strong><span>APK and AAB release packages.</span></div>
           </div>
-          <p className={styles.hint}>Capacitor, Flutter, native Gradle and React Native, with optional Kosh-managed release signing.</p>
+          <p className={styles.hint}>Choose Capacitor, Flutter, native Gradle or React Native and optionally use Kosh-managed release signing.</p>
           <Link className={styles.primary} href={query ? `/apps/kosh/build/android?${query}` : "/apps/kosh/build/android"}>Open Android Builds</Link>
         </article>
 
