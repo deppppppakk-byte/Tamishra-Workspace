@@ -36,6 +36,14 @@ export function KoshBuildHub() {
 
         <article className={styles.panel}>
           <div className={styles.panelTitle}>
+            <div><strong>Kosh Deploy</strong><span>Deploy websites and services without Vercel.</span></div>
+          </div>
+          <p className={styles.hint}>Deploy a Kosh Git revision to Kosh Cloud. Kosh builds the Dockerfile, health-checks the new revision, switches the stable URL only when healthy, and keeps rollback history.</p>
+          <Link className={styles.primary} href={query ? `/apps/kosh/deploy?${query}` : "/apps/kosh/deploy"}>Open Deploy Center</Link>
+        </article>
+
+        <article className={styles.panel}>
+          <div className={styles.panelTitle}>
             <div><strong>Production Readiness</strong><span>Live blocker and certification checks.</span></div>
           </div>
           <p className={styles.hint}>Check managed build capacity, repository history, EXE/APK/AAB packages and stable releases. Kosh only shows READY when the real production requirements pass.</p>
