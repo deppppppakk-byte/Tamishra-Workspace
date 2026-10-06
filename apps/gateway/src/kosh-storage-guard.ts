@@ -5,6 +5,7 @@ import { handleKoshArtifactStorageRoute } from "./kosh-artifact-storage-routes.j
 import { automationStore } from "./kosh-automation-service.js";
 import { handleKoshDriveChannelRoute } from "./kosh-drive-channel-routes.js";
 import { handleKoshDriveStorageRoute } from "./kosh-drive-storage-routes.js";
+import { handleKoshRunnerPackageUpload } from "./kosh-runner-package-upload.js";
 import type { KoshStorageClass } from "./kosh-storage-policy.js";
 import {
   finalizeKoshStorageReservation,
@@ -238,6 +239,13 @@ export async function handleKoshStoragePreflight(
   response: ServerResponse,
   url: URL
 ) {
+  // Large Windows installers and EXEs use a binary runner lane so they are not
+  // Base64-inflated inside JSON. This route performs its own lease, quota and
+  // content-length validation before publishing the package.
+  if (await handleKoshRunnerPackageUpload(request, response, url)) {
+    return true;
+  }
+
   const target = await targetFor(request, url);
 
   if (!target) {
