@@ -154,7 +154,7 @@ if ($InstallFlutter -and -not $FlutterInstalled) {
   $env:Path = (Join-Path $FlutterRoot "bin") + ";" + $env:Path
   $FlutterInstalled = $true
   & flutter config --android-sdk $SdkRoot | Out-Null
-  & flutter doctor --android-licenses < $null
+  1..80 | ForEach-Object { "y" } | & flutter doctor --android-licenses | Out-Null
 }
 
 $TokenSecure = Read-Host "Enter KOSH_RUNNER_TOKEN (stored locally using Windows encryption)" -AsSecureString
