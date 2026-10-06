@@ -1,0 +1,67 @@
+.headerLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.field span {
+  color: #5f6368;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid #dadce0;
+  border-radius: 10px;
+  background: #fff;
+  color: #202124;
+  font: inherit;
+  outline: none;
+}
+
+.field input:focus {
+  border-color: #1a73e8;
+  box-shadow: 0 0 0 2px rgba(26, 115, 232, .12);
+}
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 18px;
+  padding: 12px;
+  border: 1px solid #dadce0;
+  border-radius: 12px;
+  background: #f8fafd;
+}
+
+.check input {
+  margin-top: 3px;
+}
+
+.check span,
+.check strong,
+.check small {
+  display: block;
+}
+
+.check strong {
+  font-size: 13px;
+}
+
+.check small {
+  margin-top: 4px;
+  color: #5f6368;
+  font-size: 11px;
+  line-height: 1.45;
+}
