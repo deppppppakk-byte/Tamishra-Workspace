@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { resolveKoshIdentity } from "./kosh-auth.js";
+import { getKoshControllerClusterStatus } from "./kosh-controller-cluster.js";
 import { getKoshManagedBuildPoolStatus } from "./kosh-managed-build-pool.js";
 import { getKoshPackageStore } from "./kosh-package-store.js";
 import { getKoshReleaseStore } from "./kosh-release-store.js";
@@ -55,7 +56,10 @@ async function refCount(namespace: string, slug: string) {
 }
 
 export async function getKoshProductionCertification() {
-  const buildPool = await getKoshManagedBuildPoolStatus();
+  const [buildPool, controllerCluster] = await Promise.all([
+    getKoshManagedBuildPoolStatus(),
+    getKoshControllerClusterStatus()
+  ]);
   const [kavynRefs, osRefs, repoList] = await Promise.all([
     refCount("tamishra", "kavyn-2d"),
     refCount("tamishra", "os"),
@@ -81,6 +85,7 @@ export async function getKoshProductionCertification() {
     stableChannels += channels.filter((item) => item.channel === "stable").length;
   }
 
+  const cloudEnabled = process.env.KOSH_CLOUD_ENABLED?.trim().toLowerCase() === "true";
   const checks = [
     {
       id: "online-persistence",
@@ -89,8 +94,10 @@ export async function getKoshProductionCertification() {
     },
     {
       id: "cloud-controller",
-      ok: process.env.KOSH_CLOUD_ENABLED?.trim().toLowerCase() === "true",
-      detail: process.env.KOSH_CLOUD_ENABLED?.trim().toLowerCase() === "true" ? "Kosh Cloud controller mode is enabled." : "Kosh Cloud controller mode is disabled."
+      ok: cloudEnabled && controllerCluster.databaseBacked && controllerCluster.activeInstances >= 1,
+      detail: cloudEnabled
+        ? `${controllerCluster.activeInstances} active database-backed controller instance(s); leader ${controllerCluster.leader || "pending"}.`
+        : "Kosh Cloud controller mode is disabled."
     },
     {
       id: "windows-build-capacity",
@@ -135,6 +142,8 @@ export async function getKoshProductionCertification() {
     passed: checks.filter((check) => check.ok).length,
     total: checks.length,
     checks,
+    controllerCluster,
+    buildPool,
     artifacts: { exePackages, apkPackages, aabPackages, publishedReleases, stableChannels }
   };
 }
