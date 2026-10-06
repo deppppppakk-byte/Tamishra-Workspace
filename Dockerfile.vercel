@@ -1,0 +1,30 @@
+FROM node:22-bookworm-slim AS build
+
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY . .
+
+RUN npm install
+RUN npm run build:gateway
+RUN npm prune --omit=dev
+
+FROM node:22-bookworm-slim AS runtime
+
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /app /app
+
+ENV NODE_ENV=production
+ENV PORT=8000
+
+EXPOSE 8000
+
+CMD ["node", "apps/gateway/dist/index.js"]
