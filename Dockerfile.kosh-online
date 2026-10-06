@@ -8,7 +8,7 @@ RUN apt-get update \
 
 COPY . .
 
-RUN npm ci
+RUN npm install
 RUN npm run build:gateway
 RUN npm prune --omit=dev
 
