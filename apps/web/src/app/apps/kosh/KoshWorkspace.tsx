@@ -58,7 +58,7 @@ export function KoshWorkspace() {
 
   const requireSignIn = useCallback(() => {
     const returnTo = window.location.pathname + window.location.search;
-    window.location.assign("/sign-in?redirect_url=" + encodeURIComponent(returnTo));
+    window.location.assign("/workspace/sign-in?redirect_url=" + encodeURIComponent(returnTo));
   }, []);
 
   const loadGatewayHealth = useCallback(async () => {
