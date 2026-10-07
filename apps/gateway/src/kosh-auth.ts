@@ -9,6 +9,64 @@ import { getKoshPlatformStore } from "./kosh-platform-store.js";
 
 const platformStore = getKoshPlatformStore();
 
+const KOSH_NO_LOGIN_USER_ID = "kosh-no-login-owner";
+const KOSH_NO_LOGIN_ORGANIZATION_ID = "kosh-no-login-organization";
+const KOSH_NO_LOGIN_MEMBERSHIP_ID = "kosh-no-login-membership";
+const KOSH_NO_LOGIN_SESSION_ID = "kosh-no-login-session";
+const KOSH_NO_LOGIN_CREATED_AT = "2026-01-01T00:00:00.000Z";
+
+function koshNoLoginEnabled() {
+  const mode = (process.env.KOSH_AUTH_MODE ?? "").trim().toLowerCase();
+  return mode === "none" || mode === "off" || mode === "disabled";
+}
+
+function koshNoLoginIdentity() {
+  const now = new Date().toISOString();
+  return {
+    user: {
+      id: KOSH_NO_LOGIN_USER_ID,
+      email: "kosh-owner@local.invalid",
+      displayName: "Kosh Owner",
+      emailVerified: true,
+      disabled: false,
+      createdAt: KOSH_NO_LOGIN_CREATED_AT,
+      updatedAt: now
+    },
+    session: {
+      id: KOSH_NO_LOGIN_SESSION_ID,
+      userId: KOSH_NO_LOGIN_USER_ID,
+      tokenHash: "",
+      createdAt: KOSH_NO_LOGIN_CREATED_AT,
+      expiresAt: "9999-12-31T23:59:59.999Z",
+      lastSeenAt: now,
+      userAgent: null,
+      ipHash: null,
+      revokedAt: null
+    },
+    memberships: [
+      {
+        membership: {
+          id: KOSH_NO_LOGIN_MEMBERSHIP_ID,
+          userId: KOSH_NO_LOGIN_USER_ID,
+          organizationId: KOSH_NO_LOGIN_ORGANIZATION_ID,
+          role: "owner" as const,
+          joinedAt: KOSH_NO_LOGIN_CREATED_AT,
+          disabled: false
+        },
+        organization: {
+          id: KOSH_NO_LOGIN_ORGANIZATION_ID,
+          name: "Tamishra Kosh",
+          slug: "tamishra",
+          createdAt: KOSH_NO_LOGIN_CREATED_AT,
+          updatedAt: now
+        }
+      }
+    ],
+    authType: "session" as const,
+    apiToken: null
+  };
+}
+
 export const koshApiScopeCatalog = [
   {
     id: "repo:read",
@@ -112,6 +170,10 @@ export async function resolveKoshIdentity(
   request: IncomingMessage,
   requiredScope?: string
 ) {
+  if (koshNoLoginEnabled()) {
+    return koshNoLoginIdentity();
+  }
+
   const sessionIdentity = await resolveWorkspaceAuthorization(request);
   if (sessionIdentity) {
     return {
