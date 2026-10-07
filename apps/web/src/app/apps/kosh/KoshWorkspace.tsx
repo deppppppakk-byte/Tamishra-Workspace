@@ -56,11 +56,6 @@ export function KoshWorkspace() {
 
   const base = useMemo(apiBase, []);
 
-  const requireSignIn = useCallback(() => {
-    const returnTo = window.location.pathname + window.location.search;
-    window.location.assign("/workspace/sign-in?redirect_url=" + encodeURIComponent(returnTo));
-  }, []);
-
   const loadGatewayHealth = useCallback(async () => {
     try {
       const response = await fetch(base + "/health", {
@@ -83,10 +78,6 @@ export function KoshWorkspace() {
         credentials: "include",
         cache: "no-store"
       });
-      if (response.status === 401) {
-        requireSignIn();
-        return;
-      }
       if (!response.ok) {
         const payload = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(
@@ -110,7 +101,7 @@ export function KoshWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [base, requireSignIn]);
+  }, [base]);
 
   useEffect(() => {
     void Promise.all([loadGatewayHealth(), loadRepositories()]);
@@ -133,11 +124,6 @@ export function KoshWorkspace() {
           visibility
         })
       });
-
-      if (response.status === 401) {
-        requireSignIn();
-        return;
-      }
 
       const payload = (await response.json().catch(() => ({}))) as
         | KoshRepository
