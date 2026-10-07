@@ -9,6 +9,7 @@ RUN apt-get update \
 COPY . .
 
 RUN npm install
+RUN node scripts/enable-kosh-no-login-git.mjs
 RUN npm run build:gateway
 RUN npm prune --omit=dev
 
